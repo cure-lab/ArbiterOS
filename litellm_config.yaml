@@ -1,0 +1,40 @@
+model_list:
+  - model_name: gpt-5.2
+    litellm_params:
+      model: openai/gpt-5.2
+      api_key: "your_api_key"
+      api_base: "your_api_url"
+      response_format:
+        type: json_schema
+        json_schema:
+          name: instruction_output
+          schema:
+            type: object
+            properties:
+              category:
+                type: string
+                enum:
+                  - COGNITIVE_CORE__GENERATE
+                  - COGNITIVE_CORE__DECOMPOSE
+                  - COGNITIVE_CORE__REFLECT
+                  - EXECUTION_CORE__TOOL_CALL
+                  - EXECUTION_CORE__TOOL_BUILD
+                  - EXECUTION_CORE__DELEGATE
+                  - EXECUTION_CORE__RESPOND
+                description: "The instruction category type"
+              content:
+                type: string
+                description: "The actual content of the instruction"
+            required:
+              - category
+              - content
+            additionalProperties: false
+          strict: true
+
+litellm_settings:
+  # Following settings for anthropics models
+  # modify_params: true
+  # drop_params: true
+  callbacks: arbiteros_kernel.litellm_callback.proxy_handler_instance
+  success_callback: ["mlflow"]
+  failure_callback: ["mlflow"]

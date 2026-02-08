@@ -1,0 +1,24 @@
+[project]
+name = "arbiteros-kernel"
+version = "0.1.0"
+description = "LLM Gateway based ArbiterOS"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "litellm[proxy]>=1.81.5",
+    "mlflow[genai]>=3.9.0",
+]
+
+[dependency-groups]
+dev = [
+    "pre-commit>=4.3.0",
+    "poethepoet>=0.40.0",
+]
+
+[tool.poe.tasks]
+mlflow = "uv run mlflow server"
+litellm = "uv run litellm --config litellm_config.yaml"
+run.parallel = ["mlflow", "litellm"]
+
+prefix = "{name}"
+prefix_template = "[{prefix}] "
