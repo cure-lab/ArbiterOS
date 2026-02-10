@@ -24,6 +24,10 @@ _console = Console()
 _LOG_FILE = Path(__file__).resolve().parent.parent / "log" / "api_calls.jsonl"
 _LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
 
+# 剥去 assistant content 时记录的 category，只追加不因「包」而消耗；超 1000 时删最前（最早）的
+_stripped_categories: list[str] = []
+_MAX_STRIPPED_CATEGORIES = 1000
+
 
 def _to_json(obj: Any) -> Any:
     """转成可 JSON 序列化的结构"""
@@ -58,9 +62,11 @@ def _save_json(hook: str, data: dict) -> None:
 # ---------------------------------------------------------------------------
 # 响应修改规则（流式 + 非流式）：用于在 post_call_success 时改写返回给调用方的内容
 # - 若有 tool_calls：不改动
-# - 若为 content 且为 JSON 字符串（含 category/content）：只保留内层 content，去掉 category
+# - 若为 content 且为 JSON 字符串（含 category/content）：只保留内层 content，去掉 category，
+#   并正向记录剥去的 category 到 _stripped_categories，供 pre_call 时把 history 包回
 # ---------------------------------------------------------------------------
 def _response_transform_content_only(data: dict, message_dict: dict) -> Optional[dict]:
+    global _stripped_categories
     if message_dict.get("tool_calls"):
         return message_dict
     content = message_dict.get("content")
@@ -69,11 +75,93 @@ def _response_transform_content_only(data: dict, message_dict: dict) -> Optional
     try:
         inner = json.loads(content)
         if isinstance(inner, dict) and "content" in inner:
+            category = inner.get("category", "")
+            _stripped_categories.append(category)
+            if len(_stripped_categories) > _MAX_STRIPPED_CATEGORIES:
+                _stripped_categories.pop(0)
             out = {**message_dict, "content": inner["content"]}
             return out
     except (json.JSONDecodeError, TypeError):
         pass
     return message_dict
+
+
+def _is_structured_content(s: str) -> bool:
+    """判断 content 是否已经是带 category/content 的结构化 JSON 字符串"""
+    if not s or not isinstance(s, str):
+        return False
+    try:
+        obj = json.loads(s)
+        return isinstance(obj, dict) and "content" in obj
+    except (json.JSONDecodeError, TypeError):
+        return False
+
+
+def _extract_text_to_wrap(msg: dict) -> tuple[Optional[str], Optional[Any], Optional[int]]:
+    """
+    从一条 assistant 消息里取出需要包结构的纯文本。
+    - content 为字符串：返回 (content, None, None)，由调用方替换整条 content。
+    - content 为列表 [{"type":"text","text":"..."}]：返回 (part["text"], content_list, part_index)，由调用方替换 part["text"]。
+    - 无需处理或已结构化：返回 (None, None, None)。
+    """
+    content = msg.get("content")
+    # 格式1: content 是字符串
+    if isinstance(content, str):
+        if not content.strip():
+            return (None, None, None)
+        if _is_structured_content(content):
+            return (None, None, None)
+        return (content, None, None)
+    # 格式2: content 是列表，如 [{"type": "text", "text": "..."}]
+    if isinstance(content, list):
+        for idx, part in enumerate(content):
+            if not isinstance(part, dict):
+                continue
+            if part.get("type") != "text":
+                continue
+            text = part.get("text")
+            if not isinstance(text, str) or not text.strip():
+                continue
+            if _is_structured_content(text):
+                continue
+            return (text, content, idx)
+    return (None, None, None)
+
+
+def _wrap_messages_with_categories(data: dict) -> dict:
+    """在 pre_call 前把 incoming 里 role=assistant 且 content 有文本的 history 从后往前包回结构。
+    包的时候不消耗 list：从 _stripped_categories 末尾往前按位置取（最后一个 assistant 对应 list[-1]，
+    倒数第二个对应 list[-2]…），与剥去的 history 一一对应。list 只在剥时追加，超 1000 删最前的。
+    """
+    global _stripped_categories
+    messages = data.get("messages")
+    if not messages or not _stripped_categories:
+        return data
+    messages = list(messages)
+    idx_from_end = 0  # 当前包的是「从末尾数第几个」assistant，0=最后一个
+    for i in range(len(messages) - 1, -1, -1):
+        msg = messages[i]
+        if not isinstance(msg, dict):
+            continue
+        if msg.get("role") != "assistant":
+            continue
+        if msg.get("tool_calls"):
+            continue
+        text, content_list, part_idx = _extract_text_to_wrap(msg)
+        if text is None:
+            continue
+        if idx_from_end >= len(_stripped_categories):
+            break
+        category = _stripped_categories[-(idx_from_end + 1)]
+        idx_from_end += 1
+        wrapped = json.dumps({"category": category, "content": text}, ensure_ascii=False)
+        if content_list is not None and part_idx is not None:
+            new_parts = list(content_list)
+            new_parts[part_idx] = {**new_parts[part_idx], "text": wrapped}
+            messages[i] = {**msg, "content": new_parts}
+        else:
+            messages[i] = {**msg, "content": wrapped}
+    return {**data, "messages": messages}
 
 
 response_transform: Optional[Any] = _response_transform_content_only
@@ -97,6 +185,8 @@ class MyCustomHandler(CustomLogger):
     ) -> Optional[
         Union[Exception, str, dict]
     ]:  # raise exception if invalid, return a str for the user to receive - if rejected, or return a modified dictionary for passing into litellm
+        # 先把 history 里 assistant 的 content 按剥去时记录的 category 从后往前包回结构，再请求
+        data = _wrap_messages_with_categories(data)
         filtered_data = {
             k: data[k] for k in ["model", "messages", "tools"] if k in data
         }
@@ -107,6 +197,7 @@ class MyCustomHandler(CustomLogger):
             )
         )
         _save_json("pre_call", {"call_type": call_type, "incoming": filtered_data})
+        return data
 
     async def async_post_call_failure_hook(
         self,
