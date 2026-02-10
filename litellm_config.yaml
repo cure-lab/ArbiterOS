@@ -34,7 +34,7 @@ model_list:
 litellm_settings:
   # Following settings for anthropics models
   # modify_params: true
-  # drop_params: true
+  drop_params: true
   callbacks: arbiteros_kernel.litellm_callback.proxy_handler_instance
   success_callback: ["mlflow"]
   failure_callback: ["mlflow"]
