@@ -34,6 +34,7 @@ _LANGFUSE_NODE_LOG_FILE = (
     Path(__file__).resolve().parent.parent / "log" / "langfuse_nodes.jsonl"
 )
 _LANGFUSE_NODE_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+_TRACE_STATE_FILE = Path(__file__).resolve().parent.parent / "log" / "trace_state.json"
 
 # Ensure `.env` is loaded when LiteLLM imports this module via `litellm_config.yaml`.
 # This makes Langfuse/MLflow callbacks work without manually exporting env vars.
@@ -69,6 +70,7 @@ class _TraceState:
 _trace_state_lock = threading.Lock()
 _trace_state_by_device: dict[str, _TraceState] = {}
 _latest_user_id_by_channel: dict[str, str] = {}
+_trace_state_file_mtime_ns: Optional[int] = None
 _recent_response_keys: list[str] = []
 _recent_response_key_set: set[str] = set()
 _MAX_RECENT_RESPONSE_KEYS = 512
@@ -100,6 +102,166 @@ _SECURITY_NOTICE_RE = re.compile(
     r"SECURITY NOTICE:.*?(?=\n\n<<<EXTERNAL_UNTRUSTED_CONTENT>>>|$)",
     re.DOTALL,
 )
+
+
+def _trace_state_to_dict(state: _TraceState) -> dict[str, Any]:
+    return {
+        "trace_id": state.trace_id,
+        "device_key": state.device_key,
+        "channel": state.channel,
+        "user_id": state.user_id,
+        "sequence": state.sequence,
+        "last_user_fingerprint": state.last_user_fingerprint,
+        "last_reset_fingerprint": state.last_reset_fingerprint,
+    }
+
+
+def _trace_state_from_dict(device_key: str, payload: Any) -> Optional[_TraceState]:
+    if not isinstance(payload, dict):
+        return None
+
+    trace_id = payload.get("trace_id")
+    if not isinstance(trace_id, str) or not trace_id:
+        return None
+
+    stored_device_key = payload.get("device_key")
+    if isinstance(stored_device_key, str) and stored_device_key.strip():
+        device_key = stored_device_key.strip()
+    else:
+        device_key = device_key.strip()
+    if not device_key:
+        return None
+
+    derived_channel, _, derived_user_id = device_key.partition(":")
+    channel = payload.get("channel")
+    if not isinstance(channel, str) or not channel.strip():
+        channel = derived_channel or "unknown-channel"
+    channel = _normalize_device_fragment(channel)
+
+    user_id = payload.get("user_id")
+    if not isinstance(user_id, str) or not user_id.strip():
+        user_id = derived_user_id or "unknown-user"
+    user_id = _normalize_device_fragment(user_id)
+
+    sequence = payload.get("sequence")
+    if not isinstance(sequence, int) or sequence < 0:
+        sequence = 0
+
+    last_user_fingerprint = payload.get("last_user_fingerprint")
+    if not isinstance(last_user_fingerprint, str) or not last_user_fingerprint:
+        last_user_fingerprint = None
+
+    last_reset_fingerprint = payload.get("last_reset_fingerprint")
+    if not isinstance(last_reset_fingerprint, str) or not last_reset_fingerprint:
+        last_reset_fingerprint = None
+
+    return _TraceState(
+        trace_id=trace_id,
+        device_key=device_key,
+        channel=channel,
+        user_id=user_id,
+        sequence=sequence,
+        last_user_fingerprint=last_user_fingerprint,
+        last_reset_fingerprint=last_reset_fingerprint,
+    )
+
+
+def _load_trace_state_snapshot_from_disk() -> tuple[dict[str, _TraceState], dict[str, str], Optional[int]]:
+    try:
+        stat = _TRACE_STATE_FILE.stat()
+    except FileNotFoundError:
+        return {}, {}, None
+    except Exception as exc:
+        _save_json("trace_state_read_error", {"error": str(exc)})
+        return {}, {}, None
+
+    try:
+        raw = json.loads(_TRACE_STATE_FILE.read_text(encoding="utf-8"))
+    except Exception as exc:
+        _save_json("trace_state_parse_error", {"error": str(exc)})
+        return {}, {}, stat.st_mtime_ns
+
+    states_out: dict[str, _TraceState] = {}
+    latest_out: dict[str, str] = {}
+
+    states_payload = raw.get("states") if isinstance(raw, dict) else {}
+    if isinstance(states_payload, dict):
+        for key, value in states_payload.items():
+            if not isinstance(key, str) or not key.strip():
+                continue
+            parsed = _trace_state_from_dict(key, value)
+            if parsed is not None:
+                states_out[parsed.device_key] = parsed
+
+    latest_payload = (
+        raw.get("latest_user_id_by_channel") if isinstance(raw, dict) else {}
+    )
+    if isinstance(latest_payload, dict):
+        for channel, user_id in latest_payload.items():
+            if not isinstance(channel, str) or not isinstance(user_id, str):
+                continue
+            channel_norm = _normalize_device_fragment(channel)
+            user_norm = _normalize_device_fragment(user_id)
+            if channel_norm and user_norm:
+                latest_out[channel_norm] = user_norm
+
+    return states_out, latest_out, stat.st_mtime_ns
+
+
+def _sync_trace_state_from_disk(force: bool = False) -> None:
+    global _trace_state_file_mtime_ns
+
+    states_snapshot, latest_snapshot, mtime_ns = _load_trace_state_snapshot_from_disk()
+    if mtime_ns is None:
+        return
+
+    with _trace_state_lock:
+        if not force and _trace_state_file_mtime_ns == mtime_ns:
+            return
+
+        for device_key, restored in states_snapshot.items():
+            current = _trace_state_by_device.get(device_key)
+            if current is None or restored.sequence >= current.sequence:
+                _trace_state_by_device[device_key] = restored
+
+        for channel, user_id in latest_snapshot.items():
+            if channel and user_id:
+                _latest_user_id_by_channel[channel] = user_id
+
+        _trace_state_file_mtime_ns = mtime_ns
+
+
+def _persist_trace_state_to_disk() -> None:
+    global _trace_state_file_mtime_ns
+
+    with _trace_state_lock:
+        states_payload = {
+            device_key: _trace_state_to_dict(state)
+            for device_key, state in _trace_state_by_device.items()
+        }
+        latest_payload = dict(_latest_user_id_by_channel)
+
+    payload = {
+        "version": 1,
+        "updated_at": datetime.now().isoformat(),
+        "states": states_payload,
+        "latest_user_id_by_channel": latest_payload,
+    }
+    tmp_path = _TRACE_STATE_FILE.with_suffix(".tmp")
+
+    try:
+        tmp_path.write_text(
+            json.dumps(payload, ensure_ascii=False, default=str),
+            encoding="utf-8",
+        )
+        tmp_path.replace(_TRACE_STATE_FILE)
+        mtime_ns = _TRACE_STATE_FILE.stat().st_mtime_ns
+    except Exception as exc:
+        _save_json("trace_state_persist_error", {"error": str(exc)})
+        return
+
+    with _trace_state_lock:
+        _trace_state_file_mtime_ns = mtime_ns
 
 
 def _to_json(obj: Any) -> Any:
@@ -157,6 +319,38 @@ def _extract_text_from_message_content(content: Any) -> str:
                 parts.append(text)
         return "\n".join(parts)
     return ""
+
+
+def _extract_text_from_responses_output(response_obj: Any) -> str:
+    """Best-effort text extraction from OpenAI Responses API payload (dict)."""
+    if not isinstance(response_obj, dict):
+        return ""
+
+    direct_output_text = response_obj.get("output_text")
+    if isinstance(direct_output_text, str) and direct_output_text.strip():
+        return direct_output_text.strip()
+
+    texts: list[str] = []
+    output_items = response_obj.get("output")
+    if not isinstance(output_items, list):
+        return ""
+
+    for item in output_items:
+        if not isinstance(item, dict):
+            continue
+
+        # Some SDK dumps may include a direct "text" field.
+        item_text = item.get("text")
+        if isinstance(item_text, str) and item_text.strip():
+            texts.append(item_text.strip())
+
+        # Standard Responses API: items often contain "content" parts with "text".
+        content = item.get("content")
+        content_text = _extract_text_from_message_content(content)
+        if content_text.strip():
+            texts.append(content_text.strip())
+
+    return "\n".join(texts).strip()
 
 
 def _extract_latest_message_text(messages: list[Any], *, role: str) -> Optional[str]:
@@ -272,6 +466,7 @@ def _parse_device_key(device_key: str) -> tuple[str, str]:
 def _get_latest_user_id_for_channel(channel: str) -> Optional[str]:
     if not channel or channel == "unknown-channel":
         return None
+    _sync_trace_state_from_disk()
     with _trace_state_lock:
         hinted_user_id = _latest_user_id_by_channel.get(channel)
         if hinted_user_id:
@@ -377,6 +572,9 @@ def _new_trace_id(*, device_key: str, user_fingerprint: Optional[str]) -> str:
 
 
 def _ensure_trace_state(context: _DeviceContext) -> tuple[_TraceState, bool]:
+    _sync_trace_state_from_disk()
+    persist_needed = False
+    created_new_trace = False
     with _trace_state_lock:
         current = _trace_state_by_device.get(context.device_key)
         should_rotate = False
@@ -412,21 +610,29 @@ def _ensure_trace_state(context: _DeviceContext) -> tuple[_TraceState, bool]:
             if current.channel != "unknown-channel" and not current.user_id.startswith(
                 "anonymous-"
             ):
-                _latest_user_id_by_channel[current.channel] = current.user_id
-            return current, True
+                if _latest_user_id_by_channel.get(current.channel) != current.user_id:
+                    _latest_user_id_by_channel[current.channel] = current.user_id
+            persist_needed = True
+            created_new_trace = True
+        else:
+            if context.reset_requested and context.latest_user_fingerprint:
+                current.last_reset_fingerprint = context.latest_user_fingerprint
+            if current.channel != "unknown-channel" and not current.user_id.startswith(
+                "anonymous-"
+            ):
+                if _latest_user_id_by_channel.get(current.channel) != current.user_id:
+                    _latest_user_id_by_channel[current.channel] = current.user_id
+                    persist_needed = True
 
-        if context.reset_requested and context.latest_user_fingerprint:
-            current.last_reset_fingerprint = context.latest_user_fingerprint
-        if current.channel != "unknown-channel" and not current.user_id.startswith(
-            "anonymous-"
-        ):
-            _latest_user_id_by_channel[current.channel] = current.user_id
-        return current, False
+    if persist_needed:
+        _persist_trace_state_to_disk()
+    return current, created_new_trace
 
 
 def _resolve_trace_state_from_metadata(
     incoming: dict, *, context: _DeviceContext
 ) -> Optional[_TraceState]:
+    _sync_trace_state_from_disk()
     metadata = incoming.get("metadata")
     if not isinstance(metadata, dict):
         return None
@@ -438,6 +644,7 @@ def _resolve_trace_state_from_metadata(
     if not isinstance(device_key, str) or not device_key:
         return None
 
+    persist_needed = False
     with _trace_state_lock:
         current = _trace_state_by_device.get(device_key)
         if current is not None and current.trace_id == trace_id:
@@ -445,35 +652,43 @@ def _resolve_trace_state_from_metadata(
                 current.last_user_fingerprint = context.latest_user_fingerprint
                 if context.reset_requested:
                     current.last_reset_fingerprint = context.latest_user_fingerprint
-            return current
+            result = current
+        else:
+            derived_channel, _, derived_user_id = device_key.partition(":")
+            channel = (
+                context.channel
+                if context.channel != "unknown-channel"
+                else (derived_channel or "unknown-channel")
+            )
+            user_id = context.user_id
+            if user_id.startswith("anonymous-") and derived_user_id:
+                user_id = derived_user_id
 
-        derived_channel, _, derived_user_id = device_key.partition(":")
-        channel = (
-            context.channel
-            if context.channel != "unknown-channel"
-            else (derived_channel or "unknown-channel")
-        )
-        user_id = context.user_id
-        if user_id.startswith("anonymous-") and derived_user_id:
-            user_id = derived_user_id
+            restored_state = _TraceState(
+                trace_id=trace_id,
+                device_key=device_key,
+                channel=channel,
+                user_id=user_id,
+                sequence=0,
+                last_user_fingerprint=context.latest_user_fingerprint,
+                last_reset_fingerprint=(
+                    context.latest_user_fingerprint if context.reset_requested else None
+                ),
+            )
+            _trace_state_by_device[device_key] = restored_state
+            result = restored_state
+            persist_needed = True
 
-        restored_state = _TraceState(
-            trace_id=trace_id,
-            device_key=device_key,
-            channel=channel,
-            user_id=user_id,
-            sequence=0,
-            last_user_fingerprint=context.latest_user_fingerprint,
-            last_reset_fingerprint=(
-                context.latest_user_fingerprint if context.reset_requested else None
-            ),
-        )
-        _trace_state_by_device[device_key] = restored_state
-        if restored_state.channel != "unknown-channel" and not restored_state.user_id.startswith(
+        if result.channel != "unknown-channel" and not result.user_id.startswith(
             "anonymous-"
         ):
-            _latest_user_id_by_channel[restored_state.channel] = restored_state.user_id
-        return restored_state
+            if _latest_user_id_by_channel.get(result.channel) != result.user_id:
+                _latest_user_id_by_channel[result.channel] = result.user_id
+                persist_needed = True
+
+    if persist_needed:
+        _persist_trace_state_to_disk()
+    return result
 
 
 def _next_node_sequence(state: _TraceState) -> int:
@@ -1451,9 +1666,40 @@ class MyCustomHandler(CustomLogger):
     ) -> AsyncGenerator[Any, None]:
         """流式：若配置了 response_transform，则先收齐再改再流式输出；否则边收边 yield 并写 jsonl。"""
         collected: list = []
-        apply_transform = response_transform is not None
+        is_responses_input_request = (
+            isinstance(request_data, dict)
+            and isinstance(request_data.get("input"), list)
+            and not isinstance(request_data.get("messages"), list)
+        )
+        # Transform logic is chat-completions oriented; Responses API streaming should pass through.
+        apply_transform = response_transform is not None and not is_responses_input_request
+        completed_response_obj: Optional[dict] = None
 
         async for chunk in response:
+            chunk_dump: Optional[dict] = None
+            event_type: Optional[str] = None
+            if hasattr(chunk, "type") and isinstance(getattr(chunk, "type"), str):
+                event_type = getattr(chunk, "type")
+            elif isinstance(chunk, dict) and isinstance(chunk.get("type"), str):
+                event_type = chunk.get("type")
+
+            if hasattr(chunk, "model_dump"):
+                try:
+                    maybe_dump = chunk.model_dump()
+                except Exception:
+                    maybe_dump = None
+                if isinstance(maybe_dump, dict):
+                    chunk_dump = maybe_dump
+                    if event_type is None and isinstance(chunk_dump.get("type"), str):
+                        event_type = chunk_dump.get("type")
+            elif isinstance(chunk, dict):
+                chunk_dump = chunk
+
+            if event_type in {"response.completed", "response.failed"}:
+                response_obj = chunk_dump.get("response") if isinstance(chunk_dump, dict) else None
+                if isinstance(response_obj, dict):
+                    completed_response_obj = response_obj
+
             if isinstance(chunk, (ModelResponseStream, ModelResponse)):
                 collected.append(chunk)
             if not apply_transform:
@@ -1468,6 +1714,36 @@ class MyCustomHandler(CustomLogger):
                 yield out
 
         if not collected:
+            if is_responses_input_request and isinstance(completed_response_obj, dict):
+                completed_text = _extract_text_from_responses_output(completed_response_obj)
+                synthesized_response = {
+                    "content": completed_text if completed_text else None,
+                    "role": "assistant",
+                    "tool_calls": None,
+                    "function_call": None,
+                    "provider_specific_fields": {},
+                    "annotations": [],
+                }
+                _save_json(
+                    "post_call_success",
+                    {
+                        "response": synthesized_response,
+                        "response_summary": {
+                            "source": "responses.completed_event",
+                            "status": completed_response_obj.get("status"),
+                            "output_items": (
+                                len(completed_response_obj.get("output"))
+                                if isinstance(completed_response_obj.get("output"), list)
+                                else None
+                            ),
+                        },
+                    },
+                )
+                _emit_response_nodes(
+                    request_data=request_data,
+                    response_before_transform=synthesized_response,
+                    response_after_transform=synthesized_response,
+                )
             return
 
         try:
