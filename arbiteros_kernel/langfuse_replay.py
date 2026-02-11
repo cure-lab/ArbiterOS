@@ -70,6 +70,13 @@ class PendingPreCall:
 
 _CONVERSATION_LABEL_RE = re.compile(r'"conversation_label"\s*:\s*"([^"]+)"')
 _CHANNEL_RE = re.compile(r'"channel"\s*:\s*"([^"]+)"')
+_CURRENT_SESSION_HEADER_RE = re.compile(r"^\s*##\s*Current Session\s*$", re.MULTILINE)
+_CURRENT_SESSION_CHANNEL_RE = re.compile(
+    r"^\s*Channel\s*:\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE
+)
+_CURRENT_SESSION_CHAT_ID_RE = re.compile(
+    r"^\s*Chat ID\s*:\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE
+)
 
 
 def _read_jsonl(path: Path) -> tuple[list[KernelLogEntry], int, int]:
@@ -159,6 +166,24 @@ def _normalize_fragment(value: str) -> str:
     return re.sub(r"\s+", " ", value.strip())[:256]
 
 
+def _extract_current_session_from_text(text: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+    if not isinstance(text, str) or not text:
+        return (None, None)
+    header_match = _CURRENT_SESSION_HEADER_RE.search(text)
+    if not header_match:
+        return (None, None)
+    tail = text[header_match.start() :]
+    channel_match = _CURRENT_SESSION_CHANNEL_RE.search(tail)
+    chat_id_match = _CURRENT_SESSION_CHAT_ID_RE.search(tail)
+    channel = channel_match.group(1).strip() if channel_match else None
+    chat_id = chat_id_match.group(1).strip() if chat_id_match else None
+    if channel:
+        channel = _normalize_fragment(channel)
+    if chat_id:
+        chat_id = _normalize_fragment(chat_id)
+    return (channel or None, chat_id or None)
+
+
 def _build_device_context(incoming: dict) -> DeviceContext:
     messages = incoming.get("messages")
     if not isinstance(messages, list):
@@ -170,9 +195,15 @@ def _build_device_context(incoming: dict) -> DeviceContext:
 
     channel_value = _find_match_in_messages(messages, _CHANNEL_RE)
     user_value = _find_match_in_messages(messages, _CONVERSATION_LABEL_RE)
+    latest_system_text = _extract_latest_message_text(messages, role="system")
+    session_channel, session_chat_id = _extract_current_session_from_text(latest_system_text)
 
-    channel = _normalize_fragment(channel_value) if channel_value else "unknown-channel"
-    raw_user_id = _normalize_fragment(user_value) if user_value else "unknown-user"
+    channel = _normalize_fragment(channel_value) if channel_value else (session_channel or "unknown-channel")
+    raw_user_id = (
+        _normalize_fragment(user_value)
+        if user_value
+        else (_normalize_fragment(session_chat_id) if session_chat_id else "unknown-user")
+    )
     if raw_user_id == "unknown-user":
         fallback_source = first_system_text or latest_system_text or "openclaw-unknown-user"
         fallback_hash = hashlib.sha256(

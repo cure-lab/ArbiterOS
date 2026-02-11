@@ -81,6 +81,13 @@ _langfuse_client_initialized = False
 
 _CONVERSATION_LABEL_RE = re.compile(r'"conversation_label"\s*:\s*"([^"]+)"')
 _CHANNEL_RE = re.compile(r'"channel"\s*:\s*"([^"]+)"')
+_CURRENT_SESSION_HEADER_RE = re.compile(r"^\s*##\s*Current Session\s*$", re.MULTILINE)
+_CURRENT_SESSION_CHANNEL_RE = re.compile(
+    r"^\s*Channel\s*:\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE
+)
+_CURRENT_SESSION_CHAT_ID_RE = re.compile(
+    r"^\s*Chat ID\s*:\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE
+)
 _RESET_PROMPT_RE = re.compile(
     r"^\s*a new session was started via /new or /reset\.",
     re.IGNORECASE,
@@ -189,6 +196,48 @@ def _find_match_in_messages(messages: list[Any], pattern: re.Pattern[str]) -> Op
     return None
 
 
+def _extract_current_session_from_text(text: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+    """Parse nanobot-style system prompt section:
+    '## Current Session\\nChannel: <channel>\\nChat ID: <chat_id>'
+    """
+    if not isinstance(text, str) or not text:
+        return (None, None)
+    header_match = _CURRENT_SESSION_HEADER_RE.search(text)
+    if not header_match:
+        return (None, None)
+
+    # Only scan the tail starting at the header to avoid accidental matches
+    # elsewhere in the system prompt.
+    tail = text[header_match.start() :]
+    channel_match = _CURRENT_SESSION_CHANNEL_RE.search(tail)
+    chat_id_match = _CURRENT_SESSION_CHAT_ID_RE.search(tail)
+    channel = channel_match.group(1).strip() if channel_match else None
+    chat_id = chat_id_match.group(1).strip() if chat_id_match else None
+    if channel:
+        channel = _normalize_device_fragment(channel)
+    if chat_id:
+        chat_id = _normalize_device_fragment(chat_id)
+    return (channel or None, chat_id or None)
+
+
+def _extract_current_session_from_messages(messages: list[Any]) -> tuple[Optional[str], Optional[str]]:
+    # Prefer the latest system prompt since it contains the current routing context.
+    latest_system_text = _extract_latest_message_text(messages, role="system")
+    channel, chat_id = _extract_current_session_from_text(latest_system_text)
+    if channel or chat_id:
+        return (channel, chat_id)
+
+    # Fallback: scan other messages (rare but cheap for small histories).
+    for msg in reversed(messages):
+        if not isinstance(msg, dict):
+            continue
+        text = _extract_text_from_message_content(msg.get("content"))
+        ch, cid = _extract_current_session_from_text(text)
+        if ch or cid:
+            return (ch, cid)
+    return (None, None)
+
+
 def _normalize_device_fragment(fragment: str) -> str:
     normalized = re.sub(r"\s+", " ", fragment.strip())
     return normalized[:256]
@@ -253,6 +302,7 @@ def _build_device_context(incoming: dict) -> _DeviceContext:
 
     channel_value = _find_match_in_messages(messages, _CHANNEL_RE)
     conversation_value = _find_match_in_messages(messages, _CONVERSATION_LABEL_RE)
+    session_channel, session_chat_id = _extract_current_session_from_messages(messages)
     metadata_device_key_hint = _extract_device_key_hint_from_metadata(incoming)
     metadata_channel_hint: Optional[str] = None
     metadata_user_id_hint: Optional[str] = None
@@ -261,9 +311,16 @@ def _build_device_context(incoming: dict) -> _DeviceContext:
         metadata_channel_hint = parsed_channel
         metadata_user_id_hint = parsed_user_id
 
-    channel = channel_value if channel_value else "unknown-channel"
-    has_explicit_user_id = bool(conversation_value and conversation_value.strip())
-    raw_user_id = conversation_value if has_explicit_user_id else "unknown-user"
+    channel = channel_value if channel_value else (session_channel or "unknown-channel")
+    has_explicit_user_id = bool(
+        (conversation_value and conversation_value.strip())
+        or (session_chat_id and session_chat_id.strip())
+    )
+    raw_user_id = (
+        conversation_value
+        if (conversation_value and conversation_value.strip())
+        else (session_chat_id if (session_chat_id and session_chat_id.strip()) else "unknown-user")
+    )
     channel = _normalize_device_fragment(channel)
     if channel == "unknown-channel" and metadata_channel_hint and metadata_channel_hint != "unknown-channel":
         channel = metadata_channel_hint
@@ -1284,7 +1341,50 @@ class MyCustomHandler(CustomLogger):
     ) -> Any:
         # data is the original request data
         # response is the response from the LLM API
-        msg = response.choices[0].message if response.choices else None
+        # LiteLLM may return either a ChatCompletions-like ModelResponse (with `.choices`)
+        # or an OpenAI Responses API response (no `.choices`, uses `output/output_text`).
+        choices = getattr(response, "choices", None)
+        is_chat_completion = isinstance(choices, list)
+
+        msg: Any = None
+        if is_chat_completion:
+            msg = choices[0].message if choices else None
+        else:
+            # Synthesize a chat-style message dict from Responses API payload so
+            # existing logging/Langfuse/transform logic can continue to work.
+            response_dump: Any = None
+            if hasattr(response, "model_dump"):
+                try:
+                    response_dump = response.model_dump()
+                except Exception:
+                    response_dump = None
+            if response_dump is None and hasattr(response, "dict"):
+                try:
+                    response_dump = response.dict()
+                except Exception:
+                    response_dump = None
+            if response_dump is None:
+                response_dump = _to_json(response)
+
+            output_text = (
+                _extract_text_from_responses_output(response_dump)
+                if isinstance(response_dump, dict)
+                else ""
+            )
+            provider_fields: dict[str, Any] = {"format": "openai-responses-v1"}
+            if isinstance(response_dump, dict):
+                for k in ("id", "model", "status"):
+                    v = response_dump.get(k)
+                    if isinstance(v, (str, int, float, bool)) and v is not None:
+                        provider_fields[k] = v
+            msg = {
+                "content": output_text if output_text else None,
+                "role": "assistant",
+                "tool_calls": None,
+                "function_call": None,
+                "provider_specific_fields": provider_fields,
+                "annotations": [],
+            }
         _console.print(
             Panel(
                 Pretty(msg),
@@ -1315,7 +1415,13 @@ class MyCustomHandler(CustomLogger):
                 if modified_dict is not None and isinstance(modified_dict, dict):
                     final_msg_dict = modified_dict
                     try:
-                        response.choices[0].message = Message(**modified_dict)
+                        if is_chat_completion:
+                            response.choices[0].message = Message(**modified_dict)
+                        else:
+                            # Best-effort for Responses API objects: update `output_text` when present.
+                            new_content = modified_dict.get("content")
+                            if isinstance(new_content, str) and hasattr(response, "output_text"):
+                                setattr(response, "output_text", new_content)
                     except Exception:
                         pass
         _emit_response_nodes(
