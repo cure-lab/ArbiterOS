@@ -5,6 +5,7 @@ description = "LLM Gateway based ArbiterOS"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "langfuse>=3.14.1",
     "litellm[proxy]>=1.81.5",
     "mlflow[genai]>=3.9.0",
 ]
@@ -17,8 +18,9 @@ dev = [
 
 [tool.poe.tasks]
 mlflow = "uv run mlflow server"
-litellm = "uv run litellm --config litellm_config.yaml"
+litellm = "uv run litellm --config litellm_config.yaml --host 0.0.0.0 --port 4000"
 run.parallel = ["mlflow", "litellm"]
 
-prefix = "{name}"
-prefix_template = "[{prefix}] "
+[tool.poe.tasks.langfuse_replay]
+cmd = "uv run python -m arbiteros_kernel.langfuse_replay --input log/api_calls.jsonl ${replay_args}"
+args = [{ name = "replay_args", positional = true, multiple = true }]
