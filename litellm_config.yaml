@@ -11,6 +11,10 @@ model_list:
           schema:
             type: object
             properties:
+              topic:
+                type: string
+                description: "A concise topic/title for this turn (keep it short, e.g. 8-20 Chinese chars or <= 40 chars)."
+                maxLength: 60
               category:
                 type: string
                 enum:
@@ -26,6 +30,7 @@ model_list:
                 type: string
                 description: "The actual content of the instruction"
             required:
+              - topic
               - category
               - content
             additionalProperties: false
@@ -36,5 +41,7 @@ litellm_settings:
   # modify_params: true
   drop_params: true
   callbacks: arbiteros_kernel.litellm_callback.proxy_handler_instance
+  # Langfuse tracing is emitted by arbiteros_kernel.litellm_callback
+  # so all OpenClaw steps can be grouped into one session trace.
   success_callback: ["mlflow"]
   failure_callback: ["mlflow"]
