@@ -4,7 +4,7 @@ import json
 import os
 import re
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, AsyncGenerator, Optional, Union
@@ -40,9 +40,14 @@ _TRACE_STATE_FILE = Path(__file__).resolve().parent.parent / "log" / "trace_stat
 # This makes Langfuse/MLflow callbacks work without manually exporting env vars.
 load_dotenv(override=False)
 
-# 剥去 assistant content 时记录的 category，只追加不因「包」而消耗；超 1000 时删最前（最早）的
-_stripped_categories: list[str] = []
+# 剥去 assistant content 时记录的 category。
+# 以 device_key 维度隔离，避免不同会话互相污染。
+_stripped_categories_by_device: dict[str, list[str]] = {}
+_stripped_categories_lock = threading.Lock()
 _MAX_STRIPPED_CATEGORIES = 1000
+
+# 极短且不完整的内容通常意味着结构化输出异常（例如只返回 "{"）。
+_MALFORMED_PLACEHOLDER_CONTENTS = {"{", "}", "[", "]", "{}", "[]"}
 
 
 @dataclass
@@ -65,6 +70,15 @@ class _TraceState:
     sequence: int = 0
     last_user_fingerprint: Optional[str] = None
     last_reset_fingerprint: Optional[str] = None
+    root_observation_id: Optional[str] = None
+    current_turn_observation_id: Optional[str] = None
+    turn_index: int = 0
+    latest_user_preview: Optional[str] = None
+    latest_topic_summary: Optional[str] = None
+    # Per-trace monotonically increasing tool result indices per tool name.
+    tool_result_counter_by_tool: dict[str, int] = field(default_factory=dict)
+    # Ephemeral handle to the current turn observation, for in-process updates.
+    current_turn_handle: Any = None
 
 
 _trace_state_lock = threading.Lock()
@@ -77,6 +91,9 @@ _MAX_RECENT_RESPONSE_KEYS = 512
 _recent_tool_result_keys: list[str] = []
 _recent_tool_result_key_set: set[str] = set()
 _MAX_RECENT_TOOL_RESULT_KEYS = 1024
+_TOOL_RESULT_NAME_INDEX_RE = re.compile(
+    r"^tool\.(?P<tool_name>.+)\.result\.call_(?P<index>\d+)$"
+)
 
 _langfuse_client: Optional[Langfuse] = None
 _langfuse_client_initialized = False
@@ -92,7 +109,7 @@ _CURRENT_SESSION_CHAT_ID_RE = re.compile(
 )
 _RESET_PROMPT_RE = re.compile(
     r"^\s*a new session was started via /new or /reset\.",
-    re.IGNORECASE,
+    re.IGNORECASE | re.MULTILINE,
 )
 _EXTERNAL_UNTRUSTED_BLOCK_RE = re.compile(
     r"<<<EXTERNAL_UNTRUSTED_CONTENT>>>.*?<<<END_EXTERNAL_UNTRUSTED_CONTENT>>>",
@@ -102,6 +119,9 @@ _SECURITY_NOTICE_RE = re.compile(
     r"SECURITY NOTICE:.*?(?=\n\n<<<EXTERNAL_UNTRUSTED_CONTENT>>>|$)",
     re.DOTALL,
 )
+
+_TRACE_SESSION_LABEL_PREFIX = "openclaw.session"
+_NODE_NAMESPACE_PREFIX = "session"
 
 
 def _trace_state_to_dict(state: _TraceState) -> dict[str, Any]:
@@ -113,6 +133,12 @@ def _trace_state_to_dict(state: _TraceState) -> dict[str, Any]:
         "sequence": state.sequence,
         "last_user_fingerprint": state.last_user_fingerprint,
         "last_reset_fingerprint": state.last_reset_fingerprint,
+        "root_observation_id": state.root_observation_id,
+        "current_turn_observation_id": state.current_turn_observation_id,
+        "turn_index": state.turn_index,
+        "latest_user_preview": state.latest_user_preview,
+        "latest_topic_summary": state.latest_topic_summary,
+        "tool_result_counter_by_tool": state.tool_result_counter_by_tool,
     }
 
 
@@ -155,6 +181,36 @@ def _trace_state_from_dict(device_key: str, payload: Any) -> Optional[_TraceStat
     if not isinstance(last_reset_fingerprint, str) or not last_reset_fingerprint:
         last_reset_fingerprint = None
 
+    root_observation_id = payload.get("root_observation_id")
+    if not isinstance(root_observation_id, str) or not root_observation_id:
+        root_observation_id = None
+
+    current_turn_observation_id = payload.get("current_turn_observation_id")
+    if not isinstance(current_turn_observation_id, str) or not current_turn_observation_id:
+        current_turn_observation_id = None
+
+    turn_index = payload.get("turn_index")
+    if not isinstance(turn_index, int) or turn_index < 0:
+        turn_index = 0
+
+    latest_user_preview = payload.get("latest_user_preview")
+    if not isinstance(latest_user_preview, str) or not latest_user_preview:
+        latest_user_preview = None
+
+    latest_topic_summary = payload.get("latest_topic_summary")
+    if not isinstance(latest_topic_summary, str) or not latest_topic_summary:
+        latest_topic_summary = None
+
+    tool_result_counter_by_tool = payload.get("tool_result_counter_by_tool")
+    if not isinstance(tool_result_counter_by_tool, dict):
+        tool_result_counter_by_tool = {}
+    cleaned_counters: dict[str, int] = {}
+    for k, v in tool_result_counter_by_tool.items():
+        if not isinstance(k, str) or not k.strip():
+            continue
+        if isinstance(v, int) and v >= 0:
+            cleaned_counters[k.strip()] = v
+
     return _TraceState(
         trace_id=trace_id,
         device_key=device_key,
@@ -163,7 +219,85 @@ def _trace_state_from_dict(device_key: str, payload: Any) -> Optional[_TraceStat
         sequence=sequence,
         last_user_fingerprint=last_user_fingerprint,
         last_reset_fingerprint=last_reset_fingerprint,
+        root_observation_id=root_observation_id,
+        current_turn_observation_id=current_turn_observation_id,
+        turn_index=turn_index,
+        latest_user_preview=latest_user_preview,
+        latest_topic_summary=latest_topic_summary,
+        tool_result_counter_by_tool=cleaned_counters,
     )
+
+
+def _next_tool_result_index(state: _TraceState, tool_name: str) -> int:
+    normalized_tool_name = tool_name.strip() if isinstance(tool_name, str) else ""
+    if not normalized_tool_name:
+        normalized_tool_name = "unknown_tool"
+    recovered_floor = _max_emitted_tool_result_index(
+        trace_id=state.trace_id,
+        tool_name=normalized_tool_name,
+    )
+    with _trace_state_lock:
+        current_floor = state.tool_result_counter_by_tool.get(normalized_tool_name, 0)
+        if recovered_floor > current_floor:
+            current_floor = recovered_floor
+        current = current_floor + 1
+        state.tool_result_counter_by_tool[normalized_tool_name] = current
+        return current
+
+
+def _max_emitted_tool_result_index(
+    *, trace_id: Optional[str], tool_name: Optional[str], scan_last_lines: int = 5000
+) -> int:
+    if not isinstance(trace_id, str) or not trace_id:
+        return 0
+    if not isinstance(tool_name, str):
+        return 0
+    tool_name = tool_name.strip()
+    if not tool_name:
+        return 0
+
+    prefix = f"tool.{tool_name}.result.call_"
+    try:
+        raw = _LANGFUSE_NODE_LOG_FILE.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return 0
+    except Exception:
+        return 0
+
+    lines = raw.splitlines()
+    if scan_last_lines > 0 and len(lines) > scan_last_lines:
+        lines = lines[-scan_last_lines:]
+
+    max_index = 0
+    for line in lines:
+        if trace_id not in line or prefix not in line:
+            continue
+        parsed = _safe_json_loads(line)
+        if not isinstance(parsed, dict):
+            continue
+        data = parsed.get("data")
+        if not isinstance(data, dict):
+            continue
+        if data.get("trace_id") != trace_id:
+            continue
+        if data.get("node_type") != "tool_result":
+            continue
+        name = data.get("name")
+        if not isinstance(name, str):
+            continue
+        match = _TOOL_RESULT_NAME_INDEX_RE.match(name)
+        if not match:
+            continue
+        if match.group("tool_name") != tool_name:
+            continue
+        try:
+            index = int(match.group("index"))
+        except ValueError:
+            continue
+        if index > max_index:
+            max_index = index
+
+    return max_index
 
 
 def _load_trace_state_snapshot_from_disk() -> tuple[dict[str, _TraceState], dict[str, str], Optional[int]]:
@@ -353,6 +487,68 @@ def _extract_text_from_responses_output(response_obj: Any) -> str:
     return "\n".join(texts).strip()
 
 
+def _is_responses_api_request(request_data: Any) -> bool:
+    """Detect OpenAI Responses API style requests in LiteLLM hooks."""
+    if not isinstance(request_data, dict):
+        return False
+    # Responses API requests are centered around `input`, while chat-completions
+    # use `messages`. Accept str/list/dict input to support old/new callers.
+    has_input = "input" in request_data and isinstance(
+        request_data.get("input"), (str, list, dict)
+    )
+    has_chat_messages = isinstance(request_data.get("messages"), list)
+    return has_input and not has_chat_messages
+
+
+def _extract_text_from_responses_input(input_payload: Any) -> str:
+    """Best-effort extraction of latest user text from Responses API `input`."""
+    if isinstance(input_payload, str):
+        return input_payload.strip()
+    if isinstance(input_payload, dict):
+        role = input_payload.get("role")
+        if isinstance(role, str) and role != "user":
+            return ""
+        return _extract_text_from_message_content(input_payload.get("content")).strip()
+    if isinstance(input_payload, list):
+        user_texts: list[str] = []
+        for item in input_payload:
+            if isinstance(item, str):
+                text = item.strip()
+                if text:
+                    user_texts.append(text)
+                continue
+            if not isinstance(item, dict):
+                continue
+            role = item.get("role")
+            if isinstance(role, str) and role != "user":
+                continue
+            text = _extract_text_from_message_content(item.get("content")).strip()
+            if text:
+                user_texts.append(text)
+        if user_texts:
+            return user_texts[-1]
+    return ""
+
+
+def _extract_stream_text_from_responses_chunk(chunk: Any, chunk_dump: Optional[dict]) -> str:
+    """Extract delta text from a Responses API stream chunk."""
+    text_parts: list[str] = []
+    # LiteLLM helper can parse ModelResponseStream/ModelResponse chunks.
+    try:
+        if isinstance(chunk, (ModelResponseStream, ModelResponse)):
+            parsed = litellm.get_response_string(response_obj=chunk)
+            if isinstance(parsed, str) and parsed:
+                text_parts.append(parsed)
+    except Exception:
+        pass
+    # Native Responses events may expose `delta`.
+    if isinstance(chunk_dump, dict):
+        delta = chunk_dump.get("delta")
+        if isinstance(delta, str) and delta:
+            text_parts.append(delta)
+    return "".join(text_parts)
+
+
 def _extract_latest_message_text(messages: list[Any], *, role: str) -> Optional[str]:
     for msg in reversed(messages):
         if not isinstance(msg, dict):
@@ -375,6 +571,64 @@ def _extract_first_message_text(messages: list[Any], *, role: str) -> Optional[s
         if text.strip():
             return text
     return None
+
+
+def _is_reset_marker_text(text: str) -> bool:
+    if not text:
+        return False
+    cleaned = text.strip()
+    if not cleaned:
+        return False
+    lowered = cleaned.lower()
+    if lowered in {"/new", "/reset"}:
+        return True
+    # Some clients inject a synthetic "reset" user message.
+    # Keep this strict to avoid accidental matches inside long system prompts.
+    if len(cleaned) <= 200 and _RESET_PROMPT_RE.match(cleaned):
+        return True
+    return False
+
+
+def _truncate_messages_after_last_reset(messages: list[Any]) -> list[Any]:
+    """If a reset marker exists in the provided history, drop everything before it.
+
+    This makes `/reset` act like a real session reset even if the caller keeps sending
+    the full prior conversation history back to the proxy.
+    """
+    if not isinstance(messages, list) or not messages:
+        return messages
+
+    last_reset_idx: Optional[int] = None
+    for i, msg in enumerate(messages):
+        if not isinstance(msg, dict):
+            continue
+        role = msg.get("role")
+        if role not in {"user", "system"}:
+            continue
+        text = _extract_text_from_message_content(msg.get("content"))
+        if _is_reset_marker_text(text):
+            last_reset_idx = i
+
+    if last_reset_idx is None:
+        return messages
+
+    # If the reset marker is the last message, keep it so pre_call fast-path triggers.
+    if last_reset_idx == len(messages) - 1:
+        return messages
+
+    # Preserve the base system prompt (first system message) if it exists.
+    base_system: Optional[dict] = None
+    for msg in messages:
+        if isinstance(msg, dict) and msg.get("role") == "system":
+            base_system = msg
+            break
+
+    tail = messages[last_reset_idx + 1 :]
+    if base_system is not None:
+        # Avoid duplicating base_system if it already appears in the tail.
+        if not (tail and tail[0] is base_system):
+            return [base_system, *tail]
+    return tail
 
 
 def _find_match_in_messages(messages: list[Any], pattern: re.Pattern[str]) -> Optional[str]:
@@ -440,7 +694,15 @@ def _normalize_device_fragment(fragment: str) -> str:
 def _is_reset_request_text(latest_user_text: Optional[str]) -> bool:
     if not latest_user_text:
         return False
-    return bool(_RESET_PROMPT_RE.match(latest_user_text))
+    # OpenClaw sometimes forwards a synthetic "new session" instruction as the
+    # user turn (may be prefixed by other status text). Treat that as a reset
+    # marker for trace rotation.
+    cleaned = latest_user_text.strip()
+    if not cleaned:
+        return False
+    if len(cleaned) > 4000:
+        return False
+    return bool(_RESET_PROMPT_RE.search(cleaned))
 
 
 def _extract_device_key_hint_from_metadata(incoming: dict) -> Optional[str]:
@@ -454,6 +716,25 @@ def _extract_device_key_hint_from_metadata(incoming: dict) -> Optional[str]:
     if not hinted_device_key:
         return None
     return _normalize_device_fragment(hinted_device_key)
+
+
+def _extract_reset_requested_from_metadata(incoming: dict) -> bool:
+    """Reset/renew should be controlled by the caller (e.g. nanobot/openclaw).
+
+    Note: We still honor explicit `/reset` and `/new` commands in user text for
+    backwards compatibility with clients that don't pass metadata.
+    """
+    metadata = incoming.get("metadata")
+    if not isinstance(metadata, dict):
+        return False
+    for key in ("arbiteros_reset_requested", "reset_requested"):
+        v = metadata.get(key)
+        if isinstance(v, bool):
+            return v
+        if isinstance(v, str):
+            if v.strip().lower() in {"1", "true", "yes", "y"}:
+                return True
+    return False
 
 
 def _parse_device_key(device_key: str) -> tuple[str, str]:
@@ -486,12 +767,43 @@ def _get_latest_user_id_for_channel(channel: str) -> Optional[str]:
         return None
 
 
+def _get_latest_user_id_for_channel_including_anonymous(channel: str) -> Optional[str]:
+    """Best-effort identity recovery when gateways omit conversation labels.
+
+    To avoid accidentally mixing multiple users, only return a value when there is
+    exactly one known user_id for the channel in trace state.
+    """
+    if not channel or channel == "unknown-channel":
+        return None
+    _sync_trace_state_from_disk()
+    with _trace_state_lock:
+        states = [s for s in _trace_state_by_device.values() if s.channel == channel]
+        user_ids = {s.user_id for s in states if isinstance(s.user_id, str) and s.user_id}
+        non_anonymous = {u for u in user_ids if not u.startswith("anonymous-")}
+        # If we have real user ids, only proceed when there's exactly one.
+        if non_anonymous and len(non_anonymous) != 1:
+            return None
+        # If we only have anonymous ids, treat them as one identity and return the latest.
+        if not non_anonymous and not user_ids:
+            return None
+        # Choose the latest state for stability across restarts.
+        latest_state: Optional[_TraceState] = None
+        for s in states:
+            if latest_state is None or s.sequence >= latest_state.sequence:
+                latest_state = s
+        if latest_state is None:
+            return None
+        return latest_state.user_id
+
+
 def _build_device_context(incoming: dict) -> _DeviceContext:
     messages = incoming.get("messages")
     if not isinstance(messages, list):
         messages = []
 
     latest_user_text = _extract_latest_message_text(messages, role="user")
+    if not latest_user_text and _is_responses_api_request(incoming):
+        latest_user_text = _extract_text_from_responses_input(incoming.get("input")) or None
     latest_system_text = _extract_latest_message_text(messages, role="system")
     first_system_text = _extract_first_message_text(messages, role="system")
 
@@ -506,7 +818,7 @@ def _build_device_context(incoming: dict) -> _DeviceContext:
         metadata_channel_hint = parsed_channel
         metadata_user_id_hint = parsed_user_id
 
-    channel = channel_value if channel_value else (session_channel or "unknown-channel")
+    channel = channel_value or session_channel or metadata_channel_hint or "unknown-channel"
     has_explicit_user_id = bool(
         (conversation_value and conversation_value.strip())
         or (session_chat_id and session_chat_id.strip())
@@ -514,19 +826,41 @@ def _build_device_context(incoming: dict) -> _DeviceContext:
     raw_user_id = (
         conversation_value
         if (conversation_value and conversation_value.strip())
-        else (session_chat_id if (session_chat_id and session_chat_id.strip()) else "unknown-user")
+        else (
+            session_chat_id
+            if (session_chat_id and session_chat_id.strip())
+            else (
+                metadata_user_id_hint
+                if (metadata_user_id_hint and metadata_user_id_hint.strip())
+                else "unknown-user"
+            )
+        )
     )
     channel = _normalize_device_fragment(channel)
-    if channel == "unknown-channel" and metadata_channel_hint and metadata_channel_hint != "unknown-channel":
+    if metadata_channel_hint and metadata_channel_hint != "unknown-channel":
         channel = metadata_channel_hint
 
     normalized_user_cmd = (latest_user_text or "").strip().lower()
-    reset_requested = normalized_user_cmd in {"/new", "/reset"} or _is_reset_request_text(
-        latest_user_text
-    )
+    reset_requested = _extract_reset_requested_from_metadata(incoming) or normalized_user_cmd in {
+        "/new",
+        "/reset",
+    } or _is_reset_request_text(latest_user_text)
+
+    if raw_user_id == "unknown-user":
+        # If this turn doesn't include a conversation_label / chat id (common for some
+        # gateways), fall back to the last known non-anonymous user id on this channel.
+        hinted_user_id = _get_latest_user_id_for_channel(channel)
+        if hinted_user_id:
+            raw_user_id = hinted_user_id
+        else:
+            # If the channel has only one known identity (even if anonymous),
+            # keep it stable so turns don't split across traces.
+            hinted_any = _get_latest_user_id_for_channel_including_anonymous(channel)
+            if hinted_any:
+                raw_user_id = hinted_any
 
     if raw_user_id == "unknown-user" and reset_requested:
-        # /new and /reset system turns often omit conversation_label; recover prior identity.
+        # Reset/new-session turns often omit conversation_label; recover prior identity.
         if metadata_user_id_hint and not metadata_user_id_hint.startswith("anonymous-"):
             raw_user_id = metadata_user_id_hint
         else:
@@ -535,7 +869,7 @@ def _build_device_context(incoming: dict) -> _DeviceContext:
                 raw_user_id = hinted_user_id
 
     if raw_user_id == "unknown-user":
-        fallback_source = first_system_text or latest_system_text or "openclaw-unknown-user"
+        fallback_source = first_system_text or latest_system_text or "unknown-user-seed"
         fallback_hash = hashlib.sha256(
             fallback_source.encode("utf-8", errors="ignore")
         ).hexdigest()[:12]
@@ -605,6 +939,10 @@ def _ensure_trace_state(context: _DeviceContext) -> tuple[_TraceState, bool]:
                 last_reset_fingerprint=(
                     context.latest_user_fingerprint if context.reset_requested else None
                 ),
+                root_observation_id=None,
+                current_turn_observation_id=None,
+                turn_index=0,
+                latest_user_preview=None,
             )
             _trace_state_by_device[context.device_key] = current
             if current.channel != "unknown-channel" and not current.user_id.startswith(
@@ -647,12 +985,22 @@ def _resolve_trace_state_from_metadata(
     persist_needed = False
     with _trace_state_lock:
         current = _trace_state_by_device.get(device_key)
-        if current is not None and current.trace_id == trace_id:
-            if context.latest_user_fingerprint:
-                current.last_user_fingerprint = context.latest_user_fingerprint
-                if context.reset_requested:
-                    current.last_reset_fingerprint = context.latest_user_fingerprint
-            result = current
+        if current is not None:
+            if current.trace_id == trace_id:
+                if context.latest_user_fingerprint:
+                    current.last_user_fingerprint = context.latest_user_fingerprint
+                    if context.reset_requested:
+                        current.last_reset_fingerprint = context.latest_user_fingerprint
+                result = current
+            else:
+                # Keep the in-memory state when incoming metadata carries a stale trace id.
+                # This prevents /new or /reset from being rolled back by delayed retries
+                # that still include the previous arbiteros_trace_id.
+                if context.latest_user_fingerprint:
+                    current.last_user_fingerprint = context.latest_user_fingerprint
+                    if context.reset_requested:
+                        current.last_reset_fingerprint = context.latest_user_fingerprint
+                result = current
         else:
             derived_channel, _, derived_user_id = device_key.partition(":")
             channel = (
@@ -674,6 +1022,10 @@ def _resolve_trace_state_from_metadata(
                 last_reset_fingerprint=(
                     context.latest_user_fingerprint if context.reset_requested else None
                 ),
+                root_observation_id=None,
+                current_turn_observation_id=None,
+                turn_index=0,
+                latest_user_preview=None,
             )
             _trace_state_by_device[device_key] = restored_state
             result = restored_state
@@ -745,6 +1097,334 @@ def _get_langfuse_client() -> Optional[Langfuse]:
     return _langfuse_client
 
 
+def _short_text_preview(text: Optional[str], max_chars: int = 72) -> Optional[str]:
+    if not isinstance(text, str):
+        return None
+    cleaned = re.sub(r"\s+", " ", text).strip()
+    if not cleaned:
+        return None
+    if len(cleaned) <= max_chars:
+        return cleaned
+    return f"{cleaned[:max_chars].rstrip()}..."
+
+
+def _build_trace_display_name(state: _TraceState) -> str:
+    base_name = f"{_TRACE_SESSION_LABEL_PREFIX}:{state.device_key}"
+    topic_preview = _short_text_preview(state.latest_topic_summary)
+    if topic_preview:
+        return f"{topic_preview} - {base_name}"
+    preview = _short_text_preview(state.latest_user_preview)
+    if preview:
+        return f"{preview} - {base_name}"
+    return base_name
+
+
+def _build_kernel_step_name(
+    *, category: str, context: _DeviceContext, state: _TraceState
+) -> str:
+    kernel_name = f"kernel.{category.lower()}"
+    topic_preview = _short_text_preview(context.latest_user_text) or _short_text_preview(
+        state.latest_user_preview
+    )
+    if topic_preview:
+        return f"{topic_preview} - {kernel_name}"
+    return kernel_name
+
+
+def _extract_quoted_topic(text: Optional[str]) -> Optional[str]:
+    """Extract a likely topic from Chinese/English quotation marks.
+
+    Examples:
+    - 「美国今天有什么新闻」 -> 美国今天有什么新闻
+    - “美国今天有什么新闻” -> 美国今天有什么新闻
+    """
+    if not isinstance(text, str):
+        return None
+    candidates: list[str] = []
+    for left, right in [("「", "」"), ("“", "”"), ('"', '"')]:
+        try:
+            start = text.index(left)
+            end = text.index(right, start + 1)
+        except ValueError:
+            continue
+        inner = text[start + 1 : end].strip()
+        if 4 <= len(inner) <= 120:
+            candidates.append(inner)
+    if not candidates:
+        return None
+    # Prefer the first candidate (usually the main topic).
+    return candidates[0]
+
+
+def _extract_quoted_topics(text: Optional[str]) -> list[str]:
+    """Extract all likely topics from Chinese/English quotation marks."""
+    if not isinstance(text, str):
+        return []
+    out: list[str] = []
+    for left, right in [("「", "」"), ("“", "”"), ('"', '"')]:
+        start = 0
+        while True:
+            try:
+                i = text.index(left, start)
+                j = text.index(right, i + 1)
+            except ValueError:
+                break
+            inner = text[i + 1 : j].strip()
+            if 4 <= len(inner) <= 120:
+                out.append(inner)
+            start = j + 1
+    return out
+
+
+_TOPIC_NOISE_PATTERNS: list[re.Pattern[str]] = [
+    # Process/flow words that are common in agent traces but not user topics.
+    re.compile(r"\bnew session\b", re.IGNORECASE),
+    re.compile(r"\bgreet\b", re.IGNORECASE),
+    re.compile(r"\bnext\b", re.IGNORECASE),
+    re.compile(r"\bplease wait\b", re.IGNORECASE),
+    # Internal labels/implementation details.
+    re.compile(r"\bexecution_core\b", re.IGNORECASE),
+    re.compile(r"\bkernel\.[a-z0-9_]+\b", re.IGNORECASE),
+]
+
+
+def _clean_topic_point(text: str) -> str:
+    t = re.sub(r"\s+", " ", text or "").strip()
+    if not t:
+        return ""
+    for p in _TOPIC_NOISE_PATTERNS:
+        t = p.sub(" ", t)
+    t = re.sub(r"\s+", " ", t).strip()
+    # Trim common separators left behind by removals.
+    t = t.strip(" -_/,:;，。；|")
+    return t
+
+
+def _is_noisy_topic_point(text: str) -> bool:
+    t = re.sub(r"\s+", " ", text or "").strip()
+    if not t:
+        return True
+    lowered = t.lower()
+    if lowered in {
+        "new session",
+        "greet user",
+        "next",
+        "continue",
+        "unknown",
+        "none",
+        "(none)",
+    }:
+        return True
+    return any(p.search(t) for p in _TOPIC_NOISE_PATTERNS)
+
+
+def _normalize_topic_summary(
+    topic_text: Optional[str],
+    *,
+    max_points: int = 3,
+    max_point_chars: int = 24,
+    max_total_chars: int = 72,
+) -> Optional[str]:
+    """Normalize one-or-multi-point topic text into a concise summary."""
+    if not isinstance(topic_text, str):
+        return None
+    cleaned = re.sub(r"\s+", " ", topic_text).strip()
+    if not cleaned:
+        return None
+
+    parts: list[str] = []
+    for segment in re.split(r"[\n;；|]+", cleaned):
+        if not segment:
+            continue
+        for sub in re.split(r"\s*/\s*", segment):
+            normalized = re.sub(r"^(?:[-*•]\s*|\d+[.)、]\s*)", "", sub).strip()
+            if normalized:
+                parts.append(normalized)
+
+    if not parts:
+        parts = [cleaned]
+
+    out: list[str] = []
+    dedupe: set[str] = set()
+    for part in parts:
+        part_clean = _clean_topic_point(re.sub(r"\s+", " ", part).strip())
+        if len(part_clean) < 2:
+            continue
+        if part_clean.startswith(("我", "我们", "I ", "We ")):
+            continue
+        if _is_noisy_topic_point(part_clean):
+            continue
+        lowered = part_clean.lower()
+        if lowered in dedupe:
+            continue
+        dedupe.add(lowered)
+        out.append(_short_text_preview(part_clean, max_chars=max_point_chars) or part_clean)
+        if len(out) >= max_points:
+            break
+
+    if not out:
+        return None
+    return _short_text_preview(" / ".join(out), max_chars=max_total_chars)
+
+
+def _tokenize_for_topic_overlap(text: Optional[str]) -> set[str]:
+    """Tokenize for fuzzy topic overlap across Chinese/English."""
+    if not isinstance(text, str) or not text.strip():
+        return set()
+    s = text.strip().lower()
+    tokens: set[str] = set()
+
+    # Collect CJK bigrams (reduces spurious overlap like just "今天").
+    cjk_chars = [ch for ch in s if "\u4e00" <= ch <= "\u9fff"]
+    for i in range(len(cjk_chars) - 1):
+        tokens.add(cjk_chars[i] + cjk_chars[i + 1])
+
+    # Collect ASCII word tokens.
+    word: list[str] = []
+    for ch in s:
+        if ch.isalnum() or ch in {"_", "-"}:
+            word.append(ch)
+        else:
+            if word:
+                tokens.add("".join(word))
+                word = []
+    if word:
+        tokens.add("".join(word))
+
+    return {t for t in tokens if len(t) >= 2}
+
+
+def _topic_overlap_score(candidate: str, user_text: Optional[str]) -> float:
+    cand_tokens = _tokenize_for_topic_overlap(candidate)
+    user_tokens = _tokenize_for_topic_overlap(user_text)
+    if not cand_tokens or not user_tokens:
+        return 0.0
+    inter = cand_tokens.intersection(user_tokens)
+    # Require the candidate to cover a meaningful portion of the user's topic tokens.
+    return len(inter) / max(1, min(len(cand_tokens), len(user_tokens)))
+
+
+def _should_accept_llm_topic_summary(
+    candidate: Optional[str],
+    *,
+    previous_topic: Optional[str],
+    latest_user_turn: Optional[str],
+) -> bool:
+    """Heuristic guardrail: reject obviously noisy/unrelated LLM topic summaries."""
+    if not isinstance(candidate, str) or not candidate.strip():
+        return False
+    cand = candidate.strip()
+    # Reject if the whole thing still looks like a process step label.
+    if _is_noisy_topic_point(cand):
+        return False
+
+    user_preview = _short_text_preview(latest_user_turn, max_chars=200)
+    if user_preview:
+        normalized = user_preview.strip().lower()
+        if normalized in {"你好", "hello", "hi", "/reset", "/new"}:
+            return True
+        if _topic_overlap_score(cand, user_preview) >= 0.20:
+            return True
+
+    prev_preview = _short_text_preview(previous_topic, max_chars=120)
+    if prev_preview and _topic_overlap_score(cand, prev_preview) >= 0.20:
+        return True
+
+    # Otherwise, candidate is likely hallucinated/unrelated; prefer fallbacks.
+    return False
+
+
+def _enforce_topic_point_count_on_shift(
+    candidate: Optional[str],
+    *,
+    previous_topic: Optional[str],
+    latest_user_turn: Optional[str],
+    max_total_chars: int,
+) -> Optional[str]:
+    """Ensure multi-point topics appear only when the user topic shifts."""
+    if not isinstance(candidate, str):
+        return None
+    cand = candidate.strip()
+    if not cand or " / " not in cand:
+        return candidate
+
+    points = [p.strip() for p in cand.split(" / ") if p.strip()]
+    if len(points) <= 1:
+        return points[0] if points else None
+
+    prev_preview = _short_text_preview(previous_topic, max_chars=120)
+    user_preview = _short_text_preview(latest_user_turn, max_chars=200)
+
+    # If user is still on the same topic, collapse to a single best-matching point.
+    if prev_preview and user_preview and _topic_overlap_score(prev_preview, user_preview) >= 0.20:
+        best = max(points, key=lambda p: _topic_overlap_score(p, prev_preview))
+        return _short_text_preview(best, max_chars=max_total_chars) or best
+
+    # If shifted, keep at most: [previous-related] / [new-related].
+    if prev_preview and user_preview:
+        prev_best = max(points, key=lambda p: _topic_overlap_score(p, prev_preview))
+        user_best = max(points, key=lambda p: _topic_overlap_score(p, user_preview))
+        kept: list[str] = []
+        for p in [prev_best, user_best]:
+            if p and p not in kept:
+                kept.append(p)
+        if kept:
+            joined = " / ".join(kept[:2])
+            return _short_text_preview(joined, max_chars=max_total_chars) or joined
+
+    # No reliable context: keep the first point only.
+    first = points[0]
+    return _short_text_preview(first, max_chars=max_total_chars) or first
+
+
+def _summarize_turn_topic(
+    *, user_text: Optional[str], output_text: Optional[str], max_chars: int = 72
+) -> Optional[str]:
+    """Summarize the turn topic from input + output (lightweight heuristic)."""
+    user_preview = _short_text_preview(user_text, max_chars=max_chars)
+    output_preview = _short_text_preview(output_text, max_chars=max_chars)
+
+    # Prefer output-derived topics only when they strongly overlap with the user's request.
+    if user_preview and user_preview.strip().lower() not in {"/reset", "/new"}:
+        best_candidate: Optional[str] = None
+        best_score = 0.0
+        for quoted in _extract_quoted_topics(output_text):
+            score = _topic_overlap_score(quoted, user_preview)
+            if score > best_score:
+                best_score = score
+                best_candidate = quoted
+
+        # Also consider the first non-empty line as a candidate "topic sentence".
+        if isinstance(output_text, str):
+            for line in output_text.splitlines():
+                cleaned = re.sub(r"\s+", " ", line).strip()
+                if cleaned:
+                    score = _topic_overlap_score(cleaned, user_preview)
+                    if score > best_score:
+                        best_score = score
+                        best_candidate = cleaned
+                    break
+
+        # Only accept output-derived topics when overlap is high enough; otherwise fallback to input.
+        if best_candidate is not None and best_score >= 0.34:
+            return _short_text_preview(best_candidate, max_chars=max_chars)
+
+    # Commands like /reset should not become the "topic".
+    if user_preview and user_preview.strip().lower() in {"/reset", "/new"}:
+        return output_preview or user_preview
+
+    # For normal turns, prefer user text, but fall back to output when user is empty/generic.
+    if user_preview and len(user_preview) >= 2:
+        if user_preview in {"你好", "hello", "hi"} and output_preview:
+            return output_preview
+        return user_preview
+    return output_preview or user_preview
+
+
+def _current_parent_observation_id(state: _TraceState) -> Optional[str]:
+    return state.current_turn_observation_id or state.root_observation_id
+
+
 def _emit_langfuse_node(
     *,
     state: _TraceState,
@@ -753,11 +1433,16 @@ def _emit_langfuse_node(
     name: str,
     input_payload: Any = None,
     output_payload: Any = None,
+    include_output: bool = True,
+    capture_handle: Optional[dict[str, Any]] = None,
+    end_observation: bool = True,
     metadata: Optional[dict] = None,
     model: Optional[str] = None,
     level: Optional[str] = None,
     status_message: Optional[str] = None,
-) -> None:
+    parent_observation_id: Optional[str] = None,
+    trace_name: Optional[str] = None,
+) -> Optional[str]:
     seq = _next_node_sequence(state)
     node_metadata = {
         "source": "arbiteros_kernel_callback",
@@ -779,9 +1464,10 @@ def _emit_langfuse_node(
         "observation_type": observation_type,
         "name": name,
         "input": input_payload,
-        "output": output_payload,
         "metadata": node_metadata,
     }
+    if include_output:
+        node_log["output"] = output_payload
     if isinstance(level, str) and level.strip():
         node_log["level"] = level.strip().upper()
     if isinstance(status_message, str) and status_message.strip():
@@ -790,7 +1476,7 @@ def _emit_langfuse_node(
 
     lf = _get_langfuse_client()
     if lf is None:
-        return
+        return None
 
     try:
         start_kwargs: dict[str, Any] = {
@@ -798,9 +1484,12 @@ def _emit_langfuse_node(
             "name": name,
             "as_type": "generation" if observation_type == "generation" else observation_type,
             "input": input_payload,
-            "output": output_payload,
             "metadata": node_metadata,
         }
+        if include_output:
+            start_kwargs["output"] = output_payload
+        if isinstance(parent_observation_id, str) and parent_observation_id.strip():
+            start_kwargs["parent_observation_id"] = parent_observation_id.strip()
         if observation_type == "generation":
             start_kwargs["model"] = model
         if isinstance(level, str) and level.strip():
@@ -810,13 +1499,15 @@ def _emit_langfuse_node(
 
         try:
             obs = lf.start_observation(**start_kwargs)
-        except TypeError:
-            if "level" not in start_kwargs and "status_message" not in start_kwargs:
+        except Exception as exc:
+            # Langfuse SDK versions differ in accepted kwargs (e.g. parent_observation_id).
+            # Older SDKs may raise TypeError or custom exception wrappers.
+            if "unexpected keyword argument" not in str(exc):
                 raise
             fallback_kwargs = {
                 k: v
                 for k, v in start_kwargs.items()
-                if k not in {"level", "status_message"}
+                if k not in {"level", "status_message", "parent_observation_id"}
             }
             obs = lf.start_observation(**fallback_kwargs)
             try:
@@ -830,8 +1521,11 @@ def _emit_langfuse_node(
             except Exception:
                 pass
 
+        if isinstance(capture_handle, dict):
+            capture_handle["handle"] = obs
+
         obs.update_trace(
-            name=f"openclaw.session:{state.device_key}",
+            name=trace_name or _build_trace_display_name(state),
             user_id=state.user_id,
             session_id=state.device_key,
             metadata={
@@ -840,7 +1534,10 @@ def _emit_langfuse_node(
                 "device_key": state.device_key,
             },
         )
-        obs.end()
+        emitted_observation_id = getattr(obs, "id", None)
+        if end_observation:
+            obs.end()
+        return emitted_observation_id if isinstance(emitted_observation_id, str) else None
     except Exception as exc:
         _save_json(
             "langfuse_emit_error",
@@ -851,6 +1548,7 @@ def _emit_langfuse_node(
                 "error": str(exc),
             },
         )
+        return None
 
 
 def _flush_langfuse() -> None:
@@ -1005,6 +1703,70 @@ def _sanitize_error_text_for_langfuse(text: str) -> str:
 
 
 def _format_tool_result_output_for_langfuse(content: Any) -> dict:
+    def _looks_like_error_text(text: str) -> bool:
+        if not isinstance(text, str):
+            return False
+        t = text.strip()
+        if not t:
+            return False
+        lowered = t.lower()
+        # Common structured error prefixes
+        if lowered.startswith(("error:", "exception:", "traceback (most recent call last):")):
+            return True
+
+        # HTTP-ish errors
+        if (
+            "client error" in lowered
+            or "server error" in lowered
+            or "bad request" in lowered
+            or "unauthorized" in lowered
+            or "forbidden" in lowered
+            or "not found" in lowered
+            or "too many requests" in lowered
+            or "internal server error" in lowered
+            or "bad gateway" in lowered
+            or "service unavailable" in lowered
+            or "gateway timeout" in lowered
+            or "http/1.1" in lowered
+            or "status code:" in lowered
+            or "error code:" in lowered
+            or "developer.mozilla.org/en-us/docs/web/http/status/" in lowered
+        ):
+            return True
+
+        # Rate limiting / quotas
+        if (
+            "rate limit" in lowered
+            or "rate_limited" in lowered
+            or "quota" in lowered
+            or "too many requests" in lowered
+            or " 429" in lowered
+        ):
+            return True
+
+        # Network / timeout / connectivity
+        if (
+            "timed out" in lowered
+            or "timeout" in lowered
+            or "connection refused" in lowered
+            or "connection reset" in lowered
+            or "connection error" in lowered
+            or "name or service not known" in lowered
+            or "temporary failure in name resolution" in lowered
+            or "dns" in lowered
+            or "econnrefused" in lowered
+            or "enotfound" in lowered
+            or "eai_again" in lowered
+            or "ssl" in lowered and "error" in lowered
+        ):
+            return True
+
+        # Light CN error indicators (keep strict to avoid false positives)
+        if lowered.startswith(("错误:", "异常:", "失败:")):
+            return True
+
+        return False
+
     payload: Optional[dict]
     if isinstance(content, dict):
         payload = content
@@ -1026,6 +1788,7 @@ def _format_tool_result_output_for_langfuse(content: Any) -> dict:
         error = payload.get("error")
         warning = payload.get("warning")
         warnings = payload.get("warnings")
+        inner_content = payload.get("content")
 
         if isinstance(error, str):
             payload["error"] = _sanitize_error_text_for_langfuse(error)
@@ -1043,15 +1806,38 @@ def _format_tool_result_output_for_langfuse(content: Any) -> dict:
             if normalized_level in {"DEBUG", "DEFAULT", "WARNING", "ERROR"}:
                 level = normalized_level
 
-        if level is None and isinstance(status, str):
-            lowered_status = status.strip().lower()
-            if lowered_status in {"error", "failed", "failure"}:
-                level = "ERROR"
-            elif lowered_status in {"warning", "warn"}:
-                level = "WARNING"
+        if level is None:
+            # status can be string ("error") or numeric HTTP-like status (>=400)
+            if isinstance(status, str):
+                lowered_status = status.strip().lower()
+                if lowered_status in {"error", "failed", "failure"}:
+                    level = "ERROR"
+                elif lowered_status in {"warning", "warn"}:
+                    level = "WARNING"
+            elif isinstance(status, int):
+                if status >= 400:
+                    level = "ERROR"
 
-        if level is None and isinstance(error, str) and error.strip():
+        # Any explicit error field is an error (string or object)
+        if level is None and error is not None and str(error).strip():
             level = "ERROR"
+        # Some tools return errors as plain strings in payload["content"] (e.g. "Error: Client error '429 ...'").
+        if (
+            level is None
+            and isinstance(inner_content, str)
+            and _looks_like_error_text(inner_content)
+        ):
+            level = "ERROR"
+            sanitized = _sanitize_error_text_for_langfuse(inner_content)
+            # Normalize into a structured error shape for easier UI rendering.
+            payload.setdefault("status", "error")
+            payload.setdefault("error", sanitized)
+        # Some tools return ok/success flags.
+        if level is None:
+            ok_flag = payload.get("ok")
+            success_flag = payload.get("success")
+            if ok_flag is False or success_flag is False:
+                level = "ERROR"
         if level is None and (
             (isinstance(warning, str) and warning.strip())
             or (
@@ -1116,6 +1902,15 @@ def _format_tool_result_output_for_langfuse(content: Any) -> dict:
             "status_message": None,
         }
 
+    # Plain-text error strings should show as ERROR in Langfuse (e.g. proxy/tool wrapper errors).
+    if isinstance(content, str) and _looks_like_error_text(content):
+        sanitized = _sanitize_error_text_for_langfuse(content)
+        return {
+            "output": {"content": {"status": "error", "error": sanitized}},
+            "level": "ERROR",
+            "status_message": sanitized,
+        }
+
     return {"output": {"content": content}, "level": None, "status_message": None}
 
 
@@ -1144,6 +1939,7 @@ def _emit_tool_result_nodes_if_needed(request_data: dict, state: _TraceState) ->
             and isinstance(tool_details.get("tool_name"), str)
             else "unknown_tool"
         )
+        tool_name = tool_name.strip() or "unknown_tool"
         tool_arguments = (
             tool_details.get("tool_arguments")
             if isinstance(tool_details, dict)
@@ -1160,12 +1956,14 @@ def _emit_tool_result_nodes_if_needed(request_data: dict, state: _TraceState) ->
         ):
             continue
 
+        next_index = _next_tool_result_index(state, tool_name)
+        tool_result_name = f"tool.{tool_name}.result.call_{next_index}"
         formatted_result = _format_tool_result_output_for_langfuse(content)
         _emit_langfuse_node(
             state=state,
             node_type="tool_result",
             observation_type="tool",
-            name=f"tool.{tool_name}.result",
+            name=tool_result_name,
             input_payload={
                 "tool_call_id": tool_call_id,
                 "tool_name": tool_name,
@@ -1176,54 +1974,97 @@ def _emit_tool_result_nodes_if_needed(request_data: dict, state: _TraceState) ->
                 "tool_call_id": tool_call_id,
                 "tool_name": tool_name,
                 "message_index": tool_result.get("message_index"),
+                "turn_index": state.turn_index,
+                "agent_graph_node": tool_result_name,
+                "agent_graph_step": max(state.turn_index, 1) * 10 + 1,
             },
             level=formatted_result.get("level"),
             status_message=formatted_result.get("status_message"),
+            parent_observation_id=_current_parent_observation_id(state),
+            trace_name=_build_trace_display_name(state),
         )
         emitted_any = True
 
     if emitted_any:
+        # Persist counters so tool result numbering stays monotonic across restarts.
+        _persist_trace_state_to_disk()
         _flush_langfuse()
 
 
-def _extract_structured_category_content(message_dict: Optional[dict]) -> tuple[Optional[str], Optional[str]]:
+def _extract_structured_category_content(
+    message_dict: Optional[dict],
+) -> tuple[Optional[str], Optional[str], Optional[str]]:
     if not isinstance(message_dict, dict):
-        return (None, None)
+        return (None, None, None)
     content = message_dict.get("content")
     parsed = _safe_json_loads(content)
     if isinstance(parsed, dict) and isinstance(parsed.get("content"), str):
         category = parsed.get("category")
+        topic = parsed.get("topic")
         return (
             category if isinstance(category, str) else None,
             parsed.get("content"),
+            topic if isinstance(topic, str) else None,
         )
-    return (None, content if isinstance(content, str) else None)
+    return (None, content if isinstance(content, str) else None, None)
 
 
-def _emit_input_node_if_needed(context: _DeviceContext, state: _TraceState) -> None:
+def _ensure_turn_node_if_needed(context: _DeviceContext, state: _TraceState) -> None:
     if not context.latest_user_text or not context.latest_user_fingerprint:
         return
 
     should_emit = False
+    next_turn_index = 0
+    preview = _short_text_preview(context.latest_user_text)
     with _trace_state_lock:
         if state.last_user_fingerprint != context.latest_user_fingerprint:
             state.last_user_fingerprint = context.latest_user_fingerprint
+            state.latest_user_preview = preview
+            state.current_turn_observation_id = None
+            state.turn_index += 1
+            next_turn_index = state.turn_index
             should_emit = True
 
     if not should_emit:
         return
 
-    _emit_langfuse_node(
+    # Close any prior turn handle defensively (e.g., if a previous request crashed mid-turn).
+    try:
+        with _trace_state_lock:
+            prev_handle = state.current_turn_handle
+            state.current_turn_handle = None
+        if prev_handle is not None:
+            prev_handle.end()
+    except Exception:
+        pass
+
+    turn_name = f"{_NODE_NAMESPACE_PREFIX}.turn.{next_turn_index:03d}"
+    # Keep `output` field (explicitly null) for consistency across nodes.
+    handle_box: dict[str, Any] = {}
+    turn_observation_id = _emit_langfuse_node(
         state=state,
-        node_type="input",
-        observation_type="span",
-        name="openclaw.input",
-        input_payload={"text": context.latest_user_text},
+        node_type="turn",
+        observation_type="chain",
+        name=turn_name,
+        # Start with raw user input; we'll refine to "<topic> - kernel.<category>" post-call.
+        input_payload=context.latest_user_text,
+        output_payload=None,
+        capture_handle=handle_box,
+        end_observation=False,
         metadata={
             "text_preview": context.latest_user_text[:300],
             "reset_requested": context.reset_requested,
+            "turn_index": next_turn_index,
+            "agent_graph_node": turn_name,
+            "agent_graph_step": next_turn_index * 10,
         },
+        parent_observation_id=state.root_observation_id,
+        trace_name=_build_trace_display_name(state),
     )
+    if isinstance(turn_observation_id, str):
+        with _trace_state_lock:
+            state.current_turn_observation_id = turn_observation_id
+            state.current_turn_handle = handle_box.get("handle")
 
 
 def _inject_trace_metadata(data: dict, state: _TraceState) -> dict:
@@ -1249,6 +2090,7 @@ def _emit_response_nodes(
     state = _resolve_trace_state_from_metadata(incoming, context=context)
     if state is None:
         state, _ = _ensure_trace_state(context)
+    _ensure_turn_node_if_needed(context, state)
 
     if not _should_emit_response_once(
         state,
@@ -1277,30 +2119,17 @@ def _emit_response_nodes(
 
     tool_calls = _extract_tool_calls(response_before_transform)
     if tool_calls:
-        for tool_call in tool_calls:
-            fn = tool_call.get("function") if isinstance(tool_call, dict) else None
-            tool_name = (
-                fn.get("name")
-                if isinstance(fn, dict) and isinstance(fn.get("name"), str)
-                else "unknown_tool"
-            )
-            tool_args = fn.get("arguments") if isinstance(fn, dict) else None
-            _emit_langfuse_node(
-                state=state,
-                node_type="tool_call",
-                observation_type="tool",
-                name=f"tool.{tool_name}",
-                input_payload={"arguments": tool_args},
-                output_payload=None,
-                metadata={
-                    "tool_call_id": tool_call.get("id"),
-                    "tool_name": tool_name,
-                },
-            )
-        _flush_langfuse()
+        # Keep only tool_result nodes and drop placeholder tool_call nodes without output.
         return
 
-    category, structured_content = _extract_structured_category_content(response_before_transform)
+    category, structured_content, llm_topic = _extract_structured_category_content(
+        response_before_transform
+    )
+    effective_category = (
+        category
+        if isinstance(category, str) and category.strip()
+        else "NOT_CLASSIFIED_RESPOND"
+    )
     raw_output_content = (
         response_before_transform.get("content")
         if isinstance(response_before_transform, dict)
@@ -1314,43 +2143,149 @@ def _emit_response_nodes(
     elif structured_content is not None:
         output_content = structured_content
 
-    if category and category != "EXECUTION_CORE__RESPOND":
-        _emit_langfuse_node(
-            state=state,
-            node_type="kernel_step",
-            observation_type="agent",
-            name=f"kernel.{category.lower()}",
-            input_payload={"content": structured_content},
-            output_payload=None,
-            metadata={"category": category},
-        )
+    generation_input_payload = {
+        "user_text": context.latest_user_text,
+        "category": effective_category,
+    }
+    max_topic_chars = int(os.getenv("ARBITEROS_LANGFUSE_TOPIC_MAX_CHARS", "40"))
+    max_topic_points = int(os.getenv("ARBITEROS_LANGFUSE_TOPIC_MAX_POINTS", "3"))
+    max_topic_point_chars = int(
+        os.getenv("ARBITEROS_LANGFUSE_TOPIC_POINT_MAX_CHARS", "24")
+    )
+    with _trace_state_lock:
+        previous_topic_summary = state.latest_topic_summary
+    previous_topic_clean = _normalize_topic_summary(
+        previous_topic_summary,
+        max_points=max_topic_points,
+        max_point_chars=max_topic_point_chars,
+        max_total_chars=max_topic_chars,
+    )
 
-    if (
-        isinstance(response_before_transform, dict)
-        and isinstance(response_after_transform, dict)
-        and response_before_transform.get("content") != response_after_transform.get("content")
-    ):
-        _emit_langfuse_node(
-            state=state,
-            node_type="transform",
-            observation_type="span",
-            name="kernel.transform.response_content",
-            input_payload={"before": response_before_transform.get("content")},
-            output_payload={"after": response_after_transform.get("content")},
-            metadata={"transform": "strip_category_wrapper"},
+    llm_topic_clean = _normalize_topic_summary(
+        llm_topic,
+        max_points=max_topic_points,
+        max_point_chars=max_topic_point_chars,
+        max_total_chars=max_topic_chars,
+    )
+    llm_topic_clean = _enforce_topic_point_count_on_shift(
+        llm_topic_clean,
+        previous_topic=previous_topic_clean or previous_topic_summary,
+        latest_user_turn=context.latest_user_text,
+        max_total_chars=max_topic_chars,
+    )
+    llm_topic_candidate = (
+        llm_topic_clean
+        if _should_accept_llm_topic_summary(
+            llm_topic_clean,
+            previous_topic=previous_topic_clean or previous_topic_summary,
+            latest_user_turn=context.latest_user_text,
         )
+        else None
+    )
+    turn_topic = (
+        llm_topic_candidate
+        or _short_text_preview(previous_topic_clean or previous_topic_summary, max_chars=max_topic_chars)
+        or _short_text_preview(context.latest_user_text, max_chars=max_topic_chars)
+        or _short_text_preview(state.latest_user_preview, max_chars=max_topic_chars)
+    )
+    persist_topic_needed = False
+    if isinstance(turn_topic, str) and turn_topic.strip():
+        with _trace_state_lock:
+            if state.latest_topic_summary != turn_topic:
+                state.latest_topic_summary = turn_topic
+                persist_topic_needed = True
+    if persist_topic_needed:
+        _persist_trace_state_to_disk()
 
+    output_name = f"{_NODE_NAMESPACE_PREFIX}.output.turn_{max(state.turn_index, 1):03d}"
     _emit_langfuse_node(
         state=state,
         node_type="output",
         observation_type="generation",
-        name="openclaw.output",
-        input_payload={"content": raw_output_content, "category": category},
-        output_payload={"content": output_content, "category": category},
-        metadata={"category": category},
+        name=output_name,
+        input_payload=generation_input_payload,
+        output_payload={"content": output_content, "category": effective_category},
+        metadata={
+            "category": effective_category,
+            "raw_output_content": raw_output_content,
+            "turn_index": state.turn_index,
+            "agent_graph_node": output_name,
+            "agent_graph_step": max(state.turn_index, 1) * 10 + 1,
+        },
         model=model,
+        parent_observation_id=_current_parent_observation_id(state),
+        trace_name=_build_trace_display_name(state),
     )
+    # Emit one kernel_step per turn for consistent Langfuse graphs.
+    # Topic fallback order:
+    #   1) LLM summarized topic (from current summary + latest turn)
+    #   2) previous summarized topic
+    #   3) latest user input
+    kernel_step_name = (
+        f"{turn_topic} - kernel.{effective_category.lower()}"
+        if turn_topic
+        else f"kernel.{effective_category.lower()}"
+    )
+
+    # Update the corresponding turn node's input rendering to match the kernel label.
+    # This keeps the graph consistent: turn input shows "<topic> - kernel.<category>".
+    _emit_langfuse_node(
+        state=state,
+        node_type="kernel_step",
+        observation_type="agent",
+        name=kernel_step_name,
+        input_payload={"content": structured_content},
+        output_payload=None,
+        metadata={
+            "category": effective_category,
+            "turn_index": state.turn_index,
+            "agent_graph_node": kernel_step_name,
+            "agent_graph_step": max(state.turn_index, 1) * 10 + 2,
+        },
+        parent_observation_id=_current_parent_observation_id(state),
+        trace_name=_build_trace_display_name(state),
+    )
+
+    # Close the turn span after the final response nodes are emitted.
+    try:
+        with _trace_state_lock:
+            turn_handle = state.current_turn_handle
+            state.current_turn_handle = None
+        if turn_handle is not None:
+            turn_handle.end()
+    except Exception:
+        pass
     _flush_langfuse()
+
+
+def _ensure_non_empty_assistant_message(
+    message_dict: Optional[dict],
+    *,
+    fallback_text: str,
+) -> Optional[dict]:
+    """Guardrail: never return/emit an assistant message with empty textual content."""
+    if not isinstance(message_dict, dict):
+        return message_dict
+    # Tool calls (or legacy function_call) legitimately have no content.
+    if message_dict.get("tool_calls") or message_dict.get("function_call"):
+        return message_dict
+
+    def _is_valid_text_content(text: str) -> bool:
+        normalized = text.strip()
+        if not normalized:
+            return False
+        return normalized not in _MALFORMED_PLACEHOLDER_CONTENTS
+
+    content = message_dict.get("content")
+    if isinstance(content, str) and _is_valid_text_content(content):
+        return message_dict
+    if isinstance(content, list):
+        extracted = _extract_text_from_message_content(content)
+        if _is_valid_text_content(extracted):
+            return message_dict
+    if not fallback_text or not isinstance(fallback_text, str):
+        fallback_text = "抱歉，我这次没有生成有效回复，请重试。"
+    return {**message_dict, "content": fallback_text}
 
 
 def _emit_failure_node(request_data: Optional[dict], original_exception: Exception) -> None:
@@ -1359,15 +2294,31 @@ def _emit_failure_node(request_data: Optional[dict], original_exception: Excepti
     state = _resolve_trace_state_from_metadata(incoming, context=context)
     if state is None:
         state, _ = _ensure_trace_state(context)
+    _ensure_turn_node_if_needed(context, state)
+    error_text = _sanitize_error_text_for_langfuse(str(original_exception))
+    error_preview = _short_text_preview(error_text, max_chars=180) or "LLM call failed"
     _emit_langfuse_node(
         state=state,
         node_type="failure",
         observation_type="span",
-        name="openclaw.failure",
+        name=f"{_NODE_NAMESPACE_PREFIX}.failure",
         input_payload=None,
-        output_payload={"error": str(original_exception)},
+        output_payload={"error": error_text},
         metadata={"error_type": type(original_exception).__name__},
+        level="ERROR",
+        status_message=error_preview,
+        parent_observation_id=_current_parent_observation_id(state),
+        trace_name=_build_trace_display_name(state),
     )
+    # Close any open turn handle on failure.
+    try:
+        with _trace_state_lock:
+            turn_handle = state.current_turn_handle
+            state.current_turn_handle = None
+        if turn_handle is not None:
+            turn_handle.end()
+    except Exception:
+        pass
     _flush_langfuse()
 
 
@@ -1375,10 +2326,48 @@ def _emit_failure_node(request_data: Optional[dict], original_exception: Excepti
 # 响应修改规则（流式 + 非流式）：用于在 post_call_success 时改写返回给调用方的内容
 # - 若有 tool_calls：不改动
 # - 若为 content 且为 JSON 字符串（含 category/content）：只保留内层 content，去掉 category，
-#   并正向记录剥去的 category 到 _stripped_categories，供 pre_call 时把 history 包回
+#   并按 device_key 记录剥去的 category，供 pre_call 时把 history 包回
 # ---------------------------------------------------------------------------
+def _resolve_category_cache_device_key(data: dict) -> Optional[str]:
+    if not isinstance(data, dict):
+        return None
+    metadata = data.get("metadata")
+    if isinstance(metadata, dict):
+        explicit = metadata.get("arbiteros_device_key")
+        if isinstance(explicit, str) and explicit.strip():
+            return explicit.strip()
+    context = _build_device_context(data)
+    return context.device_key if isinstance(context.device_key, str) else None
+
+
+def _record_stripped_category(data: dict, category: Any) -> None:
+    device_key = _resolve_category_cache_device_key(data)
+    if not device_key:
+        return
+    normalized_category = category if isinstance(category, str) else ""
+    with _stripped_categories_lock:
+        categories = _stripped_categories_by_device.setdefault(device_key, [])
+        categories.append(normalized_category)
+        if len(categories) > _MAX_STRIPPED_CATEGORIES:
+            del categories[: len(categories) - _MAX_STRIPPED_CATEGORIES]
+
+
+def _get_stripped_categories_for_device(device_key: Optional[str]) -> list[str]:
+    if not isinstance(device_key, str) or not device_key.strip():
+        return []
+    with _stripped_categories_lock:
+        categories = _stripped_categories_by_device.get(device_key.strip(), [])
+        return list(categories)
+
+
+def _clear_stripped_categories_for_device(device_key: Optional[str]) -> None:
+    if not isinstance(device_key, str) or not device_key.strip():
+        return
+    with _stripped_categories_lock:
+        _stripped_categories_by_device.pop(device_key.strip(), None)
+
+
 def _response_transform_content_only(data: dict, message_dict: dict) -> Optional[dict]:
-    global _stripped_categories
     if message_dict.get("tool_calls"):
         return message_dict
     content = message_dict.get("content")
@@ -1388,9 +2377,7 @@ def _response_transform_content_only(data: dict, message_dict: dict) -> Optional
         inner = json.loads(content)
         if isinstance(inner, dict) and "content" in inner:
             category = inner.get("category", "")
-            _stripped_categories.append(category)
-            if len(_stripped_categories) > _MAX_STRIPPED_CATEGORIES:
-                _stripped_categories.pop(0)
+            _record_stripped_category(data, category)
             out = {**message_dict, "content": inner["content"]}
             return out
     except (json.JSONDecodeError, TypeError):
@@ -1440,14 +2427,93 @@ def _extract_text_to_wrap(msg: dict) -> tuple[Optional[str], Optional[Any], Opti
     return (None, None, None)
 
 
-def _wrap_messages_with_categories(data: dict) -> dict:
+def _inject_topic_summary_hint(
+    data: dict, *, state: _TraceState, context: _DeviceContext
+) -> dict:
+    messages = data.get("messages")
+
+    previous_topic_raw = state.latest_topic_summary if isinstance(state.latest_topic_summary, str) else None
+    previous_topic = (
+        _normalize_topic_summary(
+            previous_topic_raw,
+            max_points=3,
+            max_point_chars=32,
+            max_total_chars=120,
+        )
+        or _short_text_preview(previous_topic_raw, max_chars=120)
+        or "(none)"
+    )
+    latest_user_turn = (
+        _short_text_preview(context.latest_user_text, max_chars=200)
+        if isinstance(context.latest_user_text, str)
+        else None
+    ) or "(none)"
+
+    marker = "[arbiteros_topic_hint]"
+    hint_content = (
+        f"{marker}\n"
+        "Generate JSON string field `topic` (for trace naming) using BOTH:\n"
+        "1) current summarized topic\n"
+        "2) latest user turn\n"
+        "\n"
+        "Requirements for `topic`:\n"
+        "- Output a single short topic phrase by default.\n"
+        "- Only output multiple topic points (separated by ` / `) when the user's topic clearly shifts.\n"
+        "- If shifted, include the previous topic + the new topic (only as needed).\n"
+        "- Use short noun-phrase style topics (no sentences, no steps, no process words).\n"
+        "- Do NOT include: new session, greet user, next, please wait, kernel.*, execution_core.\n"
+        "- If latest user turn is generic/greeting, keep the current summarized topic.\n"
+        "Fallback order for `topic`: current summarized topic -> latest user turn.\n"
+        f"Current summarized topic: {previous_topic}\n"
+        f"Latest user turn: {latest_user_turn}"
+    )
+    hint_message = {"role": "system", "content": hint_content}
+
+    # Chat Completions style requests.
+    if isinstance(messages, list):
+        for message in messages:
+            if not isinstance(message, dict):
+                continue
+            if message.get("role") != "system":
+                continue
+            content = message.get("content")
+            if isinstance(content, str) and marker in content:
+                return data
+
+        insert_at = 0
+        for i in range(len(messages) - 1, -1, -1):
+            msg = messages[i]
+            if isinstance(msg, dict) and msg.get("role") == "user":
+                insert_at = i
+                break
+
+        new_messages = list(messages)
+        new_messages.insert(insert_at, hint_message)
+        return {**data, "messages": new_messages}
+
+    # Responses API style requests: append hint into `instructions`.
+    if _is_responses_api_request(data):
+        instructions = data.get("instructions")
+        if isinstance(instructions, str) and marker in instructions:
+            return data
+        if isinstance(instructions, str) and instructions.strip():
+            new_instructions = f"{instructions.rstrip()}\n\n{hint_content}"
+        else:
+            new_instructions = hint_content
+        return {**data, "instructions": new_instructions}
+
+    return data
+
+
+def _wrap_messages_with_categories(data: dict, *, device_key: Optional[str] = None) -> dict:
     """在 pre_call 前把 incoming 里 role=assistant 且 content 有文本的 history 从后往前包回结构。
-    包的时候不消耗 list：从 _stripped_categories 末尾往前按位置取（最后一个 assistant 对应 list[-1]，
+    包的时候不消耗 list：从当前 device_key 的 category 列表末尾往前按位置取（最后一个 assistant 对应 list[-1]，
     倒数第二个对应 list[-2]…），与剥去的 history 一一对应。list 只在剥时追加，超 1000 删最前的。
     """
-    global _stripped_categories
+    resolved_device_key = device_key or _resolve_category_cache_device_key(data)
+    stripped_categories = _get_stripped_categories_for_device(resolved_device_key)
     messages = data.get("messages")
-    if not messages or not _stripped_categories:
+    if not messages or not stripped_categories:
         return data
     messages = list(messages)
     idx_from_end = 0  # 当前包的是「从末尾数第几个」assistant，0=最后一个
@@ -1462,9 +2528,9 @@ def _wrap_messages_with_categories(data: dict) -> dict:
         text, content_list, part_idx = _extract_text_to_wrap(msg)
         if text is None:
             continue
-        if idx_from_end >= len(_stripped_categories):
+        if idx_from_end >= len(stripped_categories):
             break
-        category = _stripped_categories[-(idx_from_end + 1)]
+        category = stripped_categories[-(idx_from_end + 1)]
         idx_from_end += 1
         wrapped = json.dumps({"category": category, "content": text}, ensure_ascii=False)
         if content_list is not None and part_idx is not None:
@@ -1497,34 +2563,109 @@ class MyCustomHandler(CustomLogger):
     ) -> Optional[
         Union[Exception, str, dict]
     ]:  # raise exception if invalid, return a str for the user to receive - if rejected, or return a modified dictionary for passing into litellm
-        # 先把 history 里 assistant 的 content 按剥去时记录的 category 从后往前包回结构，再请求
-        data = _wrap_messages_with_categories(data)
+        # If reset marker exists in history, drop prior stale turns first.
+        messages = data.get("messages")
+        if isinstance(messages, list):
+            truncated = _truncate_messages_after_last_reset(messages)
+            if truncated is not messages:
+                data = {**data, "messages": truncated}
+
         context = _build_device_context(data)
-        state, created_new_trace = _ensure_trace_state(context)
+        if context.reset_requested:
+            # Reset should start with a clean category cache for this device.
+            _clear_stripped_categories_for_device(context.device_key)
+        else:
+            # 把 history 里 assistant 的 content 按当前会话记录的 category 从后往前包回结构，再请求
+            data = _wrap_messages_with_categories(data, device_key=context.device_key)
+        # Prefer explicit trace binding from caller metadata when provided.
+        metadata = data.get("metadata") if isinstance(data, dict) else None
+        bound_trace_id = (
+            metadata.get("arbiteros_trace_id")
+            if isinstance(metadata, dict) and isinstance(metadata.get("arbiteros_trace_id"), str)
+            else None
+        )
+        bound_device_key = (
+            metadata.get("arbiteros_device_key")
+            if isinstance(metadata, dict) and isinstance(metadata.get("arbiteros_device_key"), str)
+            else None
+        )
+        created_new_trace = False
+        state = None
+        # If a reset/new-session is explicitly requested, rotate via kernel state so the
+        # next call is guaranteed to have a fresh trace_id (even if caller replays old metadata).
+        if context.reset_requested:
+            state, created_new_trace = _ensure_trace_state(context)
+        elif bound_trace_id and bound_device_key:
+            _sync_trace_state_from_disk()
+            previous_trace_id: Optional[str] = None
+            with _trace_state_lock:
+                current = _trace_state_by_device.get(bound_device_key)
+                if current is not None:
+                    previous_trace_id = current.trace_id
+            state = _resolve_trace_state_from_metadata(data, context=context)
+            if state is not None:
+                created_new_trace = previous_trace_id != state.trace_id
+        if state is None:
+            state, created_new_trace = _ensure_trace_state(context)
+
+        # Clean up any previously persisted noisy topic summaries so future traces
+        # don't inherit "process step" labels (e.g., "new session / greet user / next").
+        max_topic_chars = int(os.getenv("ARBITEROS_LANGFUSE_TOPIC_MAX_CHARS", "40"))
+        max_topic_points = int(os.getenv("ARBITEROS_LANGFUSE_TOPIC_MAX_POINTS", "3"))
+        max_topic_point_chars = int(
+            os.getenv("ARBITEROS_LANGFUSE_TOPIC_POINT_MAX_CHARS", "24")
+        )
+        with _trace_state_lock:
+            previous_topic_summary = state.latest_topic_summary
+        cleaned_previous_topic = _normalize_topic_summary(
+            previous_topic_summary,
+            max_points=max_topic_points,
+            max_point_chars=max_topic_point_chars,
+            max_total_chars=max_topic_chars,
+        )
+        if cleaned_previous_topic != previous_topic_summary:
+            with _trace_state_lock:
+                state.latest_topic_summary = cleaned_previous_topic
+            _persist_trace_state_to_disk()
+        data = _inject_topic_summary_hint(data, state=state, context=context)
+
         if created_new_trace:
-            _emit_langfuse_node(
+            root_observation_id = _emit_langfuse_node(
                 state=state,
                 node_type="trace_start",
                 observation_type="span",
-                name="openclaw.trace.start",
+                name=f"{_NODE_NAMESPACE_PREFIX}.trace.start",
                 input_payload={
-                    "reason": "reset_command" if context.reset_requested else "new_device_or_session"
+                    "reason": (
+                        "reset_requested"
+                        if context.reset_requested
+                        else ("external_trace_binding" if bound_trace_id else "new_device_or_session")
+                    )
                 },
-                metadata={"reset_requested": context.reset_requested},
+                metadata={
+                    "reset_requested": context.reset_requested,
+                    "agent_graph_node": f"{_NODE_NAMESPACE_PREFIX}.trace.start",
+                    "agent_graph_step": 0,
+                },
+                trace_name=_build_trace_display_name(state),
             )
-        _emit_input_node_if_needed(context, state)
+            if isinstance(root_observation_id, str):
+                with _trace_state_lock:
+                    state.root_observation_id = root_observation_id
+        _ensure_turn_node_if_needed(context, state)
         _emit_tool_result_nodes_if_needed(data, state)
         data = _inject_trace_metadata(data, state)
         filtered_data = {
             k: data[k] for k in ["model", "messages", "tools", "metadata"] if k in data
         }
-        _console.print(
-            Panel(
-                Pretty(filtered_data),
-                title="Pre Call Hook - Incoming Data",
+        if os.getenv("ARBITEROS_LITELLM_CALLBACK_DEBUG", "").strip() == "1":
+            _console.print(
+                Panel(
+                    Pretty(filtered_data),
+                    title="Pre Call Hook - Incoming Data",
+                )
             )
-        )
-        _save_json("pre_call", {"call_type": call_type, "incoming": filtered_data})
+            _save_json("pre_call", {"call_type": call_type, "incoming": filtered_data})
         return data
 
     async def async_post_call_failure_hook(
@@ -1600,12 +2741,13 @@ class MyCustomHandler(CustomLogger):
                 "provider_specific_fields": provider_fields,
                 "annotations": [],
             }
-        _console.print(
-            Panel(
-                Pretty(msg),
-                title="Post Call Success Hook - Response",
+        if os.getenv("ARBITEROS_LITELLM_CALLBACK_DEBUG", "").strip() == "1":
+            _console.print(
+                Panel(
+                    Pretty(msg),
+                    title="Post Call Success Hook - Response",
+                )
             )
-        )
         _save_json("post_call_success", {"response": msg})
 
         raw_msg_dict = (
@@ -1639,6 +2781,27 @@ class MyCustomHandler(CustomLogger):
                                 setattr(response, "output_text", new_content)
                     except Exception:
                         pass
+        fallback_text = os.getenv(
+            "ARBITEROS_EMPTY_ASSISTANT_FALLBACK",
+            "抱歉，我这次没有生成有效回复，请重试。",
+        )
+        final_msg_dict = _ensure_non_empty_assistant_message(
+            final_msg_dict, fallback_text=fallback_text
+        )
+        # If we injected fallback, keep the returned response object consistent.
+        if (
+            isinstance(final_msg_dict, dict)
+            and isinstance(final_msg_dict.get("content"), str)
+            and not (final_msg_dict.get("tool_calls") or final_msg_dict.get("function_call"))
+        ):
+            try:
+                if is_chat_completion:
+                    response.choices[0].message = Message(**final_msg_dict)
+                else:
+                    if hasattr(response, "output_text"):
+                        setattr(response, "output_text", final_msg_dict.get("content"))
+            except Exception:
+                pass
         _emit_response_nodes(
             request_data=data,
             response_before_transform=raw_msg_dict,
@@ -1651,12 +2814,13 @@ class MyCustomHandler(CustomLogger):
         user_api_key_dict: UserAPIKeyAuth,
         response: str,
     ) -> Any:
-        _console.print(
-            Panel(
-                Pretty(response),
-                title="Streaming response received",
+        if os.getenv("ARBITEROS_LITELLM_CALLBACK_DEBUG", "").strip() == "1":
+            _console.print(
+                Panel(
+                    Pretty(response),
+                    title="Streaming response received",
+                )
             )
-        )
 
     async def async_post_call_streaming_iterator_hook(
         self,
@@ -1666,14 +2830,11 @@ class MyCustomHandler(CustomLogger):
     ) -> AsyncGenerator[Any, None]:
         """流式：若配置了 response_transform，则先收齐再改再流式输出；否则边收边 yield 并写 jsonl。"""
         collected: list = []
-        is_responses_input_request = (
-            isinstance(request_data, dict)
-            and isinstance(request_data.get("input"), list)
-            and not isinstance(request_data.get("messages"), list)
-        )
+        is_responses_input_request = _is_responses_api_request(request_data)
         # Transform logic is chat-completions oriented; Responses API streaming should pass through.
         apply_transform = response_transform is not None and not is_responses_input_request
         completed_response_obj: Optional[dict] = None
+        responses_text_parts: list[str] = []
 
         async for chunk in response:
             chunk_dump: Optional[dict] = None
@@ -1700,7 +2861,11 @@ class MyCustomHandler(CustomLogger):
                 if isinstance(response_obj, dict):
                     completed_response_obj = response_obj
 
-            if isinstance(chunk, (ModelResponseStream, ModelResponse)):
+            if is_responses_input_request:
+                part = _extract_stream_text_from_responses_chunk(chunk, chunk_dump)
+                if part:
+                    responses_text_parts.append(part)
+            if isinstance(chunk, (ModelResponseStream, ModelResponse)) and not is_responses_input_request:
                 collected.append(chunk)
             if not apply_transform:
                 out = chunk
@@ -1713,37 +2878,61 @@ class MyCustomHandler(CustomLogger):
                         out = chunk
                 yield out
 
-        if not collected:
-            if is_responses_input_request and isinstance(completed_response_obj, dict):
-                completed_text = _extract_text_from_responses_output(completed_response_obj)
-                synthesized_response = {
-                    "content": completed_text if completed_text else None,
-                    "role": "assistant",
-                    "tool_calls": None,
-                    "function_call": None,
-                    "provider_specific_fields": {},
-                    "annotations": [],
-                }
-                _save_json(
-                    "post_call_success",
-                    {
-                        "response": synthesized_response,
-                        "response_summary": {
-                            "source": "responses.completed_event",
-                            "status": completed_response_obj.get("status"),
-                            "output_items": (
-                                len(completed_response_obj.get("output"))
-                                if isinstance(completed_response_obj.get("output"), list)
-                                else None
-                            ),
-                        },
+        if is_responses_input_request:
+            completed_text = (
+                _extract_text_from_responses_output(completed_response_obj)
+                if isinstance(completed_response_obj, dict)
+                else ""
+            )
+            if not completed_text and responses_text_parts:
+                completed_text = "".join(responses_text_parts).strip()
+            synthesized_response = {
+                "content": completed_text if completed_text else None,
+                "role": "assistant",
+                "tool_calls": None,
+                "function_call": None,
+                "provider_specific_fields": {"format": "openai-responses-v1"},
+                "annotations": [],
+            }
+            fallback_text = os.getenv(
+                "ARBITEROS_EMPTY_ASSISTANT_FALLBACK",
+                "抱歉，我这次没有生成有效回复，请重试。",
+            )
+            synthesized_response = _ensure_non_empty_assistant_message(
+                synthesized_response, fallback_text=fallback_text
+            )
+            _save_json(
+                "post_call_success",
+                {
+                    "response": synthesized_response,
+                    "response_summary": {
+                        "source": (
+                            "responses.completed_event"
+                            if isinstance(completed_response_obj, dict)
+                            else "responses.stream_delta_fallback"
+                        ),
+                        "status": (
+                            completed_response_obj.get("status")
+                            if isinstance(completed_response_obj, dict)
+                            else None
+                        ),
+                        "output_items": (
+                            len(completed_response_obj.get("output"))
+                            if isinstance(completed_response_obj, dict)
+                            and isinstance(completed_response_obj.get("output"), list)
+                            else None
+                        ),
                     },
-                )
-                _emit_response_nodes(
-                    request_data=request_data,
-                    response_before_transform=synthesized_response,
-                    response_after_transform=synthesized_response,
-                )
+                },
+            )
+            _emit_response_nodes(
+                request_data=request_data,
+                response_before_transform=synthesized_response,
+                response_after_transform=synthesized_response,
+            )
+            return
+
+        if not collected:
             return
 
         try:
@@ -1779,6 +2968,12 @@ class MyCustomHandler(CustomLogger):
                 modified_dict = response_transform(request_data, msg_dict)
             if modified_dict is not None and isinstance(modified_dict, dict):
                 msg_dict = modified_dict
+
+        fallback_text = os.getenv(
+            "ARBITEROS_EMPTY_ASSISTANT_FALLBACK",
+            "抱歉，我这次没有生成有效回复，请重试。",
+        )
+        msg_dict = _ensure_non_empty_assistant_message(msg_dict, fallback_text=fallback_text)
 
         _emit_response_nodes(
             request_data=request_data,
