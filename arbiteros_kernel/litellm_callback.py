@@ -9,6 +9,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, AsyncGenerator, Optional, Union
 
+try:
+    from arbiteros_kernel.instruction_parsing import InstructionBuilder
+except ImportError:
+    InstructionBuilder = None  # type: ignore[misc, assignment]
+
 import litellm
 from langfuse import Langfuse
 from dotenv import load_dotenv
@@ -35,6 +40,8 @@ _LANGFUSE_NODE_LOG_FILE = (
 )
 _LANGFUSE_NODE_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
 _TRACE_STATE_FILE = Path(__file__).resolve().parent.parent / "log" / "trace_state.json"
+_INSTRUCTION_LOG_DIR = Path(__file__).resolve().parent.parent / "log"
+_INSTRUCTION_LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 # Ensure `.env` is loaded when LiteLLM imports this module via `litellm_config.yaml`.
 # This makes Langfuse/MLflow callbacks work without manually exporting env vars.
@@ -45,6 +52,22 @@ load_dotenv(override=False)
 _stripped_categories_by_device: dict[str, list[str]] = {}
 _stripped_categories_lock = threading.Lock()
 _MAX_STRIPPED_CATEGORIES = 1000
+
+# instruction_parsing: per-trace InstructionBuilder cache
+_instruction_builders_by_trace: dict[str, Any] = {}
+_instruction_builders_lock = threading.Lock()
+_MAX_INSTRUCTION_BUILDERS = 256
+
+# 旧 litellm category -> instruction_parser instruction_type 映射（向后兼容）
+_CATEGORY_TO_INSTRUCTION_TYPE: dict[str, str] = {
+    "COGNITIVE_CORE__GENERATE": "REASON",
+    "COGNITIVE_CORE__DECOMPOSE": "PLAN",
+    "COGNITIVE_CORE__REFLECT": "CRITIQUE",
+    "EXECUTION_CORE__TOOL_CALL": "EXEC",
+    "EXECUTION_CORE__TOOL_BUILD": "EXEC",
+    "EXECUTION_CORE__DELEGATE": "HANDOFF",
+    "EXECUTION_CORE__RESPOND": "RESPOND",
+}
 
 # 极短且不完整的内容通常意味着结构化输出异常（例如只返回 "{"）。
 _MALFORMED_PLACEHOLDER_CONTENTS = {"{", "}", "[", "]", "{}", "[]"}
@@ -1644,6 +1667,42 @@ def _extract_tool_calls(message_dict: Optional[dict]) -> list[dict]:
     return out
 
 
+def _extract_tool_call_details_from_response(response_dict: Optional[dict]) -> list[dict[str, Any]]:
+    """从 LLM 响应中提取 tool_calls 的 (id, name, arguments)，用于 post_call_success 时立即存储。"""
+    out: list[dict[str, Any]] = []
+    raw_tool_calls = (
+        response_dict.get("tool_calls")
+        if isinstance(response_dict, dict)
+        else None
+    )
+    if not isinstance(raw_tool_calls, list):
+        return out
+    for tc in raw_tool_calls:
+        if not isinstance(tc, dict):
+            continue
+        tool_call_id = tc.get("id")
+        if not isinstance(tool_call_id, str) or not tool_call_id:
+            continue
+        fn = tc.get("function")
+        tool_name = (
+            fn.get("name")
+            if isinstance(fn, dict) and isinstance(fn.get("name"), str)
+            else "unknown_tool"
+        )
+        raw_args = fn.get("arguments") if isinstance(fn, dict) else None
+        parsed_args = (
+            _safe_json_loads(raw_args)
+            if isinstance(raw_args, str)
+            else None
+        )
+        out.append({
+            "tool_call_id": tool_call_id,
+            "tool_name": tool_name.strip() or "unknown_tool",
+            "arguments": parsed_args if isinstance(parsed_args, dict) else (raw_args or {}),
+        })
+    return out
+
+
 def _extract_tool_results(messages: list[Any]) -> list[dict]:
     out: list[dict] = []
     for idx, msg in enumerate(messages):
@@ -2046,6 +2105,25 @@ def _emit_tool_result_nodes_if_needed(request_data: dict, state: _TraceState) ->
         )
         emitted_any = True
 
+        # instruction_parsing: record tool call to trace's instruction file
+        if InstructionBuilder is not None and state.trace_id:
+            builder = _get_instruction_builder_for_trace(state.trace_id)
+            if builder is not None:
+                try:
+                    result_obj: Optional[dict] = None
+                    if isinstance(content, str) and content.strip():
+                        parsed = _safe_json_loads(content)
+                        result_obj = parsed if isinstance(parsed, dict) else {"raw": content}
+                    builder.add_from_tool_call(
+                        tool_name=tool_name,
+                        tool_call_id=tool_call_id,
+                        arguments=tool_arguments or {},
+                        result=result_obj,
+                    )
+                    _save_instructions_to_trace_file(state.trace_id, builder)
+                except Exception:
+                    pass
+
     if emitted_any:
         # Persist counters so tool result numbering stays monotonic across restarts.
         _persist_trace_state_to_disk()
@@ -2446,6 +2524,50 @@ def _resolve_category_cache_device_key(data: dict) -> Optional[str]:
     return context.device_key if isinstance(context.device_key, str) else None
 
 
+def _get_instruction_builder_for_trace(trace_id: str) -> Optional[Any]:
+    """Get or create InstructionBuilder for a trace_id. Returns None if instruction_parsing unavailable."""
+    if InstructionBuilder is None or not isinstance(trace_id, str) or not trace_id.strip():
+        return None
+    with _instruction_builders_lock:
+        builder = _instruction_builders_by_trace.get(trace_id)
+        if builder is None:
+            builder = InstructionBuilder(trace_id=trace_id)
+            _instruction_builders_by_trace[trace_id] = builder
+            # Evict oldest if over limit (simple FIFO by trace_id order)
+            if len(_instruction_builders_by_trace) > _MAX_INSTRUCTION_BUILDERS:
+                for k in list(_instruction_builders_by_trace.keys()):
+                    if k != trace_id:
+                        del _instruction_builders_by_trace[k]
+                        break
+        return builder
+
+
+def _save_instructions_to_trace_file(trace_id: str, builder: Any) -> None:
+    """Persist InstructionBuilder to log/{trace_id}.json"""
+    if not trace_id or not builder:
+        return
+    try:
+        path = _INSTRUCTION_LOG_DIR / f"{trace_id}.json"
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(builder.to_json())
+    except Exception:
+        pass  # Best-effort; don't fail the main flow
+
+
+def _normalize_category_to_instruction_type(category: Any) -> str:
+    """Map category (PREFIX__TYPE format or legacy) to instruction_parser instruction_type."""
+    if not isinstance(category, str) or not category.strip():
+        return "REASON"
+    c = category.strip()
+    # 先查显式映射（兼容旧格式如 COGNITIVE_CORE__GENERATE -> REASON）
+    if c in _CATEGORY_TO_INSTRUCTION_TYPE:
+        return _CATEGORY_TO_INSTRUCTION_TYPE[c]
+    # 带前缀格式（如 COGNITIVE_CORE__REASON）：去掉前缀，取后半部分
+    if "__" in c:
+        return c.split("__")[-1]
+    return c
+
+
 def _record_stripped_category(data: dict, category: Any) -> None:
     device_key = _resolve_category_cache_device_key(data)
     if not device_key:
@@ -2484,6 +2606,26 @@ def _response_transform_content_only(data: dict, message_dict: dict) -> Optional
         if isinstance(inner, dict) and "content" in inner:
             category = inner.get("category", "")
             _record_stripped_category(data, category)
+
+            # instruction_parsing: parse and persist to log/{trace_id}.json
+            metadata = data.get("metadata") if isinstance(data, dict) else {}
+            trace_id = (
+                metadata.get("arbiteros_trace_id")
+                if isinstance(metadata, dict)
+                else None
+            )
+            if isinstance(trace_id, str) and trace_id.strip() and InstructionBuilder is not None:
+                builder = _get_instruction_builder_for_trace(trace_id)
+                if builder is not None:
+                    instruction_type = _normalize_category_to_instruction_type(category)
+                    try:
+                        builder.add_from_structured_output(
+                            structured={"intent": instruction_type, "content": inner["content"]}
+                        )
+                        _save_instructions_to_trace_file(trace_id, builder)
+                    except Exception:
+                        pass  # Best-effort; don't fail the main flow
+
             out = {**message_dict, "content": inner["content"]}
             return out
     except (json.JSONDecodeError, TypeError):
@@ -2870,6 +3012,29 @@ class MyCustomHandler(CustomLogger):
         )
         final_msg_dict = raw_msg_dict
 
+        # instruction_parsing: 在 post_call_success 时立即截获 tool_calls（name+arguments），单独存一条
+        if raw_msg_dict is not None and InstructionBuilder is not None:
+            metadata = data.get("metadata") if isinstance(data, dict) else {}
+            trace_id = (
+                metadata.get("arbiteros_trace_id")
+                if isinstance(metadata, dict)
+                else None
+            )
+            if isinstance(trace_id, str) and trace_id.strip():
+                for tc_detail in _extract_tool_call_details_from_response(raw_msg_dict):
+                    try:
+                        builder = _get_instruction_builder_for_trace(trace_id)
+                        if builder is not None:
+                            builder.add_from_tool_call(
+                                tool_name=tc_detail["tool_name"],
+                                tool_call_id=tc_detail["tool_call_id"],
+                                arguments=tc_detail.get("arguments") or {},
+                                result=None,
+                            )
+                            _save_instructions_to_trace_file(trace_id, builder)
+                    except Exception:
+                        pass
+
         # 若配置了 response_transform，用其返回值改写返回给调用方的内容
         if msg is not None and response_transform is not None:
             msg_dict = raw_msg_dict
@@ -3069,6 +3234,29 @@ class MyCustomHandler(CustomLogger):
 
         # 先存 modify 之前的版本（带 category/content 的原始结构）
         _save_json("post_call_success", {"response": msg_dict})
+
+        # instruction_parsing: 流式场景下同样在 post_call 时立即截获 tool_calls
+        if msg_dict is not None and InstructionBuilder is not None:
+            metadata = request_data.get("metadata") if isinstance(request_data, dict) else {}
+            trace_id = (
+                metadata.get("arbiteros_trace_id")
+                if isinstance(metadata, dict)
+                else None
+            )
+            if isinstance(trace_id, str) and trace_id.strip():
+                for tc_detail in _extract_tool_call_details_from_response(msg_dict):
+                    try:
+                        builder = _get_instruction_builder_for_trace(trace_id)
+                        if builder is not None:
+                            builder.add_from_tool_call(
+                                tool_name=tc_detail["tool_name"],
+                                tool_call_id=tc_detail["tool_call_id"],
+                                arguments=tc_detail.get("arguments") or {},
+                                result=None,
+                            )
+                            _save_instructions_to_trace_file(trace_id, builder)
+                    except Exception:
+                        pass
 
         if apply_transform and msg_dict is not None:
             if asyncio.iscoroutinefunction(response_transform):
