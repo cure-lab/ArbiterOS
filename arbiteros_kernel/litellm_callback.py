@@ -92,6 +92,9 @@ _recent_tool_result_keys: list[str] = []
 _recent_tool_result_key_set: set[str] = set()
 _MAX_RECENT_TOOL_RESULT_KEYS = 1024
 _TOOL_RESULT_NAME_INDEX_RE = re.compile(
+    r"^(?P<tool_name>.+)\.(?P<index>\d+)$"
+)
+_TOOL_RESULT_LEGACY_NAME_INDEX_RE = re.compile(
     r"^tool\.(?P<tool_name>.+)\.result\.call_(?P<index>\d+)$"
 )
 
@@ -256,7 +259,7 @@ def _max_emitted_tool_result_index(
     if not tool_name:
         return 0
 
-    prefix = f"tool.{tool_name}.result.call_"
+    prefixes = (f"{tool_name}.", f"tool.{tool_name}.result.call_")
     try:
         raw = _LANGFUSE_NODE_LOG_FILE.read_text(encoding="utf-8")
     except FileNotFoundError:
@@ -270,7 +273,7 @@ def _max_emitted_tool_result_index(
 
     max_index = 0
     for line in lines:
-        if trace_id not in line or prefix not in line:
+        if trace_id not in line or not any(prefix in line for prefix in prefixes):
             continue
         parsed = _safe_json_loads(line)
         if not isinstance(parsed, dict):
@@ -286,6 +289,8 @@ def _max_emitted_tool_result_index(
         if not isinstance(name, str):
             continue
         match = _TOOL_RESULT_NAME_INDEX_RE.match(name)
+        if not match:
+            match = _TOOL_RESULT_LEGACY_NAME_INDEX_RE.match(name)
         if not match:
             continue
         if match.group("tool_name") != tool_name:
@@ -1957,7 +1962,7 @@ def _emit_tool_result_nodes_if_needed(request_data: dict, state: _TraceState) ->
             continue
 
         next_index = _next_tool_result_index(state, tool_name)
-        tool_result_name = f"tool.{tool_name}.result.call_{next_index}"
+        tool_result_name = f"{tool_name}.{next_index}"
         formatted_result = _format_tool_result_output_for_langfuse(content)
         _emit_langfuse_node(
             state=state,
