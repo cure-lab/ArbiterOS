@@ -18,14 +18,12 @@ model_list:
               category:
                 type: string
                 enum:
-                  - COGNITIVE_CORE__GENERATE
-                  - COGNITIVE_CORE__DECOMPOSE
-                  - COGNITIVE_CORE__REFLECT
-                  - EXECUTION_CORE__TOOL_CALL
-                  - EXECUTION_CORE__TOOL_BUILD
-                  - EXECUTION_CORE__DELEGATE
-                  - EXECUTION_CORE__RESPOND
-                description: "The instruction category type"
+                  - COGNITIVE_CORE__REASON
+                  - COGNITIVE_CORE__PLAN
+                  - COGNITIVE_CORE__CRITIQUE
+                  - COGNITIVE_CORE__ASK
+                  - COGNITIVE_CORE__RESPOND
+                description: "The instruction category type. Use the most Accurate category possible, rather than only choose 'COGNITIVE_CORE__RESPOND'. "
               content:
                 type: string
                 description: "The actual content of the instruction"
