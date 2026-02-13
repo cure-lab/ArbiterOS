@@ -6,6 +6,11 @@
 - **Response logging**: `post_call_success` writes the **raw** response (full structure including `category` / `content`) to the same jsonl for later analysis.
 - **Response transform**: Before returning to the client, if the assistant `content` is a JSON string `{"category":"...","content":"..."}`, only the inner `content` is returned (same for streaming and non-streaming). Messages with `tool_calls` are left unchanged.
 - **Live observability**: MLflow logging uses LiteLLM’s `mlflow` callbacks; Langfuse session tracing is emitted by `arbiteros_kernel.litellm_callback` when `LANGFUSE_PUBLIC_KEY` + `LANGFUSE_SECRET_KEY` are set (auto-loaded from `.env`). Langfuse nodes are also persisted to `log/langfuse_nodes.jsonl` for replay.
+- **Instruction parse & registry**: For each trace, the kernel generates `log/{trace_id}.json` to parse and register the original LLM input/output. The `InstructionBuilder` (from `arbiteros_kernel.instruction_parsing`) converts:
+  - **LLM structured output**: When the assistant returns `{"category":"...","content":"..."}`, it is parsed into an instruction with `instruction_category`, `instruction_type`, and `content`.
+  - **Tool calls**: Each `tool_call` (name + arguments) from the assistant response is recorded; when tool results arrive, they are merged into the same instruction.
+  - **Tool results**: Tool role messages with results are associated with their corresponding tool-call instructions.
+    Each `log/{trace_id}.json` contains `trace_id`, `created_at`, and an `instructions` array. Instructions include `id`, `content`, `runtime_step`, `parent_id`, `source_message_id`, `security_type`, `rule_types`, `instruction_category`, and `instruction_type`. This enables downstream analysis and replay of the parsed instruction flow.
 
 Configured in `litellm_config.yaml` ; Kernel's key logic lives in `_response_transform_content_only` in `arbiteros_kernel/litellm_callback.py`.
 
