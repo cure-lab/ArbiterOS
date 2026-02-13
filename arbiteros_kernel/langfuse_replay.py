@@ -58,6 +58,9 @@ class TraceState:
     sequence: int = 0
     last_user_fingerprint: Optional[str] = None
     last_reset_fingerprint: Optional[str] = None
+    turn_index: int = 0
+    latest_user_preview: Optional[str] = None
+    latest_topic_summary: Optional[str] = None
 
 
 @dataclass
@@ -77,6 +80,21 @@ _CURRENT_SESSION_CHANNEL_RE = re.compile(
 _CURRENT_SESSION_CHAT_ID_RE = re.compile(
     r"^\s*Chat ID\s*:\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE
 )
+_RESET_PROMPT_RE = re.compile(
+    r"^\s*a new session was started via /new or /reset\.",
+    re.IGNORECASE | re.MULTILINE,
+)
+_RESET_CONTROL_TOPIC_RE = re.compile(
+    r"^(?:"
+    r"/new|/reset|"
+    r"new session|start (?:a )?new session|begin (?:a )?new session|"
+    r"reset (?:the )?(?:session|conversation)|restart (?:the )?(?:session|conversation)|"
+    r"session reset|conversation reset|"
+    r"重[置制](?:会话|对话)|新会话|开启新会话|开始新会话|重新开始(?:会话|对话)|重启(?:会话|对话)|重开(?:会话|对话)"
+    r")$",
+    re.IGNORECASE,
+)
+_TRACE_SESSION_LABEL_PREFIX = "session"
 
 
 def _read_jsonl(path: Path) -> tuple[list[KernelLogEntry], int, int]:
@@ -166,6 +184,90 @@ def _normalize_fragment(value: str) -> str:
     return re.sub(r"\s+", " ", value.strip())[:256]
 
 
+def _short_text_preview(text: Optional[str], max_chars: int = 72) -> Optional[str]:
+    if not isinstance(text, str):
+        return None
+    cleaned = re.sub(r"\s+", " ", text).strip()
+    if not cleaned:
+        return None
+    if len(cleaned) <= max_chars:
+        return cleaned
+    return f"{cleaned[:max_chars].rstrip()}..."
+
+
+def _is_reset_marker_text(text: Optional[str]) -> bool:
+    if not isinstance(text, str):
+        return False
+    cleaned = text.strip()
+    if not cleaned:
+        return False
+    lowered = cleaned.lower()
+    if lowered in {"/new", "/reset"}:
+        return True
+    if len(cleaned) <= 200 and _RESET_PROMPT_RE.match(cleaned):
+        return True
+    return False
+
+
+def _is_reset_request_text(text: Optional[str]) -> bool:
+    if not isinstance(text, str):
+        return False
+    cleaned = text.strip()
+    if not cleaned or len(cleaned) > 4000:
+        return False
+    return bool(_RESET_PROMPT_RE.search(cleaned))
+
+
+def _is_reset_control_topic(text: Optional[str]) -> bool:
+    if not isinstance(text, str):
+        return False
+    cleaned = re.sub(r"\s+", " ", text).strip().strip(" -_/,:;，。；|：")
+    if not cleaned:
+        return False
+    if _is_reset_marker_text(cleaned) or _is_reset_request_text(cleaned):
+        return True
+    return bool(_RESET_CONTROL_TOPIC_RE.match(cleaned))
+
+
+def _sanitize_topic_preview(
+    text: Optional[str],
+    *,
+    max_chars: int = 72,
+    allow_reset_control_topic: bool = False,
+) -> Optional[str]:
+    preview = _short_text_preview(text, max_chars=max_chars)
+    if not preview:
+        return None
+    if not allow_reset_control_topic and _is_reset_control_topic(preview):
+        return None
+    return preview
+
+
+def _build_trace_display_name(trace_state: TraceState) -> str:
+    base_name = f"{_TRACE_SESSION_LABEL_PREFIX}:{trace_state.device_key}"
+    allow_reset_control_topic = (
+        trace_state.turn_index <= 1
+        and _is_reset_control_topic(trace_state.latest_user_preview)
+        and (
+            trace_state.latest_topic_summary is None
+            or _is_reset_control_topic(trace_state.latest_topic_summary)
+        )
+    )
+    topic_preview = _sanitize_topic_preview(
+        trace_state.latest_topic_summary,
+        allow_reset_control_topic=allow_reset_control_topic,
+    )
+    if topic_preview:
+        return f"{topic_preview} - {base_name}"
+    user_preview = _sanitize_topic_preview(
+        trace_state.latest_user_preview,
+        allow_reset_control_topic=allow_reset_control_topic,
+    )
+    if user_preview:
+        return f"{user_preview} - {base_name}"
+    return base_name
+
+
 def _extract_current_session_from_text(text: Optional[str]) -> tuple[Optional[str], Optional[str]]:
     if not isinstance(text, str) or not text:
         return (None, None)
@@ -219,7 +321,9 @@ def _build_device_context(incoming: dict) -> DeviceContext:
         else None
     )
     normalized_cmd = (latest_user_text or "").strip().lower()
-    reset_requested = normalized_cmd in {"/new", "/reset"}
+    reset_requested = normalized_cmd in {"/new", "/reset"} or _is_reset_request_text(
+        latest_user_text
+    )
 
     return DeviceContext(
         device_key=f"{channel}:{raw_user_id}",
@@ -301,13 +405,20 @@ def _extract_tool_calls(response_dict: dict) -> list[dict]:
     return out
 
 
-def _extract_structured_content(response_dict: dict) -> tuple[Optional[str], Optional[str]]:
+def _extract_structured_content(
+    response_dict: dict,
+) -> tuple[Optional[str], Optional[str], Optional[str]]:
     content = response_dict.get("content")
     parsed = _safe_json_loads(content)
     if isinstance(parsed, dict) and isinstance(parsed.get("content"), str):
         category = parsed.get("category")
-        return (category if isinstance(category, str) else None, parsed.get("content"))
-    return (None, content if isinstance(content, str) else None)
+        topic = parsed.get("topic")
+        return (
+            category if isinstance(category, str) else None,
+            parsed.get("content"),
+            topic if isinstance(topic, str) else None,
+        )
+    return (None, content if isinstance(content, str) else None, None)
 
 
 def _transform_response_content_only(response_dict: dict) -> dict:
@@ -378,7 +489,7 @@ def _emit_node(
         )
 
     observation.update_trace(
-        name=f"openclaw.session:{trace_state.device_key}",
+        name=_build_trace_display_name(trace_state),
         user_id=trace_state.user_id,
         session_id=trace_state.device_key,
         metadata={
@@ -405,6 +516,8 @@ def _emit_input_node_if_needed(
         return
 
     trace_state.last_user_fingerprint = context.latest_user_fingerprint
+    trace_state.latest_user_preview = _short_text_preview(context.latest_user_text)
+    trace_state.turn_index += 1
     _emit_node(
         lf=lf,
         dry_run=dry_run,
@@ -470,14 +583,43 @@ def _emit_response_nodes_from_pair(
             )
         return
 
-    category, raw_structured_content = _extract_structured_content(response)
+    category, raw_structured_content, llm_topic = _extract_structured_content(response)
     transformed_content = (
         transformed.get("content")
         if isinstance(transformed.get("content"), str)
         else raw_structured_content
     )
+    max_topic_chars = int(os.getenv("ARBITEROS_LANGFUSE_TOPIC_MAX_CHARS", "40"))
+    allow_reset_control_topic = (
+        pre.context.reset_requested
+        and pre.trace_state.turn_index <= 1
+        and not _sanitize_topic_preview(
+            pre.trace_state.latest_topic_summary,
+            max_chars=max_topic_chars,
+            allow_reset_control_topic=False,
+        )
+    )
+    turn_topic = (
+        _sanitize_topic_preview(
+            llm_topic,
+            max_chars=max_topic_chars,
+            allow_reset_control_topic=allow_reset_control_topic,
+        )
+        or _sanitize_topic_preview(
+            pre.context.latest_user_text,
+            max_chars=max_topic_chars,
+            allow_reset_control_topic=allow_reset_control_topic,
+        )
+        or _sanitize_topic_preview(
+            pre.trace_state.latest_user_preview,
+            max_chars=max_topic_chars,
+            allow_reset_control_topic=allow_reset_control_topic,
+        )
+    )
+    if isinstance(turn_topic, str) and turn_topic.strip():
+        pre.trace_state.latest_topic_summary = turn_topic
 
-    if category and category != "EXECUTION_CORE__RESPOND":
+    if category:
         _emit_node(
             lf=lf,
             dry_run=dry_run,
@@ -485,7 +627,11 @@ def _emit_response_nodes_from_pair(
             trace_state=pre.trace_state,
             node_type="kernel_step",
             observation_type="agent",
-            name=f"kernel.{category.lower()}",
+            name=(
+                f"{turn_topic} - kernel.{category.lower()}"
+                if turn_topic
+                else f"kernel.{category.lower()}"
+            ),
             input_payload={"content": raw_structured_content},
             output_payload=None,
             metadata={

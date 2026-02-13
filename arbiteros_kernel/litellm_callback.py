@@ -114,6 +114,16 @@ _RESET_PROMPT_RE = re.compile(
     r"^\s*a new session was started via /new or /reset\.",
     re.IGNORECASE | re.MULTILINE,
 )
+_RESET_CONTROL_TOPIC_RE = re.compile(
+    r"^(?:"
+    r"/new|/reset|"
+    r"new session|start (?:a )?new session|begin (?:a )?new session|"
+    r"reset (?:the )?(?:session|conversation)|restart (?:the )?(?:session|conversation)|"
+    r"session reset|conversation reset|"
+    r"重[置制](?:会话|对话)|新会话|开启新会话|开始新会话|重新开始(?:会话|对话)|重启(?:会话|对话)|重开(?:会话|对话)"
+    r")$",
+    re.IGNORECASE,
+)
 _EXTERNAL_UNTRUSTED_BLOCK_RE = re.compile(
     r"<<<EXTERNAL_UNTRUSTED_CONTENT>>>.*?<<<END_EXTERNAL_UNTRUSTED_CONTENT>>>",
     re.DOTALL,
@@ -123,7 +133,7 @@ _SECURITY_NOTICE_RE = re.compile(
     re.DOTALL,
 )
 
-_TRACE_SESSION_LABEL_PREFIX = "openclaw.session"
+_TRACE_SESSION_LABEL_PREFIX = "trace"
 _NODE_NAMESPACE_PREFIX = "session"
 
 
@@ -710,6 +720,21 @@ def _is_reset_request_text(latest_user_text: Optional[str]) -> bool:
     return bool(_RESET_PROMPT_RE.search(cleaned))
 
 
+def _is_reset_control_topic(text: Optional[str]) -> bool:
+    """Whether text is a reset/new-session control phrase (not a semantic user topic)."""
+    if not isinstance(text, str):
+        return False
+    cleaned = re.sub(r"\s+", " ", text).strip()
+    if not cleaned:
+        return False
+    cleaned = cleaned.strip(" -_/,:;，。；|：")
+    if not cleaned:
+        return False
+    if _is_reset_marker_text(cleaned) or _is_reset_request_text(cleaned):
+        return True
+    return bool(_RESET_CONTROL_TOPIC_RE.match(cleaned))
+
+
 def _extract_device_key_hint_from_metadata(incoming: dict) -> Optional[str]:
     metadata = incoming.get("metadata")
     if not isinstance(metadata, dict):
@@ -1113,12 +1138,40 @@ def _short_text_preview(text: Optional[str], max_chars: int = 72) -> Optional[st
     return f"{cleaned[:max_chars].rstrip()}..."
 
 
+def _sanitize_topic_preview(
+    text: Optional[str],
+    *,
+    max_chars: int = 72,
+    allow_reset_control_topic: bool = False,
+) -> Optional[str]:
+    preview = _short_text_preview(text, max_chars=max_chars)
+    if not preview:
+        return None
+    if not allow_reset_control_topic and _is_reset_control_topic(preview):
+        return None
+    return preview
+
+
 def _build_trace_display_name(state: _TraceState) -> str:
     base_name = f"{_TRACE_SESSION_LABEL_PREFIX}:{state.device_key}"
-    topic_preview = _short_text_preview(state.latest_topic_summary)
+    allow_reset_control_topic = (
+        state.turn_index <= 1
+        and _is_reset_control_topic(state.latest_user_preview)
+        and (
+            state.latest_topic_summary is None
+            or _is_reset_control_topic(state.latest_topic_summary)
+        )
+    )
+    topic_preview = _sanitize_topic_preview(
+        state.latest_topic_summary,
+        allow_reset_control_topic=allow_reset_control_topic,
+    )
     if topic_preview:
         return f"{topic_preview} - {base_name}"
-    preview = _short_text_preview(state.latest_user_preview)
+    preview = _sanitize_topic_preview(
+        state.latest_user_preview,
+        allow_reset_control_topic=allow_reset_control_topic,
+    )
     if preview:
         return f"{preview} - {base_name}"
     return base_name
@@ -1314,11 +1367,14 @@ def _should_accept_llm_topic_summary(
     *,
     previous_topic: Optional[str],
     latest_user_turn: Optional[str],
+    allow_reset_control_topic: bool = False,
 ) -> bool:
     """Heuristic guardrail: reject obviously noisy/unrelated LLM topic summaries."""
     if not isinstance(candidate, str) or not candidate.strip():
         return False
     cand = candidate.strip()
+    if _is_reset_control_topic(cand):
+        return allow_reset_control_topic
     # Reject if the whole thing still looks like a process step label.
     if _is_noisy_topic_point(cand):
         return False
@@ -2165,6 +2221,16 @@ def _emit_response_nodes(
         max_point_chars=max_topic_point_chars,
         max_total_chars=max_topic_chars,
     )
+    previous_topic_for_fallback = _sanitize_topic_preview(
+        previous_topic_clean or previous_topic_summary,
+        max_chars=max_topic_chars,
+        allow_reset_control_topic=False,
+    )
+    allow_reset_control_topic = (
+        context.reset_requested
+        and max(state.turn_index, 1) <= 1
+        and not previous_topic_for_fallback
+    )
 
     llm_topic_clean = _normalize_topic_summary(
         llm_topic,
@@ -2174,7 +2240,7 @@ def _emit_response_nodes(
     )
     llm_topic_clean = _enforce_topic_point_count_on_shift(
         llm_topic_clean,
-        previous_topic=previous_topic_clean or previous_topic_summary,
+        previous_topic=previous_topic_for_fallback,
         latest_user_turn=context.latest_user_text,
         max_total_chars=max_topic_chars,
     )
@@ -2182,22 +2248,57 @@ def _emit_response_nodes(
         llm_topic_clean
         if _should_accept_llm_topic_summary(
             llm_topic_clean,
-            previous_topic=previous_topic_clean or previous_topic_summary,
+            previous_topic=previous_topic_for_fallback,
             latest_user_turn=context.latest_user_text,
+            allow_reset_control_topic=allow_reset_control_topic,
         )
         else None
     )
-    turn_topic = (
+    llm_topic_candidate = _sanitize_topic_preview(
+        llm_topic_candidate,
+        max_chars=max_topic_chars,
+        allow_reset_control_topic=allow_reset_control_topic,
+    )
+    turn_topic_summary = _summarize_turn_topic(
+        user_text=context.latest_user_text,
+        output_text=output_content,
+        max_chars=max_topic_chars,
+    )
+    turn_topic_clean = _normalize_topic_summary(
+        turn_topic_summary,
+        max_points=1,
+        max_point_chars=max_topic_chars,
+        max_total_chars=max_topic_chars,
+    ) or _short_text_preview(turn_topic_summary, max_chars=max_topic_chars)
+    turn_topic_clean = _sanitize_topic_preview(
+        turn_topic_clean,
+        max_chars=max_topic_chars,
+        allow_reset_control_topic=allow_reset_control_topic,
+    )
+    kernel_turn_topic = (
+        turn_topic_clean
+        or _sanitize_topic_preview(
+            context.latest_user_text,
+            max_chars=max_topic_chars,
+            allow_reset_control_topic=allow_reset_control_topic,
+        )
+        or _sanitize_topic_preview(
+            state.latest_user_preview,
+            max_chars=max_topic_chars,
+            allow_reset_control_topic=allow_reset_control_topic,
+        )
+        or llm_topic_candidate
+    )
+    trace_topic = (
         llm_topic_candidate
-        or _short_text_preview(previous_topic_clean or previous_topic_summary, max_chars=max_topic_chars)
-        or _short_text_preview(context.latest_user_text, max_chars=max_topic_chars)
-        or _short_text_preview(state.latest_user_preview, max_chars=max_topic_chars)
+        or kernel_turn_topic
+        or previous_topic_for_fallback
     )
     persist_topic_needed = False
-    if isinstance(turn_topic, str) and turn_topic.strip():
+    if isinstance(trace_topic, str) and trace_topic.strip():
         with _trace_state_lock:
-            if state.latest_topic_summary != turn_topic:
-                state.latest_topic_summary = turn_topic
+            if state.latest_topic_summary != trace_topic:
+                state.latest_topic_summary = trace_topic
                 persist_topic_needed = True
     if persist_topic_needed:
         _persist_trace_state_to_disk()
@@ -2223,12 +2324,12 @@ def _emit_response_nodes(
     )
     # Emit one kernel_step per turn for consistent Langfuse graphs.
     # Topic fallback order:
-    #   1) LLM summarized topic (from current summary + latest turn)
-    #   2) previous summarized topic
-    #   3) latest user input
+    #   1) per-turn topic from latest user input / response overlap
+    #   2) latest user text preview
+    #   3) LLM topic candidate (if valid)
     kernel_step_name = (
-        f"{turn_topic} - kernel.{effective_category.lower()}"
-        if turn_topic
+        f"{kernel_turn_topic} - kernel.{effective_category.lower()}"
+        if kernel_turn_topic
         else f"kernel.{effective_category.lower()}"
     )
 
@@ -2466,7 +2567,8 @@ def _inject_topic_summary_hint(
         "- Only output multiple topic points (separated by ` / `) when the user's topic clearly shifts.\n"
         "- If shifted, include the previous topic + the new topic (only as needed).\n"
         "- Use short noun-phrase style topics (no sentences, no steps, no process words).\n"
-        "- Do NOT include: new session, greet user, next, please wait, kernel.*, execution_core.\n"
+        "- Do NOT include control/reset words: new session, /new, /reset, reset session, 重置会话, 重制对话, greet user, next, please wait, kernel.*, execution_core.\n"
+        "- If latest user turn is only reset/new-session control text, return an empty topic unless this is turn.001 with no other topic context.\n"
         "- If latest user turn is generic/greeting, keep the current summarized topic.\n"
         "Fallback order for `topic`: current summarized topic -> latest user turn.\n"
         f"Current summarized topic: {previous_topic}\n"
@@ -2628,6 +2730,8 @@ class MyCustomHandler(CustomLogger):
             max_point_chars=max_topic_point_chars,
             max_total_chars=max_topic_chars,
         )
+        if _is_reset_control_topic(cleaned_previous_topic):
+            cleaned_previous_topic = None
         if cleaned_previous_topic != previous_topic_summary:
             with _trace_state_lock:
                 state.latest_topic_summary = cleaned_previous_topic
