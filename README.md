@@ -77,7 +77,8 @@ Edit `.env` with real keys. `arbiteros_kernel.litellm_callback` and `arbiteros_k
 ```bash
 export LANGFUSE_PUBLIC_KEY="pk-lf-..."
 export LANGFUSE_SECRET_KEY="sk-lf-..."
-export LANGFUSE_HOST="http://localhost:3000"
+export LANGFUSE_BASE_URL="http://localhost:3000"
+# export LANGFUSE_HOST="http://localhost:3000" # Backward-compatible alias
 ```
 
 Optional tuning knobs:

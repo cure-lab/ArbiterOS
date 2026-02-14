@@ -17,6 +17,7 @@ except ImportError:
 import litellm
 from langfuse import Langfuse
 from dotenv import load_dotenv
+from arbiteros_kernel.langfuse_env import ensure_langfuse_env_compat
 from litellm.caching.dual_cache import DualCache
 from litellm.integrations.custom_logger import CustomLogger, UserAPIKeyAuth
 from litellm.types.utils import (
@@ -1133,6 +1134,8 @@ def _get_langfuse_client() -> Optional[Langfuse]:
     _langfuse_client_initialized = True
     if not os.getenv("LANGFUSE_PUBLIC_KEY") or not os.getenv("LANGFUSE_SECRET_KEY"):
         return None
+
+    ensure_langfuse_env_compat()
 
     timeout = int(os.getenv("ARBITEROS_LANGFUSE_TIMEOUT", os.getenv("LANGFUSE_TIMEOUT", "15")))
     flush_at = int(os.getenv("ARBITEROS_LANGFUSE_FLUSH_AT", "1"))

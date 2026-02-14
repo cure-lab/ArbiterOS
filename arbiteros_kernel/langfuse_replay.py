@@ -10,6 +10,7 @@ from typing import Any, Optional
 
 from dotenv import load_dotenv
 from langfuse import Langfuse
+from arbiteros_kernel.langfuse_env import ensure_langfuse_env_compat
 
 
 @dataclass
@@ -747,6 +748,7 @@ def _emit_normalized_langfuse_node(
 
 
 def _build_langfuse_client() -> Langfuse:
+    ensure_langfuse_env_compat()
     timeout = int(os.getenv("ARBITEROS_LANGFUSE_TIMEOUT", os.getenv("LANGFUSE_TIMEOUT", "15")))
     flush_at = int(os.getenv("ARBITEROS_LANGFUSE_FLUSH_AT", "1"))
     flush_interval = float(os.getenv("ARBITEROS_LANGFUSE_FLUSH_INTERVAL", "1"))
