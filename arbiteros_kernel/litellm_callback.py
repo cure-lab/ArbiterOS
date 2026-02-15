@@ -101,6 +101,8 @@ class _TraceState:
     latest_topic_summary: Optional[str] = None
     # Per-trace monotonically increasing tool result indices per tool name.
     tool_result_counter_by_tool: dict[str, int] = field(default_factory=dict)
+    # tool_call_id -> parser/tool node reservation (ephemeral, in-memory only)
+    pending_tool_call_nodes_by_id: dict[str, dict[str, Any]] = field(default_factory=dict)
     # Ephemeral handle to the current turn observation, for in-process updates.
     current_turn_handle: Any = None
 
@@ -280,6 +282,41 @@ def _next_tool_result_index(state: _TraceState, tool_name: str) -> int:
         current = current_floor + 1
         state.tool_result_counter_by_tool[normalized_tool_name] = current
         return current
+
+
+def _reserve_tool_result_index_for_call(
+    state: _TraceState, *, tool_call_id: Optional[str], tool_name: str
+) -> int:
+    normalized_tool_name = tool_name.strip() if isinstance(tool_name, str) else ""
+    if not normalized_tool_name:
+        normalized_tool_name = "unknown_tool"
+    if isinstance(tool_call_id, str) and tool_call_id.strip():
+        with _trace_state_lock:
+            existing = state.pending_tool_call_nodes_by_id.get(tool_call_id)
+            if isinstance(existing, dict):
+                idx = existing.get("index")
+                if isinstance(idx, int) and idx > 0:
+                    return idx
+    return _next_tool_result_index(state, normalized_tool_name)
+
+
+def _set_pending_tool_call_node(
+    state: _TraceState, *, tool_call_id: Optional[str], payload: dict[str, Any]
+) -> None:
+    if not isinstance(tool_call_id, str) or not tool_call_id.strip():
+        return
+    with _trace_state_lock:
+        state.pending_tool_call_nodes_by_id[tool_call_id] = payload
+
+
+def _pop_pending_tool_call_node(
+    state: _TraceState, *, tool_call_id: Optional[str]
+) -> Optional[dict[str, Any]]:
+    if not isinstance(tool_call_id, str) or not tool_call_id.strip():
+        return None
+    with _trace_state_lock:
+        payload = state.pending_tool_call_nodes_by_id.pop(tool_call_id, None)
+    return payload if isinstance(payload, dict) else None
 
 
 def _max_emitted_tool_result_index(
@@ -2051,6 +2088,9 @@ def _emit_tool_result_nodes_if_needed(request_data: dict, state: _TraceState) ->
     emitted_any = False
     for tool_result in tool_results:
         tool_call_id = tool_result.get("tool_call_id")
+        pending_tool_call = _pop_pending_tool_call_node(
+            state, tool_call_id=tool_call_id
+        )
         tool_details = (
             tool_call_details_by_call_id.get(tool_call_id, {})
             if isinstance(tool_call_id, str)
@@ -2079,9 +2119,62 @@ def _emit_tool_result_nodes_if_needed(request_data: dict, state: _TraceState) ->
         ):
             continue
 
-        next_index = _next_tool_result_index(state, tool_name)
+        next_index = (
+            pending_tool_call.get("index")
+            if isinstance(pending_tool_call, dict)
+            and isinstance(pending_tool_call.get("index"), int)
+            and pending_tool_call.get("index") > 0
+            else _next_tool_result_index(state, tool_name)
+        )
         tool_result_name = f"{tool_name}.{next_index}"
+        parser_stage = (
+            pending_tool_call.get("parser_stage")
+            if isinstance(pending_tool_call, dict)
+            and isinstance(pending_tool_call.get("parser_stage"), str)
+            else f"pre_{tool_name}.{next_index}"
+        )
+        parser_parent_observation_id = (
+            pending_tool_call.get("parser_observation_id")
+            if isinstance(pending_tool_call, dict)
+            and isinstance(pending_tool_call.get("parser_observation_id"), str)
+            else None
+        )
+        parser_metadata_from_pre = (
+            pending_tool_call.get("parser_metadata")
+            if isinstance(pending_tool_call, dict)
+            and isinstance(pending_tool_call.get("parser_metadata"), dict)
+            else {}
+        )
+        parsed_result: Optional[dict[str, Any]] = None
+        if isinstance(content, str) and content.strip():
+            parsed = _safe_json_loads(content)
+            parsed_result = parsed if isinstance(parsed, dict) else {"raw": content}
+
+        parser_snapshot: dict[str, Any] = {}
+        if InstructionBuilder is not None and state.trace_id:
+            builder = _get_instruction_builder_for_trace(state.trace_id)
+            if builder is not None:
+                try:
+                    builder.add_from_tool_call(
+                        tool_name=tool_name,
+                        tool_call_id=tool_call_id,
+                        arguments=tool_arguments or {},
+                        result=parsed_result,
+                    )
+                    _save_instructions_to_trace_file(state.trace_id, builder)
+                    parser_snapshot = _build_instruction_parser_snapshot(
+                        state.trace_id,
+                        builder,
+                    )
+                except Exception:
+                    parser_snapshot = {}
+
         formatted_result = _format_tool_result_output_for_langfuse(content)
+        output_payload = (
+            {"content": parsed_result}
+            if isinstance(parsed_result, dict)
+            else formatted_result.get("output")
+        )
         _emit_langfuse_node(
             state=state,
             node_type="tool_result",
@@ -2092,7 +2185,7 @@ def _emit_tool_result_nodes_if_needed(request_data: dict, state: _TraceState) ->
                 "tool_name": tool_name,
                 "arguments": tool_arguments,
             },
-            output_payload=formatted_result.get("output"),
+            output_payload=output_payload,
             metadata={
                 "tool_call_id": tool_call_id,
                 "tool_name": tool_name,
@@ -2100,58 +2193,20 @@ def _emit_tool_result_nodes_if_needed(request_data: dict, state: _TraceState) ->
                 "turn_index": state.turn_index,
                 "agent_graph_node": tool_result_name,
                 "agent_graph_step": max(state.turn_index, 1) * 10 + 1,
+                "parser_stage": parser_stage,
+                "parser_trace_id": parser_snapshot.get("parser_trace_id"),
+                "trace_id_consistent": parser_snapshot.get("trace_id_consistent"),
+                "instruction_count": parser_snapshot.get("instruction_count"),
+                **parser_metadata_from_pre,
             },
             level=formatted_result.get("level"),
             status_message=formatted_result.get("status_message"),
-            parent_observation_id=_current_parent_observation_id(state),
+            parent_observation_id=(
+                parser_parent_observation_id or _current_parent_observation_id(state)
+            ),
             trace_name=_build_trace_display_name(state),
         )
         emitted_any = True
-
-        # instruction_parsing: record tool call to trace's instruction file
-        if InstructionBuilder is not None and state.trace_id:
-            builder = _get_instruction_builder_for_trace(state.trace_id)
-            if builder is not None:
-                try:
-                    result_obj: Optional[dict] = None
-                    if isinstance(content, str) and content.strip():
-                        parsed = _safe_json_loads(content)
-                        result_obj = parsed if isinstance(parsed, dict) else {"raw": content}
-                    builder.add_from_tool_call(
-                        tool_name=tool_name,
-                        tool_call_id=tool_call_id,
-                        arguments=tool_arguments or {},
-                        result=result_obj,
-                    )
-                    _save_instructions_to_trace_file(state.trace_id, builder)
-                    parser_snapshot = _build_instruction_parser_snapshot(
-                        state.trace_id,
-                        builder,
-                    )
-                    _emit_instruction_parser_node(
-                        state=state,
-                        parser_stage=f"tool_result.{tool_name}.{next_index}",
-                        input_payload={
-                            "tool_call_id": tool_call_id,
-                            "tool_name": tool_name,
-                            "arguments": tool_arguments,
-                            "raw_tool_result": content,
-                        },
-                        output_payload={
-                            "parsed_tool_result": result_obj,
-                            "instruction_snapshot": parser_snapshot,
-                        },
-                        metadata={
-                            "tool_call_id": tool_call_id,
-                            "tool_name": tool_name,
-                            "tool_result_node": tool_result_name,
-                            "message_index": tool_result.get("message_index"),
-                            "trace_id_consistent": parser_snapshot.get("trace_id_consistent"),
-                            "parser_trace_id": parser_snapshot.get("parser_trace_id"),
-                        },
-                    )
-                except Exception:
-                    pass
 
     if emitted_any:
         # Persist counters so tool result numbering stays monotonic across restarts.
@@ -2287,8 +2342,8 @@ def _emit_response_nodes(
 
     tool_calls = _extract_tool_calls(response_before_transform)
     if tool_calls:
-        # Keep only tool_result nodes and drop placeholder tool_call nodes without output.
-        # Still emit parser activity so instruction parsing remains visible in trace graphs.
+        # Before actual tool execution, emit parser.pre_{tool}.{n} and reserve
+        # the same {tool}.{n} index for the later tool result node.
         parser_snapshot = _build_instruction_parser_snapshot(
             state.trace_id,
             _peek_instruction_builder_for_trace(state.trace_id),
@@ -2296,21 +2351,51 @@ def _emit_response_nodes(
         parsed_tool_calls = _extract_tool_call_details_from_response(
             response_before_transform
         )
-        _emit_instruction_parser_node(
-            state=state,
-            parser_stage="tool_calls",
-            input_payload={"raw_tool_calls": tool_calls},
-            output_payload={
-                "parsed_tool_calls": parsed_tool_calls,
-                "instruction_snapshot": parser_snapshot,
-            },
-            metadata={
+        for tc_detail in parsed_tool_calls:
+            tool_call_id = tc_detail.get("tool_call_id")
+            tool_name = tc_detail.get("tool_name")
+            if not isinstance(tool_name, str) or not tool_name.strip():
+                tool_name = "unknown_tool"
+            next_index = _reserve_tool_result_index_for_call(
+                state,
+                tool_call_id=tool_call_id if isinstance(tool_call_id, str) else None,
+                tool_name=tool_name,
+            )
+            parser_stage = f"pre_{tool_name}.{next_index}"
+            parser_metadata = {
+                "tool_call_id": tool_call_id,
+                "tool_name": tool_name,
+                "tool_call_node": f"{tool_name}.{next_index}",
                 "tool_call_count": len(tool_calls),
                 "trace_id_consistent": parser_snapshot.get("trace_id_consistent"),
                 "parser_trace_id": parser_snapshot.get("parser_trace_id"),
-            },
-            parent_observation_id=_current_parent_observation_id(state),
-        )
+                "instruction_count": parser_snapshot.get("instruction_count"),
+            }
+            parser_observation_id = _emit_instruction_parser_node(
+                state=state,
+                parser_stage=parser_stage,
+                input_payload={
+                    "raw_tool_call": tc_detail,
+                    "raw_tool_calls": tool_calls,
+                },
+                output_payload={
+                    "parsed_tool_call": tc_detail,
+                    "instruction_snapshot": parser_snapshot,
+                },
+                metadata=parser_metadata,
+                parent_observation_id=_current_parent_observation_id(state),
+            )
+            _set_pending_tool_call_node(
+                state,
+                tool_call_id=tool_call_id if isinstance(tool_call_id, str) else None,
+                payload={
+                    "index": next_index,
+                    "tool_name": tool_name,
+                    "parser_stage": parser_stage,
+                    "parser_observation_id": parser_observation_id,
+                    "parser_metadata": parser_metadata,
+                },
+            )
         _flush_langfuse()
         return
 
@@ -2689,10 +2774,10 @@ def _emit_instruction_parser_node(
     output_payload: Any,
     metadata: Optional[dict[str, Any]] = None,
     parent_observation_id: Optional[str] = None,
-) -> None:
+) -> Optional[str]:
     turn_idx = max(state.turn_index, 1)
     parser_node_name = f"{_NODE_NAMESPACE_PREFIX}.parser.turn_{turn_idx:03d}.{parser_stage}"
-    _emit_langfuse_node(
+    return _emit_langfuse_node(
         state=state,
         node_type="parser",
         observation_type="span",
