@@ -2873,8 +2873,7 @@ def _clear_stripped_categories_for_device(device_key: Optional[str]) -> None:
 
 
 def _response_transform_content_only(data: dict, message_dict: dict) -> Optional[dict]:
-    if message_dict.get("tool_calls"):
-        return message_dict
+    """没 content 才忽略；有 content 则剥 structure，与是否含 tool_calls 无关。"""
     content = message_dict.get("content")
     if not isinstance(content, str) or not content.strip():
         return message_dict
@@ -3051,8 +3050,6 @@ def _wrap_messages_with_categories(data: dict, *, device_key: Optional[str] = No
         if not isinstance(msg, dict):
             continue
         if msg.get("role") != "assistant":
-            continue
-        if msg.get("tool_calls"):
             continue
         text, content_list, part_idx = _extract_text_to_wrap(msg)
         if text is None:
