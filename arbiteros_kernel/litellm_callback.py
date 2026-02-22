@@ -41,6 +41,7 @@ _LANGFUSE_NODE_LOG_FILE = (
 )
 _LANGFUSE_NODE_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
 _TRACE_STATE_FILE = Path(__file__).resolve().parent.parent / "log" / "trace_state.json"
+_PRECALL_LOG_FILE = Path(__file__).resolve().parent.parent / "log" / "precall.jsonl"
 _INSTRUCTION_LOG_DIR = Path(__file__).resolve().parent.parent / "log"
 _INSTRUCTION_LOG_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -48,9 +49,10 @@ _INSTRUCTION_LOG_DIR.mkdir(parents=True, exist_ok=True)
 # This makes Langfuse/MLflow callbacks work without manually exporting env vars.
 load_dotenv(override=False)
 
-# 剥去 assistant content 时记录的 category。
+# 剥去 assistant content 时记录的 category 与 topic。
 # 以 device_key 维度隔离，避免不同会话互相污染。
 _stripped_categories_by_device: dict[str, list[str]] = {}
+_stripped_topics_by_device: dict[str, list[Optional[str]]] = {}
 _stripped_categories_lock = threading.Lock()
 _MAX_STRIPPED_CATEGORIES = 1000
 
@@ -514,6 +516,21 @@ def _save_langfuse_node_json(data: dict) -> None:
         json.dump(entry, f, ensure_ascii=False, default=str)
         f.write("\n")
         f.flush()
+
+
+def _save_precall_to_log(data: dict) -> None:
+    """将 pre_call 最终发给 LLM 的 payload 追加到 log/precall.jsonl"""
+    try:
+        entry = {
+            "ts": datetime.now().isoformat(),
+            "payload": _to_json(data),
+        }
+        with open(_PRECALL_LOG_FILE, "a", encoding="utf-8") as f:
+            json.dump(entry, f, ensure_ascii=False, default=str)
+            f.write("\n")
+            f.flush()
+    except Exception:
+        pass  # Best-effort; don't fail the main flow
 
 
 def _extract_text_from_message_content(content: Any) -> str:
@@ -2810,16 +2827,25 @@ def _normalize_category_to_instruction_type(category: Any) -> str:
     return c
 
 
-def _record_stripped_category(data: dict, category: Any) -> None:
+def _record_stripped_category(
+    data: dict, category: Any, topic: Optional[str] = None
+) -> None:
     device_key = _resolve_category_cache_device_key(data)
     if not device_key:
         return
     normalized_category = category if isinstance(category, str) else ""
+    normalized_topic = (
+        topic if isinstance(topic, str) and topic.strip() else None
+    )
     with _stripped_categories_lock:
         categories = _stripped_categories_by_device.setdefault(device_key, [])
         categories.append(normalized_category)
         if len(categories) > _MAX_STRIPPED_CATEGORIES:
             del categories[: len(categories) - _MAX_STRIPPED_CATEGORIES]
+        topics = _stripped_topics_by_device.setdefault(device_key, [])
+        topics.append(normalized_topic)
+        if len(topics) > _MAX_STRIPPED_CATEGORIES:
+            del topics[: len(topics) - _MAX_STRIPPED_CATEGORIES]
 
 
 def _get_stripped_categories_for_device(device_key: Optional[str]) -> list[str]:
@@ -2830,11 +2856,20 @@ def _get_stripped_categories_for_device(device_key: Optional[str]) -> list[str]:
         return list(categories)
 
 
+def _get_stripped_topics_for_device(device_key: Optional[str]) -> list[Optional[str]]:
+    if not isinstance(device_key, str) or not device_key.strip():
+        return []
+    with _stripped_categories_lock:
+        topics = _stripped_topics_by_device.get(device_key.strip(), [])
+        return list(topics)
+
+
 def _clear_stripped_categories_for_device(device_key: Optional[str]) -> None:
     if not isinstance(device_key, str) or not device_key.strip():
         return
     with _stripped_categories_lock:
         _stripped_categories_by_device.pop(device_key.strip(), None)
+        _stripped_topics_by_device.pop(device_key.strip(), None)
 
 
 def _response_transform_content_only(data: dict, message_dict: dict) -> Optional[dict]:
@@ -2847,7 +2882,8 @@ def _response_transform_content_only(data: dict, message_dict: dict) -> Optional
         inner = json.loads(content)
         if isinstance(inner, dict) and "content" in inner:
             category = inner.get("category", "")
-            _record_stripped_category(data, category)
+            topic = inner.get("topic") if isinstance(inner.get("topic"), str) else None
+            _record_stripped_category(data, category, topic=topic)
 
             # instruction_parsing: parse and persist to log/{trace_id}.json
             metadata = data.get("metadata") if isinstance(data, dict) else {}
@@ -2998,11 +3034,13 @@ def _inject_topic_summary_hint(
 
 def _wrap_messages_with_categories(data: dict, *, device_key: Optional[str] = None) -> dict:
     """在 pre_call 前把 incoming 里 role=assistant 且 content 有文本的 history 从后往前包回结构。
-    包的时候不消耗 list：从当前 device_key 的 category 列表末尾往前按位置取（最后一个 assistant 对应 list[-1]，
+    包的时候不消耗 list：从当前 device_key 的 category/topic 列表末尾往前按位置取（最后一个 assistant 对应 list[-1]，
     倒数第二个对应 list[-2]…），与剥去的 history 一一对应。list 只在剥时追加，超 1000 删最前的。
+    若有 topic 则一并包回。
     """
     resolved_device_key = device_key or _resolve_category_cache_device_key(data)
     stripped_categories = _get_stripped_categories_for_device(resolved_device_key)
+    stripped_topics = _get_stripped_topics_for_device(resolved_device_key)
     messages = data.get("messages")
     if not messages or not stripped_categories:
         return data
@@ -3022,8 +3060,16 @@ def _wrap_messages_with_categories(data: dict, *, device_key: Optional[str] = No
         if idx_from_end >= len(stripped_categories):
             break
         category = stripped_categories[-(idx_from_end + 1)]
+        topic = (
+            stripped_topics[-(idx_from_end + 1)]
+            if idx_from_end < len(stripped_topics)
+            else None
+        )
         idx_from_end += 1
-        wrapped = json.dumps({"category": category, "content": text}, ensure_ascii=False)
+        wrap_obj: dict[str, Any] = {"category": category, "content": text}
+        if isinstance(topic, str) and topic.strip():
+            wrap_obj["topic"] = topic
+        wrapped = json.dumps(wrap_obj, ensure_ascii=False)
         if content_list is not None and part_idx is not None:
             new_parts = list(content_list)
             new_parts[part_idx] = {**new_parts[part_idx], "text": wrapped}
@@ -3159,6 +3205,7 @@ class MyCustomHandler(CustomLogger):
                 )
             )
             _save_json("pre_call", {"call_type": call_type, "incoming": filtered_data})
+        _save_precall_to_log(data)
         return data
 
     async def async_post_call_failure_hook(
