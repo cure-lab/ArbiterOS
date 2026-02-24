@@ -26,7 +26,7 @@ model_list:
                 description: "The instruction category type. Use the most Accurate category possible, rather than only choose 'COGNITIVE_CORE__RESPOND'. "
               content:
                 type: string
-                description: "The actual content of the instruction"
+                description: "The actual content of the instruction. It can be anything and in any format you need to generate."
             required:
               - topic
               - category
