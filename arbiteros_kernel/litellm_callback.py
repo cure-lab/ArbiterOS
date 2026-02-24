@@ -1,4 +1,5 @@
 import asyncio
+import copy
 import hashlib
 import json
 import os
@@ -3064,6 +3065,66 @@ def _inject_topic_summary_hint(
     return data
 
 
+# 与 litellm_config.yaml 中 instruction_output 一致的 base schema，content 将被 agent 的 schema 替换
+_ARBITEROS_BASE_RESPONSE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "topic": {
+            "type": "string",
+            "description": "A concise topic/title for this turn (keep it short, e.g. 8-20 Chinese chars or <= 40 chars).",
+            "maxLength": 60,
+        },
+        "category": {
+            "type": "string",
+            "enum": [
+                "COGNITIVE_CORE__REASON",
+                "COGNITIVE_CORE__PLAN",
+                "COGNITIVE_CORE__CRITIQUE",
+                "COGNITIVE_CORE__ASK",
+                "COGNITIVE_CORE__RESPOND",
+            ],
+            "description": "The instruction category type. Use the most Accurate category possible, rather than only choose 'COGNITIVE_CORE__RESPOND'. ",
+        },
+        "content": {
+            "type": "string",
+            "description": "The actual content of the instruction. It may take any form and contain whatever you need to generate.",
+        },
+    },
+    "required": ["topic", "category", "content"],
+    "additionalProperties": False,
+}
+
+
+def _merge_agent_response_format_into_content(data: dict) -> None:
+    """
+    若 agent 请求带了 response_format，将其作为子结构塞入我们的 topic/category/content 的 content 字段。
+    原地修改 data["response_format"]。
+    """
+    agent_rf = data.get("response_format")
+    if not isinstance(agent_rf, dict):
+        return
+    # 提取 agent 的 schema：支持 json_schema.schema 或 schema
+    agent_schema = None
+    js = agent_rf.get("json_schema")
+    if isinstance(js, dict):
+        agent_schema = js.get("schema")
+    if agent_schema is None:
+        agent_schema = agent_rf.get("schema")
+    if agent_schema is None or not isinstance(agent_schema, dict):
+        return
+    # 合并：我们的 base schema，content 替换为 agent 的 schema
+    merged_schema = copy.deepcopy(_ARBITEROS_BASE_RESPONSE_SCHEMA)
+    merged_schema["properties"]["content"] = copy.deepcopy(agent_schema)
+    data["response_format"] = {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "instruction_output",
+            "schema": merged_schema,
+            "strict": True,
+        },
+    }
+
+
 def _wrap_messages_with_categories(data: dict, *, device_key: Optional[str] = None) -> dict:
     """在 pre_call 前把 incoming 里 role=assistant 且 content 有文本的 history 从后往前包回结构。
     包的时候从 category/topic 列表末尾往前按位置取，与 history 一一对应。
@@ -3137,6 +3198,9 @@ class MyCustomHandler(CustomLogger):
             truncated = _truncate_messages_after_last_reset(messages)
             if truncated is not messages:
                 data = {**data, "messages": truncated}
+
+        # 若 agent 带了 response_format，将其作为子结构塞入我们的 content 字段
+        _merge_agent_response_format_into_content(data)
 
         context = _build_device_context(data)
         if context.reset_requested:
