@@ -51,6 +51,8 @@ load_dotenv(override=False)
 
 # 剥去 assistant content 时记录的 category 与 topic。
 # 以 device_key 维度隔离，避免不同会话互相污染。
+# 当 response 有 content 但非严格 topic/category/content 格式时，记录此 label，request 时遇到则不包。
+_NO_WRAP_SENTINEL = "__arbiteros_no_wrap__"
 _stripped_categories_by_device: dict[str, list[str]] = {}
 _stripped_topics_by_device: dict[str, list[Optional[str]]] = {}
 _stripped_categories_lock = threading.Lock()
@@ -2234,11 +2236,12 @@ def _emit_tool_result_nodes_if_needed(request_data: dict, state: _TraceState) ->
 def _extract_structured_category_content(
     message_dict: Optional[dict],
 ) -> tuple[Optional[str], Optional[str], Optional[str]]:
+    """提取 category、content、topic。非严格格式时赋予 topic:其他，category: COGNITIVE_CORE__RESPOND。"""
     if not isinstance(message_dict, dict):
         return (None, None, None)
     content = message_dict.get("content")
     parsed = _safe_json_loads(content)
-    if isinstance(parsed, dict) and isinstance(parsed.get("content"), str):
+    if isinstance(parsed, dict) and _is_strict_topic_category_content(parsed):
         category = parsed.get("category")
         topic = parsed.get("topic")
         return (
@@ -2246,6 +2249,9 @@ def _extract_structured_category_content(
             parsed.get("content"),
             topic if isinstance(topic, str) else None,
         )
+    # 非严格格式：人为赋予 topic:其他，category: COGNITIVE_CORE__RESPOND
+    if isinstance(content, str) and content.strip():
+        return ("COGNITIVE_CORE__RESPOND", content, "其他")
     return (None, content if isinstance(content, str) else None, None)
 
 
@@ -2872,19 +2878,54 @@ def _clear_stripped_categories_for_device(device_key: Optional[str]) -> None:
         _stripped_topics_by_device.pop(device_key.strip(), None)
 
 
+def _add_instruction_for_non_strict(data: dict, content: str) -> None:
+    """非严格格式时，为 instruction_parsing 等赋予 topic:其他，category: COGNITIVE_CORE__RESPOND。"""
+    if not isinstance(content, str) or not content.strip():
+        return
+    metadata = data.get("metadata") if isinstance(data, dict) else {}
+    trace_id = (
+        metadata.get("arbiteros_trace_id")
+        if isinstance(metadata, dict)
+        else None
+    )
+    if not isinstance(trace_id, str) or not trace_id.strip() or InstructionBuilder is None:
+        return
+    builder = _get_instruction_builder_for_trace(trace_id)
+    if builder is None:
+        return
+    try:
+        builder.add_from_structured_output(
+            structured={
+                "intent": "RESPOND",
+                "content": content,
+            }
+        )
+        _save_instructions_to_trace_file(trace_id, builder)
+    except Exception:
+        pass
+
+
+def _is_strict_topic_category_content(obj: dict) -> bool:
+    """严格 topic/category/content 三字段结构：仅此三 key，content 类型不限。"""
+    if not isinstance(obj, dict):
+        return False
+    return set(obj.keys()) == {"topic", "category", "content"}
+
+
 def _response_transform_content_only(data: dict, message_dict: dict) -> Optional[dict]:
-    """没 content 才忽略；有 content 则剥 structure，与是否含 tool_calls 无关。"""
+    """没 content 才忽略；有 content 且为严格的 topic/category/content 结构则剥 structure，否则不操作但记录 NO_WRAP。"""
     content = message_dict.get("content")
     if not isinstance(content, str) or not content.strip():
         return message_dict
     try:
         inner = json.loads(content)
-        if isinstance(inner, dict) and "content" in inner:
+        if isinstance(inner, dict) and _is_strict_topic_category_content(inner):
             category = inner.get("category", "")
             topic = inner.get("topic") if isinstance(inner.get("topic"), str) else None
             _record_stripped_category(data, category, topic=topic)
 
-            # instruction_parsing: parse and persist to log/{trace_id}.json
+            # instruction_parsing: content 类型不限，该是啥就是啥
+            inner_content = inner.get("content")
             metadata = data.get("metadata") if isinstance(data, dict) else {}
             trace_id = (
                 metadata.get("arbiteros_trace_id")
@@ -2897,43 +2938,37 @@ def _response_transform_content_only(data: dict, message_dict: dict) -> Optional
                     instruction_type = _normalize_category_to_instruction_type(category)
                     try:
                         builder.add_from_structured_output(
-                            structured={"intent": instruction_type, "content": inner["content"]}
+                            structured={"intent": instruction_type, "content": inner_content}
                         )
                         _save_instructions_to_trace_file(trace_id, builder)
                     except Exception:
                         pass  # Best-effort; don't fail the main flow
 
-            out = {**message_dict, "content": inner["content"]}
+            out = {**message_dict, "content": inner_content}
             return out
+        # 有 content 但非严格格式：不剥，记录 NO_WRAP。request 时遇到则不包。
+        # 其他处（如 instruction_parsing、Langfuse）需用时，人为赋予 topic:其他，category: COGNITIVE_CORE__RESPOND
+        _record_stripped_category(data, _NO_WRAP_SENTINEL, topic=None)
+        _add_instruction_for_non_strict(data, content)
     except (json.JSONDecodeError, TypeError):
-        pass
+        # 非 JSON（如纯文本）：不剥，记录 NO_WRAP
+        _record_stripped_category(data, _NO_WRAP_SENTINEL, topic=None)
+        _add_instruction_for_non_strict(data, content)
     return message_dict
-
-
-def _is_structured_content(s: str) -> bool:
-    """判断 content 是否已经是带 category/content 的结构化 JSON 字符串"""
-    if not s or not isinstance(s, str):
-        return False
-    try:
-        obj = json.loads(s)
-        return isinstance(obj, dict) and "content" in obj
-    except (json.JSONDecodeError, TypeError):
-        return False
 
 
 def _extract_text_to_wrap(msg: dict) -> tuple[Optional[str], Optional[Any], Optional[int]]:
     """
     从一条 assistant 消息里取出需要包结构的纯文本。
-    - content 为字符串：返回 (content, None, None)，由调用方替换整条 content。
-    - content 为列表 [{"type":"text","text":"..."}]：返回 (part["text"], content_list, part_index)，由调用方替换 part["text"]。
-    - 无需处理或已结构化：返回 (None, None, None)。
+    是否包由 category list 严格回溯：剥了才记录，没剥不记录。包时严格按 list 来，无需额外判断。
+    - content 为字符串：有内容则返回 (content, None, None)。
+    - content 为列表：返回 (part["text"], content_list, part_index)。
+    - content 为空：返回 (None, None, None)。
     """
     content = msg.get("content")
     # 格式1: content 是字符串
     if isinstance(content, str):
         if not content.strip():
-            return (None, None, None)
-        if _is_structured_content(content):
             return (None, None, None)
         return (content, None, None)
     # 格式2: content 是列表，如 [{"type": "text", "text": "..."}]
@@ -2945,8 +2980,6 @@ def _extract_text_to_wrap(msg: dict) -> tuple[Optional[str], Optional[Any], Opti
                 continue
             text = part.get("text")
             if not isinstance(text, str) or not text.strip():
-                continue
-            if _is_structured_content(text):
                 continue
             return (text, content, idx)
     return (None, None, None)
@@ -3033,9 +3066,8 @@ def _inject_topic_summary_hint(
 
 def _wrap_messages_with_categories(data: dict, *, device_key: Optional[str] = None) -> dict:
     """在 pre_call 前把 incoming 里 role=assistant 且 content 有文本的 history 从后往前包回结构。
-    包的时候不消耗 list：从当前 device_key 的 category/topic 列表末尾往前按位置取（最后一个 assistant 对应 list[-1]，
-    倒数第二个对应 list[-2]…），与剥去的 history 一一对应。list 只在剥时追加，超 1000 删最前的。
-    若有 topic 则一并包回。
+    包的时候从 category/topic 列表末尾往前按位置取，与 history 一一对应。
+    遇到 NO_WRAP label 则不包，保持原样。
     """
     resolved_device_key = device_key or _resolve_category_cache_device_key(data)
     stripped_categories = _get_stripped_categories_for_device(resolved_device_key)
@@ -3051,9 +3083,6 @@ def _wrap_messages_with_categories(data: dict, *, device_key: Optional[str] = No
             continue
         if msg.get("role") != "assistant":
             continue
-        text, content_list, part_idx = _extract_text_to_wrap(msg)
-        if text is None:
-            continue
         if idx_from_end >= len(stripped_categories):
             break
         category = stripped_categories[-(idx_from_end + 1)]
@@ -3063,6 +3092,11 @@ def _wrap_messages_with_categories(data: dict, *, device_key: Optional[str] = No
             else None
         )
         idx_from_end += 1
+        if category == _NO_WRAP_SENTINEL:
+            continue
+        text, content_list, part_idx = _extract_text_to_wrap(msg)
+        if text is None:
+            continue
         wrap_obj: dict[str, Any] = {"category": category, "content": text}
         if isinstance(topic, str) and topic.strip():
             wrap_obj["topic"] = topic
