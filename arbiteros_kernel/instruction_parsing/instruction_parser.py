@@ -10,7 +10,6 @@ from .instruction_security_registry import (
     SecurityType as RegistrySecurityType,
     RuleType as RegistryRuleType,
     get_instruction_security,
-    get_tool_security,
     parse_tool_instruction,
     ToolParseResult,
 )
@@ -216,8 +215,7 @@ class InstructionBuilder:
 
         security_type / rule_types 的推断顺序：
         1. 调用方显式传入的非 DEFAULT 值（最高优先级）
-        2. TOOL_PARSER_REGISTRY[tool_name](arguments) 返回的非 None 值
-        3. get_tool_security(tool_name)（工具级默认值）
+        2. TOOL_PARSER_REGISTRY[tool_name](arguments) 返回的值（parser 直接内联所有安全属性）
         """
         content: Dict[str, Any] = {
             "tool_name": tool_name,
@@ -245,18 +243,10 @@ class InstructionBuilder:
 
         # ── 3. 推断 security_type / rule_types ───────────────────────────
         if security_type is DEFAULT_SECURITY_TYPE and rule_types is None:
-            # 优先用 parser 依据参数动态计算的结果
             if parsed.security_type is not None:
                 security_type = parsed.security_type
             if parsed.rule_types is not None:
                 rule_types = parsed.rule_types
-            # parser 返回 None 时，回退到工具级静态默认值（TOOL_SECURITY_REGISTRY）
-            if security_type is DEFAULT_SECURITY_TYPE or rule_types is None:
-                reg_security, reg_rules = get_tool_security(tool_name)
-                if security_type is DEFAULT_SECURITY_TYPE and reg_security is not None:
-                    security_type = reg_security
-                if rule_types is None and reg_rules:
-                    rule_types = reg_rules
 
         instr = self._build_base_instruction(
             content=content,
