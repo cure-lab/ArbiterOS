@@ -3129,6 +3129,7 @@ def _wrap_messages_with_categories(data: dict, *, device_key: Optional[str] = No
     """在 pre_call 前把 incoming 里 role=assistant 且 content 有文本的 history 从后往前包回结构。
     包的时候从 category/topic 列表末尾往前按位置取，与 history 一一对应。
     遇到 NO_WRAP label 则不包，保持原样。
+    content 为 null/空 的消息（如 tool_calls-only）不包、不消耗槽位，避免错位。
     """
     resolved_device_key = device_key or _resolve_category_cache_device_key(data)
     stripped_categories = _get_stripped_categories_for_device(resolved_device_key)
@@ -3137,12 +3138,16 @@ def _wrap_messages_with_categories(data: dict, *, device_key: Optional[str] = No
     if not messages or not stripped_categories:
         return data
     messages = list(messages)
-    idx_from_end = 0  # 当前包的是「从末尾数第几个」assistant，0=最后一个
+    idx_from_end = 0  # 当前包的是「从末尾数第几个」有 content 的 assistant，0=最后一个
     for i in range(len(messages) - 1, -1, -1):
         msg = messages[i]
         if not isinstance(msg, dict):
             continue
         if msg.get("role") != "assistant":
+            continue
+        # 先检查 content 是否可包：content 为 null/空 则不包、不消耗槽位（tool_calls-only 不 strip 故无 record）
+        text, content_list, part_idx = _extract_text_to_wrap(msg)
+        if text is None:
             continue
         if idx_from_end >= len(stripped_categories):
             break
@@ -3154,9 +3159,6 @@ def _wrap_messages_with_categories(data: dict, *, device_key: Optional[str] = No
         )
         idx_from_end += 1
         if category == _NO_WRAP_SENTINEL:
-            continue
-        text, content_list, part_idx = _extract_text_to_wrap(msg)
-        if text is None:
             continue
         wrap_obj: dict[str, Any] = {"category": category, "content": text}
         if isinstance(topic, str) and topic.strip():
