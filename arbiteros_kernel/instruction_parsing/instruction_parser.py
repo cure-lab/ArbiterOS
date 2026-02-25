@@ -10,7 +10,8 @@ from .instruction_security_registry import (
     SecurityType as RegistrySecurityType,
     RuleType as RegistryRuleType,
     get_instruction_security,
-    get_tool_security,
+    parse_tool_instruction,
+    ToolParseResult,
 )
 
 
@@ -194,8 +195,8 @@ class InstructionBuilder:
         runtime_step: Optional[int] = None,
         security_type: SecurityType = DEFAULT_SECURITY_TYPE,
         rule_types: Optional[List[RuleType]] = None,
-        explicit_category: Optional[str] = "EXECUTION.Env",
-        explicit_type: Optional[str] = "EXEC",
+        explicit_category: Optional[str] = None,
+        explicit_type: Optional[str] = None,
     ) -> Instruction:
         """
         将一次 tool 调用（包括参数与结果）转换为 Instruction。
@@ -206,6 +207,15 @@ class InstructionBuilder:
           "arguments": {...},
           "result": {...}  # 可选
         }
+
+        instruction_type 的推断顺序：
+        1. explicit_type（调用方显式指定，最高优先级）
+        2. TOOL_PARSER_REGISTRY[tool_name](arguments).instruction_type
+        3. "EXEC"（兜底）
+
+        security_type / rule_types 的推断顺序：
+        1. 调用方显式传入的非 DEFAULT 值（最高优先级）
+        2. TOOL_PARSER_REGISTRY[tool_name](arguments) 返回的值（parser 直接内联所有安全属性）
         """
         content: Dict[str, Any] = {
             "tool_name": tool_name,
@@ -215,17 +225,28 @@ class InstructionBuilder:
         if result is not None:
             content["result"] = result
 
+        # ── 调用 per-tool parser，一次得到 instruction_type + security + rules ──
+        parsed: ToolParseResult = parse_tool_instruction(tool_name, arguments)
+
+        # ── 1. 推断 instruction_type ──────────────────────────────────────
+        resolved_type: str = explicit_type or parsed.instruction_type
+
+        # ── 2. 推断 instruction_category ─────────────────────────────────
+        resolved_category: str = (
+            explicit_category
+            or INSTRUCTION_TYPE_TO_CATEGORY.get(resolved_type, "EXECUTION.Env")
+        )
+
         # 默认 parent_id 串为上一条 instruction
         if parent_id is None:
             parent_id = self._last_instruction_id
 
-        # 如果调用方没有显式给 security / rules，则从注册表中按 tool_name 补全
+        # ── 3. 推断 security_type / rule_types ───────────────────────────
         if security_type is DEFAULT_SECURITY_TYPE and rule_types is None:
-            reg_security, reg_rules = get_tool_security(tool_name)
-            if reg_security is not None:
-                security_type = reg_security
-            if rule_types is None and reg_rules:
-                rule_types = reg_rules
+            if parsed.security_type is not None:
+                security_type = parsed.security_type
+            if parsed.rule_types is not None:
+                rule_types = parsed.rule_types
 
         instr = self._build_base_instruction(
             content=content,
@@ -234,8 +255,8 @@ class InstructionBuilder:
             runtime_step=runtime_step,
             security_type=security_type,
             rule_types=rule_types,
-            instruction_category=explicit_category or "EXECUTION.Env",
-            instruction_type=explicit_type or "EXEC",
+            instruction_category=resolved_category,
+            instruction_type=resolved_type,
         )
 
         # 复用根 source_message_id
