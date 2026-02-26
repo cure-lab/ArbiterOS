@@ -46,13 +46,6 @@ def _read_tool_path_is_protected(arguments: Any) -> bool:
     return _read_tool_path_contains_hard_code(arguments) or _read_tool_path_is_dotenv_file(arguments)
 
 
-def _get_last_instruction(instructions: list[dict[str, Any]]) -> Optional[dict[str, Any]]:
-    """Return the instruction with the highest runtime_step, or None if empty."""
-    if not instructions:
-        return None
-    return max(instructions, key=lambda i: i.get("runtime_step", 0) or 0)
-
-
 def _apply_instruction_tool_path_protection(instruction: dict[str, Any]) -> tuple[dict[str, Any], str]:
     """
     If instruction is a read tool with protected path, replace arguments.
@@ -98,9 +91,9 @@ class ToolPathProtectionPolicy(Policy):
         modify it in place and return (instruction, error_message).
         Otherwise return (instruction, "").
         """
-        last_instruction = _get_last_instruction(instructions)
-        if last_instruction is None:
+        if len(instructions) == 0:
             return None, ""
-
+        last_instruction = instructions[-1]
+        
         instruction, error_message = _apply_instruction_tool_path_protection(last_instruction)
         return instruction, error_message
