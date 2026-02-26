@@ -15,6 +15,13 @@ try:
 except ImportError:
     InstructionBuilder = None  # type: ignore[misc, assignment]
 
+try:
+    from arbiteros_kernel.instruction_parsing.instruction_security_registry import (
+        get_instruction_security,
+    )
+except ImportError:
+    get_instruction_security = None  # type: ignore[misc, assignment]
+
 import litellm
 from langfuse import Langfuse
 from dotenv import load_dotenv
@@ -2171,16 +2178,18 @@ def _emit_tool_result_nodes_if_needed(request_data: dict, state: _TraceState) ->
             parsed_result = parsed if isinstance(parsed, dict) else {"raw": content}
 
         parser_snapshot: dict[str, Any] = {}
+        instruction_for_metadata: Optional[dict[str, Any]] = None
         if InstructionBuilder is not None and state.trace_id:
             builder = _get_instruction_builder_for_trace(state.trace_id)
             if builder is not None:
                 try:
-                    builder.add_from_tool_call(
+                    instr = builder.add_from_tool_call(
                         tool_name=tool_name,
                         tool_call_id=tool_call_id,
                         arguments=tool_arguments or {},
                         result=parsed_result,
                     )
+                    instruction_for_metadata = instr if isinstance(instr, dict) else None
                     _save_instructions_to_trace_file(state.trace_id, builder)
                     parser_snapshot = _build_instruction_parser_snapshot(
                         state.trace_id,
@@ -2194,6 +2203,21 @@ def _emit_tool_result_nodes_if_needed(request_data: dict, state: _TraceState) ->
             {"content": parsed_result}
             if isinstance(parsed_result, dict)
             else formatted_result.get("output")
+        )
+        tool_instruction_type = (
+            (instruction_for_metadata or {}).get("instruction_type")
+            if isinstance(instruction_for_metadata, dict)
+            else None
+        )
+        tool_instruction_category = (
+            (instruction_for_metadata or {}).get("instruction_category")
+            if isinstance(instruction_for_metadata, dict)
+            else None
+        )
+        policy_metadata = _build_policy_metadata(
+            instruction_type=tool_instruction_type,
+            instruction_category=tool_instruction_category,
+            instruction=instruction_for_metadata,
         )
         _emit_langfuse_node(
             state=state,
@@ -2217,6 +2241,7 @@ def _emit_tool_result_nodes_if_needed(request_data: dict, state: _TraceState) ->
                 "parser_trace_id": parser_snapshot.get("parser_trace_id"),
                 "trace_id_consistent": parser_snapshot.get("trace_id_consistent"),
                 "instruction_count": parser_snapshot.get("instruction_count"),
+                **policy_metadata,
                 **parser_metadata_from_pre,
             },
             level=formatted_result.get("level"),
@@ -2472,68 +2497,37 @@ def _emit_response_nodes(
         and not previous_topic_for_fallback
     )
 
+    llm_topic_raw = llm_topic if isinstance(llm_topic, str) else None
+    llm_topic_reuse_previous = bool(
+        isinstance(llm_topic_raw, str) and not llm_topic_raw.strip()
+    )
     llm_topic_clean = _normalize_topic_summary(
-        llm_topic,
+        llm_topic_raw,
         max_points=max_topic_points,
         max_point_chars=max_topic_point_chars,
         max_total_chars=max_topic_chars,
-    )
-    llm_topic_clean = _enforce_topic_point_count_on_shift(
-        llm_topic_clean,
-        previous_topic=previous_topic_for_fallback,
-        latest_user_turn=context.latest_user_text,
-        max_total_chars=max_topic_chars,
-    )
-    llm_topic_candidate = (
-        llm_topic_clean
-        if _should_accept_llm_topic_summary(
-            llm_topic_clean,
-            previous_topic=previous_topic_for_fallback,
-            latest_user_turn=context.latest_user_text,
-            allow_reset_control_topic=allow_reset_control_topic,
-        )
-        else None
-    )
+    ) or _short_text_preview(llm_topic_raw, max_chars=max_topic_chars)
     llm_topic_candidate = _sanitize_topic_preview(
-        llm_topic_candidate,
+        llm_topic_clean,
         max_chars=max_topic_chars,
         allow_reset_control_topic=allow_reset_control_topic,
     )
-    turn_topic_summary = _summarize_turn_topic(
-        user_text=context.latest_user_text,
-        output_text=output_content,
+    fallback_user_topic = _sanitize_topic_preview(
+        context.latest_user_text,
         max_chars=max_topic_chars,
-    )
-    turn_topic_clean = _normalize_topic_summary(
-        turn_topic_summary,
-        max_points=1,
-        max_point_chars=max_topic_chars,
-        max_total_chars=max_topic_chars,
-    ) or _short_text_preview(turn_topic_summary, max_chars=max_topic_chars)
-    turn_topic_clean = _sanitize_topic_preview(
-        turn_topic_clean,
+        allow_reset_control_topic=allow_reset_control_topic,
+    ) or _sanitize_topic_preview(
+        state.latest_user_preview,
         max_chars=max_topic_chars,
         allow_reset_control_topic=allow_reset_control_topic,
     )
     kernel_turn_topic = (
-        turn_topic_clean
-        or _sanitize_topic_preview(
-            context.latest_user_text,
-            max_chars=max_topic_chars,
-            allow_reset_control_topic=allow_reset_control_topic,
-        )
-        or _sanitize_topic_preview(
-            state.latest_user_preview,
-            max_chars=max_topic_chars,
-            allow_reset_control_topic=allow_reset_control_topic,
-        )
-        or llm_topic_candidate
-    )
-    trace_topic = (
         llm_topic_candidate
-        or kernel_turn_topic
+        or (previous_topic_for_fallback if llm_topic_reuse_previous else None)
+        or fallback_user_topic
         or previous_topic_for_fallback
     )
+    trace_topic = kernel_turn_topic or previous_topic_for_fallback
     persist_topic_needed = False
     if isinstance(trace_topic, str) and trace_topic.strip():
         with _trace_state_lock:
@@ -2557,6 +2551,10 @@ def _emit_response_nodes(
             "turn_index": state.turn_index,
             "agent_graph_node": output_name,
             "agent_graph_step": max(state.turn_index, 1) * 10 + 1,
+            **_build_policy_metadata(
+                instruction_type=_normalize_category_to_instruction_type(effective_category),
+                instruction_category=effective_category,
+            ),
         },
         model=model,
         parent_observation_id=_current_parent_observation_id(state),
@@ -2564,9 +2562,10 @@ def _emit_response_nodes(
     )
     # Emit one kernel_step per turn for consistent Langfuse graphs.
     # Topic fallback order:
-    #   1) per-turn topic from latest user input / response overlap
-    #   2) latest user text preview
-    #   3) LLM topic candidate (if valid)
+    #   1) LLM topic candidate
+    #   2) previous topic when LLM returns empty topic ("reuse previous")
+    #   3) latest user text preview
+    #   4) previous topic summary
     kernel_step_name = (
         f"{kernel_turn_topic} - kernel.{effective_category.lower()}"
         if kernel_turn_topic
@@ -2587,6 +2586,10 @@ def _emit_response_nodes(
             "turn_index": state.turn_index,
             "agent_graph_node": kernel_step_name,
             "agent_graph_step": max(state.turn_index, 1) * 10 + 2,
+            **_build_policy_metadata(
+                instruction_type=_normalize_category_to_instruction_type(effective_category),
+                instruction_category=effective_category,
+            ),
         },
         parent_observation_id=_current_parent_observation_id(state),
         trace_name=_build_trace_display_name(state),
@@ -2788,6 +2791,79 @@ def _build_instruction_parser_snapshot(trace_id: str, builder: Optional[Any]) ->
             snapshot["latest_instruction"] = instructions[-1]
 
     return snapshot
+
+
+def _count_rule_effects(rule_types: Any) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    if not isinstance(rule_types, list):
+        return counts
+    for rule in rule_types:
+        if not isinstance(rule, dict):
+            continue
+        action = rule.get("action")
+        if not isinstance(action, dict):
+            continue
+        effect = action.get("effect")
+        if not isinstance(effect, str) or not effect.strip():
+            continue
+        normalized = effect.strip().upper()
+        counts[normalized] = counts.get(normalized, 0) + 1
+    return counts
+
+
+def _build_policy_metadata(
+    *,
+    instruction_type: Optional[str],
+    instruction_category: Optional[str] = None,
+    instruction: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    """
+    Build compact policy metadata for Langfuse observation metadata.
+    This is intentionally small/stable so UIs can render high-level policy nodes.
+    """
+    out: dict[str, Any] = {}
+    itype = instruction_type.strip().upper() if isinstance(instruction_type, str) else None
+    if itype:
+        out["instruction_type"] = itype
+    if isinstance(instruction_category, str) and instruction_category.strip():
+        out["instruction_category"] = instruction_category.strip()
+
+    security_type: Any = None
+    rule_types: Any = None
+    if isinstance(instruction, dict):
+        security_type = instruction.get("security_type")
+        rule_types = instruction.get("rule_types")
+
+    if security_type is None and get_instruction_security is not None and itype:
+        try:
+            sec, rules = get_instruction_security(itype, instruction_category)
+            security_type = sec
+            rule_types = rules
+        except Exception:
+            security_type = None
+            rule_types = None
+
+    if isinstance(security_type, dict):
+        out["policy_security_type"] = security_type
+        # Also mirror the most-used fields at top-level for easier querying.
+        for k in (
+            "authority_label",
+            "confidentiality",
+            "integrity",
+            "trustworthiness",
+            "confidence",
+            "reversible",
+            "confidentiality_label",
+        ):
+            if k in security_type:
+                out[f"policy_{k}"] = security_type.get(k)
+
+    effect_counts = _count_rule_effects(rule_types)
+    if effect_counts:
+        out["policy_rule_effect_counts"] = effect_counts
+        out["policy_has_block"] = effect_counts.get("BLOCK", 0) > 0
+
+    return out
 
 
 def _emit_instruction_parser_node(
@@ -3017,12 +3093,17 @@ def _inject_topic_summary_hint(
         "\n"
         "Requirements for `topic`:\n"
         "- Output a single short topic phrase by default.\n"
+        "- Keep it concise: usually <= 16 Chinese chars or <= 32 chars.\n"
+        "- Match the latest turn intent and language (Chinese/English).\n"
         "- Only output multiple topic points (separated by ` / `) when the user's topic clearly shifts.\n"
         "- If shifted, include the previous topic + the new topic (only as needed).\n"
         "- Use short noun-phrase style topics (no sentences, no steps, no process words).\n"
+        "- Do NOT include detailed facts in topic: numbers, timestamps, percentages, URLs, markdown formatting.\n"
         "- Do NOT include control/reset words: new session, /new, /reset, reset session, 重置会话, 重制对话, greet user, next, please wait, kernel.*, execution_core.\n"
         "- If latest user turn is only reset/new-session control text, return an empty topic unless this is turn.001 with no other topic context.\n"
         "- If latest user turn is generic/greeting, keep the current summarized topic.\n"
+        "- If the best topic is the same as current summarized topic, return an empty string \"\" to reuse previous topic.\n"
+        "- If latest turn is follow-up that changes time/scope (example: from 今日天气 to 明天呢), generate a new topic instead of \"\".\n"
         "Fallback order for `topic`: current summarized topic -> latest user turn.\n"
         f"Current summarized topic: {previous_topic}\n"
         f"Latest user turn: {latest_user_turn}"
