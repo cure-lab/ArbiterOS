@@ -6,18 +6,24 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from arbiteros_kernel.instruction_parsing.instruction_parser import Instruction
+    from arbiteros_kernel.policy_check import PolicyCheckResult
 
 
 class Policy(ABC):
     """Base class for policy implementations. Subclasses must implement check()."""
 
     @abstractmethod
-    def check(self, instructions: list[dict[str, Any]], *args: Any, **kwargs: Any) -> tuple[dict[str, Any] | None, str]:
+    def check(
+        self,
+        instructions: list[dict[str, Any]],
+        current_response: dict[str, Any],
+        latest_instructions: list[dict[str, Any]],
+        trace_id: str,
+        *args: Any,
+        **kwargs: Any,
+    ) -> "PolicyCheckResult":
         """
         Run the policy check. Override in subclasses with specific logic.
-        Returns (last_instruction, error_message) where:
-        - last_instruction: the instruction on the last step (modified or unmodified)
-        - error_message: non-empty string if modification was made, empty otherwise
+        Returns PolicyCheckResult with modified, response, and error_type.
         """
         ...
