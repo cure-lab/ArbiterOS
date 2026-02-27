@@ -26,6 +26,7 @@ import litellm
 from langfuse import Langfuse
 from dotenv import load_dotenv
 from arbiteros_kernel.langfuse_env import ensure_langfuse_env_compat
+from arbiteros_kernel.policy import check_response_policy
 from litellm.caching.dual_cache import DualCache
 from litellm.integrations.custom_logger import CustomLogger, UserAPIKeyAuth
 from litellm.types.utils import (
@@ -129,6 +130,8 @@ _MAX_RECENT_RESPONSE_KEYS = 512
 _recent_tool_result_keys: list[str] = []
 _recent_tool_result_key_set: set[str] = set()
 _MAX_RECENT_TOOL_RESULT_KEYS = 1024
+# trace_id -> {tool_call_id: error_type}：policy 保护后待 tool result 时加 policy_protected
+_policy_protected_tool_call_ids: dict[str, dict[str, str]] = {}
 _TOOL_RESULT_NAME_INDEX_RE = re.compile(
     r"^(?P<tool_name>.+)\.(?P<index>\d+)$"
 )
@@ -2190,6 +2193,11 @@ def _emit_tool_result_nodes_if_needed(request_data: dict, state: _TraceState) ->
                         result=parsed_result,
                     )
                     instruction_for_metadata = instr if isinstance(instr, dict) else None
+                    # tool call 第二次记录（含 result）：若该 tool_call_id 曾被 policy 保护，加 policy_protected
+                    by_trace = _policy_protected_tool_call_ids.get(state.trace_id, {})
+                    error_type = by_trace.pop(tool_call_id, None) if isinstance(tool_call_id, str) else None
+                    if isinstance(error_type, str) and error_type.strip():
+                        builder.instructions[-1]["policy_protected"] = error_type
                     _save_instructions_to_trace_file(state.trace_id, builder)
                     parser_snapshot = _build_instruction_parser_snapshot(
                         state.trace_id,
@@ -3479,6 +3487,21 @@ class MyCustomHandler(CustomLogger):
         )
         final_msg_dict = raw_msg_dict
 
+        # 记录 instruction 数量，供 policy 保护时标记本次添加的 instructions
+        _policy_instruction_count_before = 0
+        _policy_trace_id_for_block: Optional[str] = None
+        if InstructionBuilder is not None:
+            metadata = data.get("metadata") if isinstance(data, dict) else {}
+            _policy_trace_id_for_block = (
+                metadata.get("arbiteros_trace_id")
+                if isinstance(metadata, dict) else None
+            )
+            if isinstance(_policy_trace_id_for_block, str) and _policy_trace_id_for_block.strip():
+                builder_pre = _get_instruction_builder_for_trace(_policy_trace_id_for_block)
+                _policy_instruction_count_before = (
+                    len(getattr(builder_pre, "instructions", [])) if builder_pre else 0
+                )
+
         # instruction_parsing: 在 post_call_success 时立即截获 tool_calls（name+arguments），单独存一条
         if raw_msg_dict is not None and InstructionBuilder is not None:
             metadata = data.get("metadata") if isinstance(data, dict) else {}
@@ -3522,6 +3545,50 @@ class MyCustomHandler(CustomLogger):
                                 setattr(response, "output_text", new_content)
                     except Exception:
                         pass
+
+        # Policy check: 剥完 category/topic 后，在回复 agent 前检查
+        if isinstance(final_msg_dict, dict):
+            metadata = data.get("metadata") if isinstance(data, dict) else {}
+            trace_id = (
+                metadata.get("arbiteros_trace_id")
+                if isinstance(metadata, dict) else None
+            )
+            if isinstance(trace_id, str) and trace_id.strip():
+                builder = _get_instruction_builder_for_trace(trace_id)
+                instructions = list(getattr(builder, "instructions", [])) if builder else []
+                latest_instructions = instructions[_policy_instruction_count_before:]
+                policy_result = check_response_policy(
+                    trace_id=trace_id,
+                    instructions=instructions,
+                    current_response=final_msg_dict,
+                    latest_instructions=latest_instructions,
+                )
+                if policy_result.modified:
+                    final_msg_dict = policy_result.response
+                    error_type_str = policy_result.error_type or ""
+                    if error_type_str and builder is not None:
+                        # 本次 post_call_success 相关的每条 instruction 都加 policy_protected
+                        for instr in builder.instructions[_policy_instruction_count_before:]:
+                            instr["policy_protected"] = error_type_str
+                        _save_instructions_to_trace_file(trace_id, builder)
+                        # 若有 tool_calls，存 tool_call_id 供后续 tool result 时加 policy_protected
+                        tool_calls = raw_msg_dict.get("tool_calls") if isinstance(raw_msg_dict, dict) else None
+                        if isinstance(tool_calls, list):
+                            by_trace = _policy_protected_tool_call_ids.setdefault(trace_id, {})
+                            for tc in tool_calls:
+                                if isinstance(tc, dict):
+                                    tc_id = tc.get("id") or tc.get("tool_call_id")
+                                    if isinstance(tc_id, str) and tc_id.strip():
+                                        by_trace[tc_id] = error_type_str
+                    try:
+                        if is_chat_completion:
+                            response.choices[0].message = Message(**final_msg_dict)
+                        else:
+                            if isinstance(final_msg_dict.get("content"), str) and hasattr(response, "output_text"):
+                                setattr(response, "output_text", final_msg_dict.get("content"))
+                    except Exception:
+                        pass
+
         fallback_text = os.getenv(
             "ARBITEROS_EMPTY_ASSISTANT_FALLBACK",
             "抱歉，我这次没有生成有效回复，请重试。",
@@ -3702,6 +3769,20 @@ class MyCustomHandler(CustomLogger):
         # 先存 modify 之前的版本（带 category/content 的原始结构）
         _save_json("post_call_success", {"response": msg_dict})
 
+        # 记录 instruction 数量，供 policy 保护时标记本次添加的 instructions
+        _policy_instruction_count_before_stream = 0
+        if InstructionBuilder is not None:
+            metadata = request_data.get("metadata") if isinstance(request_data, dict) else {}
+            _policy_trace_id_stream = (
+                metadata.get("arbiteros_trace_id")
+                if isinstance(metadata, dict) else None
+            )
+            if isinstance(_policy_trace_id_stream, str) and _policy_trace_id_stream.strip():
+                builder_pre = _get_instruction_builder_for_trace(_policy_trace_id_stream)
+                _policy_instruction_count_before_stream = (
+                    len(getattr(builder_pre, "instructions", [])) if builder_pre else 0
+                )
+
         # instruction_parsing: 流式场景下同样在 post_call 时立即截获 tool_calls
         if msg_dict is not None and InstructionBuilder is not None:
             metadata = request_data.get("metadata") if isinstance(request_data, dict) else {}
@@ -3732,6 +3813,39 @@ class MyCustomHandler(CustomLogger):
                 modified_dict = response_transform(request_data, msg_dict)
             if modified_dict is not None and isinstance(modified_dict, dict):
                 msg_dict = modified_dict
+
+        # Policy check: 剥完 category/topic 后，在回复 agent 前检查
+        if isinstance(msg_dict, dict):
+            metadata = request_data.get("metadata") if isinstance(request_data, dict) else {}
+            trace_id = (
+                metadata.get("arbiteros_trace_id")
+                if isinstance(metadata, dict) else None
+            )
+            if isinstance(trace_id, str) and trace_id.strip():
+                builder = _get_instruction_builder_for_trace(trace_id)
+                instructions = list(getattr(builder, "instructions", [])) if builder else []
+                latest_instructions = instructions[_policy_instruction_count_before_stream:]
+                policy_result = check_response_policy(
+                    trace_id=trace_id,
+                    instructions=instructions,
+                    current_response=msg_dict,
+                    latest_instructions=latest_instructions,
+                )
+                if policy_result.modified:
+                    msg_dict = policy_result.response
+                    error_type_str = policy_result.error_type or ""
+                    if error_type_str and builder is not None:
+                        for instr in builder.instructions[_policy_instruction_count_before_stream:]:
+                            instr["policy_protected"] = error_type_str
+                        _save_instructions_to_trace_file(trace_id, builder)
+                        tool_calls = raw_msg_dict.get("tool_calls") if isinstance(raw_msg_dict, dict) else None
+                        if isinstance(tool_calls, list):
+                            by_trace = _policy_protected_tool_call_ids.setdefault(trace_id, {})
+                            for tc in tool_calls:
+                                if isinstance(tc, dict):
+                                    tc_id = tc.get("id") or tc.get("tool_call_id")
+                                    if isinstance(tc_id, str) and tc_id.strip():
+                                        by_trace[tc_id] = error_type_str
 
         fallback_text = os.getenv(
             "ARBITEROS_EMPTY_ASSISTANT_FALLBACK",
