@@ -1737,6 +1737,50 @@ def _extract_tool_calls(message_dict: Optional[dict]) -> list[dict]:
     return out
 
 
+def _replace_instructions_from_modified_response(
+    builder: Any,
+    modified_response: dict,
+    instruction_start_index: int,
+) -> None:
+    """
+    Policy 修改 response 后，用修改后的 response 重新生成 instructions 并替换。
+    删除本次添加的 instructions，再根据 modified_response 重新解析并 add 进去。
+    """
+    if InstructionBuilder is None or builder is None:
+        return
+    instructions = getattr(builder, "instructions", None)
+    if not isinstance(instructions, list) or instruction_start_index >= len(instructions):
+        return
+
+    # 1. 删除本次添加的 instructions
+    del instructions[instruction_start_index:]
+    # 2. 恢复 builder 状态
+    builder._runtime_step = len(instructions)
+    builder._last_instruction_id = instructions[-1]["id"] if instructions else None
+
+    # 3. 根据 modified_response 重新添加 instructions（tool_calls 先，再 content）
+    tc_details = _extract_tool_call_details_from_response(modified_response)
+    for tc_detail in tc_details:
+        try:
+            builder.add_from_tool_call(
+                tool_name=tc_detail["tool_name"],
+                tool_call_id=tc_detail["tool_call_id"],
+                arguments=tc_detail.get("arguments") or {},
+                result=None,
+            )
+        except Exception:
+            pass
+
+    content = modified_response.get("content")
+    if isinstance(content, str) and content.strip():
+        try:
+            builder.add_from_structured_output(
+                structured={"intent": "RESPOND", "content": content},
+            )
+        except Exception:
+            pass
+
+
 def _extract_tool_call_details_from_response(response_dict: Optional[dict]) -> list[dict[str, Any]]:
     """从 LLM 响应中提取 tool_calls 的 (id, name, arguments)，用于 post_call_success 时立即存储。"""
     out: list[dict[str, Any]] = []
@@ -3566,10 +3610,15 @@ class MyCustomHandler(CustomLogger):
                 if policy_result.modified:
                     final_msg_dict = policy_result.response
                     error_type_str = policy_result.error_type or ""
-                    if error_type_str and builder is not None:
-                        # 本次 post_call_success 相关的每条 instruction 都加 policy_protected
-                        for instr in builder.instructions[_policy_instruction_count_before:]:
-                            instr["policy_protected"] = error_type_str
+                    if builder is not None:
+                        # 用修改后的 response 重新生成 instructions 并替换
+                        _replace_instructions_from_modified_response(
+                            builder, final_msg_dict, _policy_instruction_count_before
+                        )
+                        if error_type_str:
+                            # 本次 post_call_success 相关的每条 instruction 都加 policy_protected
+                            for instr in builder.instructions[_policy_instruction_count_before:]:
+                                instr["policy_protected"] = error_type_str
                         _save_instructions_to_trace_file(trace_id, builder)
                         # 若有 tool_calls，存 tool_call_id 供后续 tool result 时加 policy_protected
                         tool_calls = raw_msg_dict.get("tool_calls") if isinstance(raw_msg_dict, dict) else None
@@ -3834,9 +3883,13 @@ class MyCustomHandler(CustomLogger):
                 if policy_result.modified:
                     msg_dict = policy_result.response
                     error_type_str = policy_result.error_type or ""
-                    if error_type_str and builder is not None:
-                        for instr in builder.instructions[_policy_instruction_count_before_stream:]:
-                            instr["policy_protected"] = error_type_str
+                    if builder is not None:
+                        _replace_instructions_from_modified_response(
+                            builder, msg_dict, _policy_instruction_count_before_stream
+                        )
+                        if error_type_str:
+                            for instr in builder.instructions[_policy_instruction_count_before_stream:]:
+                                instr["policy_protected"] = error_type_str
                         _save_instructions_to_trace_file(trace_id, builder)
                         tool_calls = raw_msg_dict.get("tool_calls") if isinstance(raw_msg_dict, dict) else None
                         if isinstance(tool_calls, list):
