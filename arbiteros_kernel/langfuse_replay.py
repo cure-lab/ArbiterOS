@@ -600,22 +600,34 @@ def _emit_response_nodes_from_pair(
             allow_reset_control_topic=False,
         )
     )
+    previous_topic_for_fallback = _sanitize_topic_preview(
+        pre.trace_state.latest_topic_summary,
+        max_chars=max_topic_chars,
+        allow_reset_control_topic=False,
+    )
+    llm_topic_raw = llm_topic if isinstance(llm_topic, str) else None
+    llm_topic_reuse_previous = bool(
+        isinstance(llm_topic_raw, str) and not llm_topic_raw.strip()
+    )
+    llm_topic_candidate = _sanitize_topic_preview(
+        llm_topic_raw,
+        max_chars=max_topic_chars,
+        allow_reset_control_topic=allow_reset_control_topic,
+    )
+    fallback_user_topic = _sanitize_topic_preview(
+        pre.context.latest_user_text,
+        max_chars=max_topic_chars,
+        allow_reset_control_topic=allow_reset_control_topic,
+    ) or _sanitize_topic_preview(
+        pre.trace_state.latest_user_preview,
+        max_chars=max_topic_chars,
+        allow_reset_control_topic=allow_reset_control_topic,
+    )
     turn_topic = (
-        _sanitize_topic_preview(
-            llm_topic,
-            max_chars=max_topic_chars,
-            allow_reset_control_topic=allow_reset_control_topic,
-        )
-        or _sanitize_topic_preview(
-            pre.context.latest_user_text,
-            max_chars=max_topic_chars,
-            allow_reset_control_topic=allow_reset_control_topic,
-        )
-        or _sanitize_topic_preview(
-            pre.trace_state.latest_user_preview,
-            max_chars=max_topic_chars,
-            allow_reset_control_topic=allow_reset_control_topic,
-        )
+        llm_topic_candidate
+        or (previous_topic_for_fallback if llm_topic_reuse_previous else None)
+        or fallback_user_topic
+        or previous_topic_for_fallback
     )
     if isinstance(turn_topic, str) and turn_topic.strip():
         pre.trace_state.latest_topic_summary = turn_topic
