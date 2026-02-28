@@ -2636,10 +2636,14 @@ def _emit_response_nodes(
     #   2) previous topic when LLM returns empty topic ("reuse previous")
     #   3) latest user text preview
     #   4) previous topic summary
+    turn_idx = max(state.turn_index, 1)
+    kernel_step_label = f"kernel.{effective_category.lower()}"
+    # NOTE: Langfuse execution graph may de-duplicate nodes by `name`.
+    # Suffix with turn index to keep each turn's kernel step distinct.
     kernel_step_name = (
-        f"{kernel_turn_topic} - kernel.{effective_category.lower()}"
+        f"{kernel_turn_topic} - {kernel_step_label} @turn_{turn_idx:03d}"
         if kernel_turn_topic
-        else f"kernel.{effective_category.lower()}"
+        else f"{kernel_step_label} @turn_{turn_idx:03d}"
     )
 
     # Update the corresponding turn node's input rendering to match the kernel label.
