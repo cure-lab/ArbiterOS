@@ -1,0 +1,170 @@
+{
+  "audit": { "log_allow": true },
+
+  "allow": {
+    "tools": ["read", "write", "exec", "gmail_read", "web_fetch"],
+    "instruction_types": [],
+    "categories": []
+  },
+
+  "deny": {
+    "tools": [],
+    "instruction_types": [],
+    "categories": []
+  },
+
+  "paths": {
+    "deny_prefixes": [
+      "/etc", "/usr", "/bin", "/sbin", "/var", "/proc", "/sys", "/dev", "/root",
+      "/Windows", "/System32"
+    ],
+    "allow_prefixes": [
+      "/home/cstributer/.openclaw/workspace",
+      "/home/cstributer/.openclaw/canvas",
+      "canvas",
+      "workspace"
+    ]
+  },
+
+  "input_budget": { "max_str_len": 20000 },
+  "output_budget": { "max_chars": 500 },
+
+  "rate_limit": {
+    "max_consecutive_same_tool": 5,
+    "window_seconds": 10,
+    "max_calls_per_window": 20
+  },
+
+  "user_aggregate": {
+    "tools": ["exec"],
+    "window_seconds": 60,
+    "max_events": 50
+  },
+
+  "schemas": {
+    "write": {
+      "type": "object",
+      "required": ["content"],
+      "properties": {
+        "path": { "type": "string" },
+        "file_path": { "type": "string" },
+        "content": { "type": "string" }
+      }
+    },
+    "read": {
+      "type": "object",
+      "required": ["path"],
+      "properties": {
+        "path": { "type": "string" },
+        "file_path": { "type": "string" },
+        "limit": { "type": "integer" }
+      }
+    },
+    "exec": {
+      "type": "object",
+      "required": ["command"],
+      "properties": {
+        "command": { "type": "string" },
+        "pty": { "type": "boolean" }
+      }
+    }
+  },
+
+  "taint": {
+    "enabled": true,
+
+    "sources": ["read", "gmail_read", "web_fetch"],
+    "sinks": ["exec", "write"],
+
+    "untrusted_sources": {
+      "tools": ["read", "gmail_read", "web_fetch"],
+      "patterns": [
+        "INJECT_ME",
+        "ignore previous",
+        "exec:",
+        "tool:",
+        "run:",
+        "rm -rf",
+        "curl",
+        "apikey",
+        "token"
+      ]
+    },
+
+    "high_risk_tools": ["exec", "write"],
+
+    "treat_respond_as_sink": true,
+    "instruction_sinks": ["RESPOND"],
+    "sink_block_window_seconds": 60,
+
+    "min_snippet_len": 6,
+    "max_snippet_len": 512,
+    "max_snippets_per_event": 50,
+    "snippet_cache_max": 200,
+    "event_dedupe_max": 512,
+
+    "approval": {
+      "mode": "file",
+      "dir": "~/.arbiteros/approvals",
+      "ttl_seconds": 120,
+      "delete_on_use": true,
+      "show_instructions": true
+    }
+  },
+
+  "efsm": {
+  "enabled": true,
+  "initial": "IDLE",
+  "plan_ttl_seconds": 600,
+  "transitions": [
+    {
+      "id": "idle_read_to_after_read",
+      "from": "IDLE",
+      "event": "READ",
+      "to": "AFTER_READ",
+      "effect": "ALLOW",
+      "priority": 100
+    },
+    {
+      "id": "after_read_read_stay",
+      "from": "AFTER_READ",
+      "event": "READ",
+      "to": "AFTER_READ",
+      "effect": "ALLOW",
+      "priority": 95
+    },
+    {
+      "id": "after_read_write_block",
+      "from": "AFTER_READ",
+      "event": "WRITE",
+      "to": "IDLE",
+      "effect": "BLOCK",
+      "priority": 90
+    },
+    {
+      "id": "after_read_exec_clear",
+      "from": "AFTER_READ",
+      "event": "EXEC",
+      "to": "IDLE",
+      "effect": "ALLOW",
+      "priority": 80
+    },
+    {
+      "id": "idle_write_ok",
+      "from": "IDLE",
+      "event": "WRITE",
+      "to": "IDLE",
+      "effect": "ALLOW",
+      "priority": 70
+    },
+    {
+      "id": "idle_exec_ok",
+      "from": "IDLE",
+      "event": "EXEC",
+      "to": "IDLE",
+      "effect": "ALLOW",
+      "priority": 60
+    }
+  ]
+}
+}

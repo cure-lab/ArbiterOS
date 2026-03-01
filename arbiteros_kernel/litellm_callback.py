@@ -1,4 +1,5 @@
 import asyncio
+import copy
 import hashlib
 import json
 import os
@@ -14,10 +15,18 @@ try:
 except ImportError:
     InstructionBuilder = None  # type: ignore[misc, assignment]
 
+try:
+    from arbiteros_kernel.instruction_parsing.instruction_security_registry import (
+        get_instruction_security,
+    )
+except ImportError:
+    get_instruction_security = None  # type: ignore[misc, assignment]
+
 import litellm
 from langfuse import Langfuse
 from dotenv import load_dotenv
 from arbiteros_kernel.langfuse_env import ensure_langfuse_env_compat
+from arbiteros_kernel.policy_check import check_response_policy
 from litellm.caching.dual_cache import DualCache
 from litellm.integrations.custom_logger import CustomLogger, UserAPIKeyAuth
 from litellm.types.utils import (
@@ -41,6 +50,7 @@ _LANGFUSE_NODE_LOG_FILE = (
 )
 _LANGFUSE_NODE_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
 _TRACE_STATE_FILE = Path(__file__).resolve().parent.parent / "log" / "trace_state.json"
+_PRECALL_LOG_FILE = Path(__file__).resolve().parent.parent / "log" / "precall.jsonl"
 _INSTRUCTION_LOG_DIR = Path(__file__).resolve().parent.parent / "log"
 _INSTRUCTION_LOG_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -48,9 +58,12 @@ _INSTRUCTION_LOG_DIR.mkdir(parents=True, exist_ok=True)
 # This makes Langfuse/MLflow callbacks work without manually exporting env vars.
 load_dotenv(override=False)
 
-# 剥去 assistant content 时记录的 category。
+# 剥去 assistant content 时记录的 category 与 topic。
 # 以 device_key 维度隔离，避免不同会话互相污染。
+# 当 response 有 content 但非严格 topic/category/content 格式时，记录此 label，request 时遇到则不包。
+_NO_WRAP_SENTINEL = "__arbiteros_no_wrap__"
 _stripped_categories_by_device: dict[str, list[str]] = {}
+_stripped_topics_by_device: dict[str, list[Optional[str]]] = {}
 _stripped_categories_lock = threading.Lock()
 _MAX_STRIPPED_CATEGORIES = 1000
 
@@ -101,6 +114,8 @@ class _TraceState:
     latest_topic_summary: Optional[str] = None
     # Per-trace monotonically increasing tool result indices per tool name.
     tool_result_counter_by_tool: dict[str, int] = field(default_factory=dict)
+    # tool_call_id -> parser/tool node reservation (ephemeral, in-memory only)
+    pending_tool_call_nodes_by_id: dict[str, dict[str, Any]] = field(default_factory=dict)
     # Ephemeral handle to the current turn observation, for in-process updates.
     current_turn_handle: Any = None
 
@@ -115,6 +130,8 @@ _MAX_RECENT_RESPONSE_KEYS = 512
 _recent_tool_result_keys: list[str] = []
 _recent_tool_result_key_set: set[str] = set()
 _MAX_RECENT_TOOL_RESULT_KEYS = 1024
+# trace_id -> {tool_call_id: error_type}：policy 保护后待 tool result 时加 policy_protected
+_policy_protected_tool_call_ids: dict[str, dict[str, str]] = {}
 _TOOL_RESULT_NAME_INDEX_RE = re.compile(
     r"^(?P<tool_name>.+)\.(?P<index>\d+)$"
 )
@@ -280,6 +297,41 @@ def _next_tool_result_index(state: _TraceState, tool_name: str) -> int:
         current = current_floor + 1
         state.tool_result_counter_by_tool[normalized_tool_name] = current
         return current
+
+
+def _reserve_tool_result_index_for_call(
+    state: _TraceState, *, tool_call_id: Optional[str], tool_name: str
+) -> int:
+    normalized_tool_name = tool_name.strip() if isinstance(tool_name, str) else ""
+    if not normalized_tool_name:
+        normalized_tool_name = "unknown_tool"
+    if isinstance(tool_call_id, str) and tool_call_id.strip():
+        with _trace_state_lock:
+            existing = state.pending_tool_call_nodes_by_id.get(tool_call_id)
+            if isinstance(existing, dict):
+                idx = existing.get("index")
+                if isinstance(idx, int) and idx > 0:
+                    return idx
+    return _next_tool_result_index(state, normalized_tool_name)
+
+
+def _set_pending_tool_call_node(
+    state: _TraceState, *, tool_call_id: Optional[str], payload: dict[str, Any]
+) -> None:
+    if not isinstance(tool_call_id, str) or not tool_call_id.strip():
+        return
+    with _trace_state_lock:
+        state.pending_tool_call_nodes_by_id[tool_call_id] = payload
+
+
+def _pop_pending_tool_call_node(
+    state: _TraceState, *, tool_call_id: Optional[str]
+) -> Optional[dict[str, Any]]:
+    if not isinstance(tool_call_id, str) or not tool_call_id.strip():
+        return None
+    with _trace_state_lock:
+        payload = state.pending_tool_call_nodes_by_id.pop(tool_call_id, None)
+    return payload if isinstance(payload, dict) else None
 
 
 def _max_emitted_tool_result_index(
@@ -477,6 +529,21 @@ def _save_langfuse_node_json(data: dict) -> None:
         json.dump(entry, f, ensure_ascii=False, default=str)
         f.write("\n")
         f.flush()
+
+
+def _save_precall_to_log(data: dict) -> None:
+    """将 pre_call 最终发给 LLM 的 payload 追加到 log/precall.jsonl"""
+    try:
+        entry = {
+            "ts": datetime.now().isoformat(),
+            "payload": _to_json(data),
+        }
+        with open(_PRECALL_LOG_FILE, "a", encoding="utf-8") as f:
+            json.dump(entry, f, ensure_ascii=False, default=str)
+            f.write("\n")
+            f.flush()
+    except Exception:
+        pass  # Best-effort; don't fail the main flow
 
 
 def _extract_text_from_message_content(content: Any) -> str:
@@ -1670,6 +1737,50 @@ def _extract_tool_calls(message_dict: Optional[dict]) -> list[dict]:
     return out
 
 
+def _replace_instructions_from_modified_response(
+    builder: Any,
+    modified_response: dict,
+    instruction_start_index: int,
+) -> None:
+    """
+    Policy 修改 response 后，用修改后的 response 重新生成 instructions 并替换。
+    删除本次添加的 instructions，再根据 modified_response 重新解析并 add 进去。
+    """
+    if InstructionBuilder is None or builder is None:
+        return
+    instructions = getattr(builder, "instructions", None)
+    if not isinstance(instructions, list) or instruction_start_index >= len(instructions):
+        return
+
+    # 1. 删除本次添加的 instructions
+    del instructions[instruction_start_index:]
+    # 2. 恢复 builder 状态
+    builder._runtime_step = len(instructions)
+    builder._last_instruction_id = instructions[-1]["id"] if instructions else None
+
+    # 3. 根据 modified_response 重新添加 instructions（tool_calls 先，再 content）
+    tc_details = _extract_tool_call_details_from_response(modified_response)
+    for tc_detail in tc_details:
+        try:
+            builder.add_from_tool_call(
+                tool_name=tc_detail["tool_name"],
+                tool_call_id=tc_detail["tool_call_id"],
+                arguments=tc_detail.get("arguments") or {},
+                result=None,
+            )
+        except Exception:
+            pass
+
+    content = modified_response.get("content")
+    if isinstance(content, str) and content.strip():
+        try:
+            builder.add_from_structured_output(
+                structured={"intent": "RESPOND", "content": content},
+            )
+        except Exception:
+            pass
+
+
 def _extract_tool_call_details_from_response(response_dict: Optional[dict]) -> list[dict[str, Any]]:
     """从 LLM 响应中提取 tool_calls 的 (id, name, arguments)，用于 post_call_success 时立即存储。"""
     out: list[dict[str, Any]] = []
@@ -2051,6 +2162,9 @@ def _emit_tool_result_nodes_if_needed(request_data: dict, state: _TraceState) ->
     emitted_any = False
     for tool_result in tool_results:
         tool_call_id = tool_result.get("tool_call_id")
+        pending_tool_call = _pop_pending_tool_call_node(
+            state, tool_call_id=tool_call_id
+        )
         tool_details = (
             tool_call_details_by_call_id.get(tool_call_id, {})
             if isinstance(tool_call_id, str)
@@ -2079,9 +2193,84 @@ def _emit_tool_result_nodes_if_needed(request_data: dict, state: _TraceState) ->
         ):
             continue
 
-        next_index = _next_tool_result_index(state, tool_name)
+        next_index = (
+            pending_tool_call.get("index")
+            if isinstance(pending_tool_call, dict)
+            and isinstance(pending_tool_call.get("index"), int)
+            and pending_tool_call.get("index") > 0
+            else _next_tool_result_index(state, tool_name)
+        )
         tool_result_name = f"{tool_name}.{next_index}"
+        parser_stage = (
+            pending_tool_call.get("parser_stage")
+            if isinstance(pending_tool_call, dict)
+            and isinstance(pending_tool_call.get("parser_stage"), str)
+            else f"pre_{tool_name}.{next_index}"
+        )
+        parser_parent_observation_id = (
+            pending_tool_call.get("parser_observation_id")
+            if isinstance(pending_tool_call, dict)
+            and isinstance(pending_tool_call.get("parser_observation_id"), str)
+            else None
+        )
+        parser_metadata_from_pre = (
+            pending_tool_call.get("parser_metadata")
+            if isinstance(pending_tool_call, dict)
+            and isinstance(pending_tool_call.get("parser_metadata"), dict)
+            else {}
+        )
+        parsed_result: Optional[dict[str, Any]] = None
+        if isinstance(content, str) and content.strip():
+            parsed = _safe_json_loads(content)
+            parsed_result = parsed if isinstance(parsed, dict) else {"raw": content}
+
+        parser_snapshot: dict[str, Any] = {}
+        instruction_for_metadata: Optional[dict[str, Any]] = None
+        if InstructionBuilder is not None and state.trace_id:
+            builder = _get_instruction_builder_for_trace(state.trace_id)
+            if builder is not None:
+                try:
+                    instr = builder.add_from_tool_call(
+                        tool_name=tool_name,
+                        tool_call_id=tool_call_id,
+                        arguments=tool_arguments or {},
+                        result=parsed_result,
+                    )
+                    instruction_for_metadata = instr if isinstance(instr, dict) else None
+                    # tool call 第二次记录（含 result）：若该 tool_call_id 曾被 policy 保护，加 policy_protected
+                    by_trace = _policy_protected_tool_call_ids.get(state.trace_id, {})
+                    error_type = by_trace.pop(tool_call_id, None) if isinstance(tool_call_id, str) else None
+                    if isinstance(error_type, str) and error_type.strip():
+                        builder.instructions[-1]["policy_protected"] = error_type
+                    _save_instructions_to_trace_file(state.trace_id, builder)
+                    parser_snapshot = _build_instruction_parser_snapshot(
+                        state.trace_id,
+                        builder,
+                    )
+                except Exception:
+                    parser_snapshot = {}
+
         formatted_result = _format_tool_result_output_for_langfuse(content)
+        output_payload = (
+            {"content": parsed_result}
+            if isinstance(parsed_result, dict)
+            else formatted_result.get("output")
+        )
+        tool_instruction_type = (
+            (instruction_for_metadata or {}).get("instruction_type")
+            if isinstance(instruction_for_metadata, dict)
+            else None
+        )
+        tool_instruction_category = (
+            (instruction_for_metadata or {}).get("instruction_category")
+            if isinstance(instruction_for_metadata, dict)
+            else None
+        )
+        policy_metadata = _build_policy_metadata(
+            instruction_type=tool_instruction_type,
+            instruction_category=tool_instruction_category,
+            instruction=instruction_for_metadata,
+        )
         _emit_langfuse_node(
             state=state,
             node_type="tool_result",
@@ -2092,7 +2281,7 @@ def _emit_tool_result_nodes_if_needed(request_data: dict, state: _TraceState) ->
                 "tool_name": tool_name,
                 "arguments": tool_arguments,
             },
-            output_payload=formatted_result.get("output"),
+            output_payload=output_payload,
             metadata={
                 "tool_call_id": tool_call_id,
                 "tool_name": tool_name,
@@ -2100,58 +2289,21 @@ def _emit_tool_result_nodes_if_needed(request_data: dict, state: _TraceState) ->
                 "turn_index": state.turn_index,
                 "agent_graph_node": tool_result_name,
                 "agent_graph_step": max(state.turn_index, 1) * 10 + 1,
+                "parser_stage": parser_stage,
+                "parser_trace_id": parser_snapshot.get("parser_trace_id"),
+                "trace_id_consistent": parser_snapshot.get("trace_id_consistent"),
+                "instruction_count": parser_snapshot.get("instruction_count"),
+                **policy_metadata,
+                **parser_metadata_from_pre,
             },
             level=formatted_result.get("level"),
             status_message=formatted_result.get("status_message"),
-            parent_observation_id=_current_parent_observation_id(state),
+            parent_observation_id=(
+                parser_parent_observation_id or _current_parent_observation_id(state)
+            ),
             trace_name=_build_trace_display_name(state),
         )
         emitted_any = True
-
-        # instruction_parsing: record tool call to trace's instruction file
-        if InstructionBuilder is not None and state.trace_id:
-            builder = _get_instruction_builder_for_trace(state.trace_id)
-            if builder is not None:
-                try:
-                    result_obj: Optional[dict] = None
-                    if isinstance(content, str) and content.strip():
-                        parsed = _safe_json_loads(content)
-                        result_obj = parsed if isinstance(parsed, dict) else {"raw": content}
-                    builder.add_from_tool_call(
-                        tool_name=tool_name,
-                        tool_call_id=tool_call_id,
-                        arguments=tool_arguments or {},
-                        result=result_obj,
-                    )
-                    _save_instructions_to_trace_file(state.trace_id, builder)
-                    parser_snapshot = _build_instruction_parser_snapshot(
-                        state.trace_id,
-                        builder,
-                    )
-                    _emit_instruction_parser_node(
-                        state=state,
-                        parser_stage=f"tool_result.{tool_name}.{next_index}",
-                        input_payload={
-                            "tool_call_id": tool_call_id,
-                            "tool_name": tool_name,
-                            "arguments": tool_arguments,
-                            "raw_tool_result": content,
-                        },
-                        output_payload={
-                            "parsed_tool_result": result_obj,
-                            "instruction_snapshot": parser_snapshot,
-                        },
-                        metadata={
-                            "tool_call_id": tool_call_id,
-                            "tool_name": tool_name,
-                            "tool_result_node": tool_result_name,
-                            "message_index": tool_result.get("message_index"),
-                            "trace_id_consistent": parser_snapshot.get("trace_id_consistent"),
-                            "parser_trace_id": parser_snapshot.get("parser_trace_id"),
-                        },
-                    )
-                except Exception:
-                    pass
 
     if emitted_any:
         # Persist counters so tool result numbering stays monotonic across restarts.
@@ -2162,11 +2314,12 @@ def _emit_tool_result_nodes_if_needed(request_data: dict, state: _TraceState) ->
 def _extract_structured_category_content(
     message_dict: Optional[dict],
 ) -> tuple[Optional[str], Optional[str], Optional[str]]:
+    """提取 category、content、topic。非严格格式时赋予 topic:其他，category: COGNITIVE_CORE__RESPOND。"""
     if not isinstance(message_dict, dict):
         return (None, None, None)
     content = message_dict.get("content")
     parsed = _safe_json_loads(content)
-    if isinstance(parsed, dict) and isinstance(parsed.get("content"), str):
+    if isinstance(parsed, dict) and _is_strict_topic_category_content(parsed):
         category = parsed.get("category")
         topic = parsed.get("topic")
         return (
@@ -2174,6 +2327,9 @@ def _extract_structured_category_content(
             parsed.get("content"),
             topic if isinstance(topic, str) else None,
         )
+    # 非严格格式：人为赋予 topic:其他，category: COGNITIVE_CORE__RESPOND
+    if isinstance(content, str) and content.strip():
+        return ("COGNITIVE_CORE__RESPOND", content, "其他")
     return (None, content if isinstance(content, str) else None, None)
 
 
@@ -2287,8 +2443,8 @@ def _emit_response_nodes(
 
     tool_calls = _extract_tool_calls(response_before_transform)
     if tool_calls:
-        # Keep only tool_result nodes and drop placeholder tool_call nodes without output.
-        # Still emit parser activity so instruction parsing remains visible in trace graphs.
+        # Before actual tool execution, emit parser.pre_{tool}.{n} and reserve
+        # the same {tool}.{n} index for the later tool result node.
         parser_snapshot = _build_instruction_parser_snapshot(
             state.trace_id,
             _peek_instruction_builder_for_trace(state.trace_id),
@@ -2296,21 +2452,51 @@ def _emit_response_nodes(
         parsed_tool_calls = _extract_tool_call_details_from_response(
             response_before_transform
         )
-        _emit_instruction_parser_node(
-            state=state,
-            parser_stage="tool_calls",
-            input_payload={"raw_tool_calls": tool_calls},
-            output_payload={
-                "parsed_tool_calls": parsed_tool_calls,
-                "instruction_snapshot": parser_snapshot,
-            },
-            metadata={
+        for tc_detail in parsed_tool_calls:
+            tool_call_id = tc_detail.get("tool_call_id")
+            tool_name = tc_detail.get("tool_name")
+            if not isinstance(tool_name, str) or not tool_name.strip():
+                tool_name = "unknown_tool"
+            next_index = _reserve_tool_result_index_for_call(
+                state,
+                tool_call_id=tool_call_id if isinstance(tool_call_id, str) else None,
+                tool_name=tool_name,
+            )
+            parser_stage = f"pre_{tool_name}.{next_index}"
+            parser_metadata = {
+                "tool_call_id": tool_call_id,
+                "tool_name": tool_name,
+                "tool_call_node": f"{tool_name}.{next_index}",
                 "tool_call_count": len(tool_calls),
                 "trace_id_consistent": parser_snapshot.get("trace_id_consistent"),
                 "parser_trace_id": parser_snapshot.get("parser_trace_id"),
-            },
-            parent_observation_id=_current_parent_observation_id(state),
-        )
+                "instruction_count": parser_snapshot.get("instruction_count"),
+            }
+            parser_observation_id = _emit_instruction_parser_node(
+                state=state,
+                parser_stage=parser_stage,
+                input_payload={
+                    "raw_tool_call": tc_detail,
+                    "raw_tool_calls": tool_calls,
+                },
+                output_payload={
+                    "parsed_tool_call": tc_detail,
+                    "instruction_snapshot": parser_snapshot,
+                },
+                metadata=parser_metadata,
+                parent_observation_id=_current_parent_observation_id(state),
+            )
+            _set_pending_tool_call_node(
+                state,
+                tool_call_id=tool_call_id if isinstance(tool_call_id, str) else None,
+                payload={
+                    "index": next_index,
+                    "tool_name": tool_name,
+                    "parser_stage": parser_stage,
+                    "parser_observation_id": parser_observation_id,
+                    "parser_metadata": parser_metadata,
+                },
+            )
         _flush_langfuse()
         return
 
@@ -2363,68 +2549,37 @@ def _emit_response_nodes(
         and not previous_topic_for_fallback
     )
 
+    llm_topic_raw = llm_topic if isinstance(llm_topic, str) else None
+    llm_topic_reuse_previous = bool(
+        isinstance(llm_topic_raw, str) and not llm_topic_raw.strip()
+    )
     llm_topic_clean = _normalize_topic_summary(
-        llm_topic,
+        llm_topic_raw,
         max_points=max_topic_points,
         max_point_chars=max_topic_point_chars,
         max_total_chars=max_topic_chars,
-    )
-    llm_topic_clean = _enforce_topic_point_count_on_shift(
-        llm_topic_clean,
-        previous_topic=previous_topic_for_fallback,
-        latest_user_turn=context.latest_user_text,
-        max_total_chars=max_topic_chars,
-    )
-    llm_topic_candidate = (
-        llm_topic_clean
-        if _should_accept_llm_topic_summary(
-            llm_topic_clean,
-            previous_topic=previous_topic_for_fallback,
-            latest_user_turn=context.latest_user_text,
-            allow_reset_control_topic=allow_reset_control_topic,
-        )
-        else None
-    )
+    ) or _short_text_preview(llm_topic_raw, max_chars=max_topic_chars)
     llm_topic_candidate = _sanitize_topic_preview(
-        llm_topic_candidate,
+        llm_topic_clean,
         max_chars=max_topic_chars,
         allow_reset_control_topic=allow_reset_control_topic,
     )
-    turn_topic_summary = _summarize_turn_topic(
-        user_text=context.latest_user_text,
-        output_text=output_content,
+    fallback_user_topic = _sanitize_topic_preview(
+        context.latest_user_text,
         max_chars=max_topic_chars,
-    )
-    turn_topic_clean = _normalize_topic_summary(
-        turn_topic_summary,
-        max_points=1,
-        max_point_chars=max_topic_chars,
-        max_total_chars=max_topic_chars,
-    ) or _short_text_preview(turn_topic_summary, max_chars=max_topic_chars)
-    turn_topic_clean = _sanitize_topic_preview(
-        turn_topic_clean,
+        allow_reset_control_topic=allow_reset_control_topic,
+    ) or _sanitize_topic_preview(
+        state.latest_user_preview,
         max_chars=max_topic_chars,
         allow_reset_control_topic=allow_reset_control_topic,
     )
     kernel_turn_topic = (
-        turn_topic_clean
-        or _sanitize_topic_preview(
-            context.latest_user_text,
-            max_chars=max_topic_chars,
-            allow_reset_control_topic=allow_reset_control_topic,
-        )
-        or _sanitize_topic_preview(
-            state.latest_user_preview,
-            max_chars=max_topic_chars,
-            allow_reset_control_topic=allow_reset_control_topic,
-        )
-        or llm_topic_candidate
-    )
-    trace_topic = (
         llm_topic_candidate
-        or kernel_turn_topic
+        or (previous_topic_for_fallback if llm_topic_reuse_previous else None)
+        or fallback_user_topic
         or previous_topic_for_fallback
     )
+    trace_topic = kernel_turn_topic or previous_topic_for_fallback
     persist_topic_needed = False
     if isinstance(trace_topic, str) and trace_topic.strip():
         with _trace_state_lock:
@@ -2448,6 +2603,10 @@ def _emit_response_nodes(
             "turn_index": state.turn_index,
             "agent_graph_node": output_name,
             "agent_graph_step": max(state.turn_index, 1) * 10 + 1,
+            **_build_policy_metadata(
+                instruction_type=_normalize_category_to_instruction_type(effective_category),
+                instruction_category=effective_category,
+            ),
         },
         model=model,
         parent_observation_id=_current_parent_observation_id(state),
@@ -2455,9 +2614,10 @@ def _emit_response_nodes(
     )
     # Emit one kernel_step per turn for consistent Langfuse graphs.
     # Topic fallback order:
-    #   1) per-turn topic from latest user input / response overlap
-    #   2) latest user text preview
-    #   3) LLM topic candidate (if valid)
+    #   1) LLM topic candidate
+    #   2) previous topic when LLM returns empty topic ("reuse previous")
+    #   3) latest user text preview
+    #   4) previous topic summary
     kernel_step_name = (
         f"{kernel_turn_topic} - kernel.{effective_category.lower()}"
         if kernel_turn_topic
@@ -2478,6 +2638,10 @@ def _emit_response_nodes(
             "turn_index": state.turn_index,
             "agent_graph_node": kernel_step_name,
             "agent_graph_step": max(state.turn_index, 1) * 10 + 2,
+            **_build_policy_metadata(
+                instruction_type=_normalize_category_to_instruction_type(effective_category),
+                instruction_category=effective_category,
+            ),
         },
         parent_observation_id=_current_parent_observation_id(state),
         trace_name=_build_trace_display_name(state),
@@ -2681,6 +2845,79 @@ def _build_instruction_parser_snapshot(trace_id: str, builder: Optional[Any]) ->
     return snapshot
 
 
+def _count_rule_effects(rule_types: Any) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    if not isinstance(rule_types, list):
+        return counts
+    for rule in rule_types:
+        if not isinstance(rule, dict):
+            continue
+        action = rule.get("action")
+        if not isinstance(action, dict):
+            continue
+        effect = action.get("effect")
+        if not isinstance(effect, str) or not effect.strip():
+            continue
+        normalized = effect.strip().upper()
+        counts[normalized] = counts.get(normalized, 0) + 1
+    return counts
+
+
+def _build_policy_metadata(
+    *,
+    instruction_type: Optional[str],
+    instruction_category: Optional[str] = None,
+    instruction: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    """
+    Build compact policy metadata for Langfuse observation metadata.
+    This is intentionally small/stable so UIs can render high-level policy nodes.
+    """
+    out: dict[str, Any] = {}
+    itype = instruction_type.strip().upper() if isinstance(instruction_type, str) else None
+    if itype:
+        out["instruction_type"] = itype
+    if isinstance(instruction_category, str) and instruction_category.strip():
+        out["instruction_category"] = instruction_category.strip()
+
+    security_type: Any = None
+    rule_types: Any = None
+    if isinstance(instruction, dict):
+        security_type = instruction.get("security_type")
+        rule_types = instruction.get("rule_types")
+
+    if security_type is None and get_instruction_security is not None and itype:
+        try:
+            sec, rules = get_instruction_security(itype, instruction_category)
+            security_type = sec
+            rule_types = rules
+        except Exception:
+            security_type = None
+            rule_types = None
+
+    if isinstance(security_type, dict):
+        out["policy_security_type"] = security_type
+        # Also mirror the most-used fields at top-level for easier querying.
+        for k in (
+            "authority_label",
+            "confidentiality",
+            "integrity",
+            "trustworthiness",
+            "confidence",
+            "reversible",
+            "confidentiality_label",
+        ):
+            if k in security_type:
+                out[f"policy_{k}"] = security_type.get(k)
+
+    effect_counts = _count_rule_effects(rule_types)
+    if effect_counts:
+        out["policy_rule_effect_counts"] = effect_counts
+        out["policy_has_block"] = effect_counts.get("BLOCK", 0) > 0
+
+    return out
+
+
 def _emit_instruction_parser_node(
     *,
     state: _TraceState,
@@ -2689,10 +2926,10 @@ def _emit_instruction_parser_node(
     output_payload: Any,
     metadata: Optional[dict[str, Any]] = None,
     parent_observation_id: Optional[str] = None,
-) -> None:
+) -> Optional[str]:
     turn_idx = max(state.turn_index, 1)
     parser_node_name = f"{_NODE_NAMESPACE_PREFIX}.parser.turn_{turn_idx:03d}.{parser_stage}"
-    _emit_langfuse_node(
+    return _emit_langfuse_node(
         state=state,
         node_type="parser",
         observation_type="span",
@@ -2725,16 +2962,25 @@ def _normalize_category_to_instruction_type(category: Any) -> str:
     return c
 
 
-def _record_stripped_category(data: dict, category: Any) -> None:
+def _record_stripped_category(
+    data: dict, category: Any, topic: Optional[str] = None
+) -> None:
     device_key = _resolve_category_cache_device_key(data)
     if not device_key:
         return
     normalized_category = category if isinstance(category, str) else ""
+    normalized_topic = (
+        topic if isinstance(topic, str) and topic.strip() else None
+    )
     with _stripped_categories_lock:
         categories = _stripped_categories_by_device.setdefault(device_key, [])
         categories.append(normalized_category)
         if len(categories) > _MAX_STRIPPED_CATEGORIES:
             del categories[: len(categories) - _MAX_STRIPPED_CATEGORIES]
+        topics = _stripped_topics_by_device.setdefault(device_key, [])
+        topics.append(normalized_topic)
+        if len(topics) > _MAX_STRIPPED_CATEGORIES:
+            del topics[: len(topics) - _MAX_STRIPPED_CATEGORIES]
 
 
 def _get_stripped_categories_for_device(device_key: Optional[str]) -> list[str]:
@@ -2745,26 +2991,70 @@ def _get_stripped_categories_for_device(device_key: Optional[str]) -> list[str]:
         return list(categories)
 
 
+def _get_stripped_topics_for_device(device_key: Optional[str]) -> list[Optional[str]]:
+    if not isinstance(device_key, str) or not device_key.strip():
+        return []
+    with _stripped_categories_lock:
+        topics = _stripped_topics_by_device.get(device_key.strip(), [])
+        return list(topics)
+
+
 def _clear_stripped_categories_for_device(device_key: Optional[str]) -> None:
     if not isinstance(device_key, str) or not device_key.strip():
         return
     with _stripped_categories_lock:
         _stripped_categories_by_device.pop(device_key.strip(), None)
+        _stripped_topics_by_device.pop(device_key.strip(), None)
+
+
+def _add_instruction_for_non_strict(data: dict, content: str) -> None:
+    """非严格格式时，为 instruction_parsing 等赋予 topic:其他，category: COGNITIVE_CORE__RESPOND。"""
+    if not isinstance(content, str) or not content.strip():
+        return
+    metadata = data.get("metadata") if isinstance(data, dict) else {}
+    trace_id = (
+        metadata.get("arbiteros_trace_id")
+        if isinstance(metadata, dict)
+        else None
+    )
+    if not isinstance(trace_id, str) or not trace_id.strip() or InstructionBuilder is None:
+        return
+    builder = _get_instruction_builder_for_trace(trace_id)
+    if builder is None:
+        return
+    try:
+        builder.add_from_structured_output(
+            structured={
+                "intent": "RESPOND",
+                "content": content,
+            }
+        )
+        _save_instructions_to_trace_file(trace_id, builder)
+    except Exception:
+        pass
+
+
+def _is_strict_topic_category_content(obj: dict) -> bool:
+    """严格 topic/category/content 三字段结构：仅此三 key，content 类型不限。"""
+    if not isinstance(obj, dict):
+        return False
+    return set(obj.keys()) == {"topic", "category", "content"}
 
 
 def _response_transform_content_only(data: dict, message_dict: dict) -> Optional[dict]:
-    if message_dict.get("tool_calls"):
-        return message_dict
+    """没 content 才忽略；有 content 且为严格的 topic/category/content 结构则剥 structure，否则不操作但记录 NO_WRAP。"""
     content = message_dict.get("content")
     if not isinstance(content, str) or not content.strip():
         return message_dict
     try:
         inner = json.loads(content)
-        if isinstance(inner, dict) and "content" in inner:
+        if isinstance(inner, dict) and _is_strict_topic_category_content(inner):
             category = inner.get("category", "")
-            _record_stripped_category(data, category)
+            topic = inner.get("topic") if isinstance(inner.get("topic"), str) else None
+            _record_stripped_category(data, category, topic=topic)
 
-            # instruction_parsing: parse and persist to log/{trace_id}.json
+            # instruction_parsing: content 类型不限，该是啥就是啥
+            inner_content = inner.get("content")
             metadata = data.get("metadata") if isinstance(data, dict) else {}
             trace_id = (
                 metadata.get("arbiteros_trace_id")
@@ -2777,43 +3067,37 @@ def _response_transform_content_only(data: dict, message_dict: dict) -> Optional
                     instruction_type = _normalize_category_to_instruction_type(category)
                     try:
                         builder.add_from_structured_output(
-                            structured={"intent": instruction_type, "content": inner["content"]}
+                            structured={"intent": instruction_type, "content": inner_content}
                         )
                         _save_instructions_to_trace_file(trace_id, builder)
                     except Exception:
                         pass  # Best-effort; don't fail the main flow
 
-            out = {**message_dict, "content": inner["content"]}
+            out = {**message_dict, "content": inner_content}
             return out
+        # 有 content 但非严格格式：不剥，记录 NO_WRAP。request 时遇到则不包。
+        # 其他处（如 instruction_parsing、Langfuse）需用时，人为赋予 topic:其他，category: COGNITIVE_CORE__RESPOND
+        _record_stripped_category(data, _NO_WRAP_SENTINEL, topic=None)
+        _add_instruction_for_non_strict(data, content)
     except (json.JSONDecodeError, TypeError):
-        pass
+        # 非 JSON（如纯文本）：不剥，记录 NO_WRAP
+        _record_stripped_category(data, _NO_WRAP_SENTINEL, topic=None)
+        _add_instruction_for_non_strict(data, content)
     return message_dict
-
-
-def _is_structured_content(s: str) -> bool:
-    """判断 content 是否已经是带 category/content 的结构化 JSON 字符串"""
-    if not s or not isinstance(s, str):
-        return False
-    try:
-        obj = json.loads(s)
-        return isinstance(obj, dict) and "content" in obj
-    except (json.JSONDecodeError, TypeError):
-        return False
 
 
 def _extract_text_to_wrap(msg: dict) -> tuple[Optional[str], Optional[Any], Optional[int]]:
     """
     从一条 assistant 消息里取出需要包结构的纯文本。
-    - content 为字符串：返回 (content, None, None)，由调用方替换整条 content。
-    - content 为列表 [{"type":"text","text":"..."}]：返回 (part["text"], content_list, part_index)，由调用方替换 part["text"]。
-    - 无需处理或已结构化：返回 (None, None, None)。
+    是否包由 category list 严格回溯：剥了才记录，没剥不记录。包时严格按 list 来，无需额外判断。
+    - content 为字符串：有内容则返回 (content, None, None)。
+    - content 为列表：返回 (part["text"], content_list, part_index)。
+    - content 为空：返回 (None, None, None)。
     """
     content = msg.get("content")
     # 格式1: content 是字符串
     if isinstance(content, str):
         if not content.strip():
-            return (None, None, None)
-        if _is_structured_content(content):
             return (None, None, None)
         return (content, None, None)
     # 格式2: content 是列表，如 [{"type": "text", "text": "..."}]
@@ -2825,8 +3109,6 @@ def _extract_text_to_wrap(msg: dict) -> tuple[Optional[str], Optional[Any], Opti
                 continue
             text = part.get("text")
             if not isinstance(text, str) or not text.strip():
-                continue
-            if _is_structured_content(text):
                 continue
             return (text, content, idx)
     return (None, None, None)
@@ -2863,12 +3145,17 @@ def _inject_topic_summary_hint(
         "\n"
         "Requirements for `topic`:\n"
         "- Output a single short topic phrase by default.\n"
+        "- Keep it concise: usually <= 16 Chinese chars or <= 32 chars.\n"
+        "- Match the latest turn intent and language (Chinese/English).\n"
         "- Only output multiple topic points (separated by ` / `) when the user's topic clearly shifts.\n"
         "- If shifted, include the previous topic + the new topic (only as needed).\n"
         "- Use short noun-phrase style topics (no sentences, no steps, no process words).\n"
+        "- Do NOT include detailed facts in topic: numbers, timestamps, percentages, URLs, markdown formatting.\n"
         "- Do NOT include control/reset words: new session, /new, /reset, reset session, 重置会话, 重制对话, greet user, next, please wait, kernel.*, execution_core.\n"
         "- If latest user turn is only reset/new-session control text, return an empty topic unless this is turn.001 with no other topic context.\n"
         "- If latest user turn is generic/greeting, keep the current summarized topic.\n"
+        "- If the best topic is the same as current summarized topic, return an empty string \"\" to reuse previous topic.\n"
+        "- If latest turn is follow-up that changes time/scope (example: from 今日天气 to 明天呢), generate a new topic instead of \"\".\n"
         "Fallback order for `topic`: current summarized topic -> latest user turn.\n"
         f"Current summarized topic: {previous_topic}\n"
         f"Latest user turn: {latest_user_turn}"
@@ -2911,34 +3198,105 @@ def _inject_topic_summary_hint(
     return data
 
 
+# 与 litellm_config.yaml 中 instruction_output 一致的 base schema，content 将被 agent 的 schema 替换
+_ARBITEROS_BASE_RESPONSE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "topic": {
+            "type": "string",
+            "description": "A concise topic/title for this turn (keep it short, e.g. 8-20 Chinese chars or <= 40 chars).",
+            "maxLength": 60,
+        },
+        "category": {
+            "type": "string",
+            "enum": [
+                "COGNITIVE_CORE__REASON",
+                "COGNITIVE_CORE__PLAN",
+                "COGNITIVE_CORE__CRITIQUE",
+                "COGNITIVE_CORE__ASK",
+                "COGNITIVE_CORE__RESPOND",
+            ],
+            "description": "The instruction category type. Use the most Accurate category possible, rather than only choose 'COGNITIVE_CORE__RESPOND'. ",
+        },
+        "content": {
+            "type": "string",
+            "description": "The actual content of the instruction. It may take any form and contain whatever you need to generate.",
+        },
+    },
+    "required": ["topic", "category", "content"],
+    "additionalProperties": False,
+}
+
+
+def _merge_agent_response_format_into_content(data: dict) -> None:
+    """
+    若 agent 请求带了 response_format，将其作为子结构塞入我们的 topic/category/content 的 content 字段。
+    原地修改 data["response_format"]。
+    """
+    agent_rf = data.get("response_format")
+    if not isinstance(agent_rf, dict):
+        return
+    # 提取 agent 的 schema：支持 json_schema.schema 或 schema
+    agent_schema = None
+    js = agent_rf.get("json_schema")
+    if isinstance(js, dict):
+        agent_schema = js.get("schema")
+    if agent_schema is None:
+        agent_schema = agent_rf.get("schema")
+    if agent_schema is None or not isinstance(agent_schema, dict):
+        return
+    # 合并：我们的 base schema，content 替换为 agent 的 schema
+    merged_schema = copy.deepcopy(_ARBITEROS_BASE_RESPONSE_SCHEMA)
+    merged_schema["properties"]["content"] = copy.deepcopy(agent_schema)
+    data["response_format"] = {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "instruction_output",
+            "schema": merged_schema,
+            "strict": True,
+        },
+    }
+
+
 def _wrap_messages_with_categories(data: dict, *, device_key: Optional[str] = None) -> dict:
     """在 pre_call 前把 incoming 里 role=assistant 且 content 有文本的 history 从后往前包回结构。
-    包的时候不消耗 list：从当前 device_key 的 category 列表末尾往前按位置取（最后一个 assistant 对应 list[-1]，
-    倒数第二个对应 list[-2]…），与剥去的 history 一一对应。list 只在剥时追加，超 1000 删最前的。
+    包的时候从 category/topic 列表末尾往前按位置取，与 history 一一对应。
+    遇到 NO_WRAP label 则不包，保持原样。
+    content 为 null/空 的消息（如 tool_calls-only）不包、不消耗槽位，避免错位。
     """
     resolved_device_key = device_key or _resolve_category_cache_device_key(data)
     stripped_categories = _get_stripped_categories_for_device(resolved_device_key)
+    stripped_topics = _get_stripped_topics_for_device(resolved_device_key)
     messages = data.get("messages")
     if not messages or not stripped_categories:
         return data
     messages = list(messages)
-    idx_from_end = 0  # 当前包的是「从末尾数第几个」assistant，0=最后一个
+    idx_from_end = 0  # 当前包的是「从末尾数第几个」有 content 的 assistant，0=最后一个
     for i in range(len(messages) - 1, -1, -1):
         msg = messages[i]
         if not isinstance(msg, dict):
             continue
         if msg.get("role") != "assistant":
             continue
-        if msg.get("tool_calls"):
-            continue
+        # 先检查 content 是否可包：content 为 null/空 则不包、不消耗槽位（tool_calls-only 不 strip 故无 record）
         text, content_list, part_idx = _extract_text_to_wrap(msg)
         if text is None:
             continue
         if idx_from_end >= len(stripped_categories):
             break
         category = stripped_categories[-(idx_from_end + 1)]
+        topic = (
+            stripped_topics[-(idx_from_end + 1)]
+            if idx_from_end < len(stripped_topics)
+            else None
+        )
         idx_from_end += 1
-        wrapped = json.dumps({"category": category, "content": text}, ensure_ascii=False)
+        if category == _NO_WRAP_SENTINEL:
+            continue
+        wrap_obj: dict[str, Any] = {"category": category, "content": text}
+        if isinstance(topic, str) and topic.strip():
+            wrap_obj["topic"] = topic
+        wrapped = json.dumps(wrap_obj, ensure_ascii=False)
         if content_list is not None and part_idx is not None:
             new_parts = list(content_list)
             new_parts[part_idx] = {**new_parts[part_idx], "text": wrapped}
@@ -2975,6 +3333,9 @@ class MyCustomHandler(CustomLogger):
             truncated = _truncate_messages_after_last_reset(messages)
             if truncated is not messages:
                 data = {**data, "messages": truncated}
+
+        # 若 agent 带了 response_format，将其作为子结构塞入我们的 content 字段
+        _merge_agent_response_format_into_content(data)
 
         context = _build_device_context(data)
         if context.reset_requested:
@@ -3074,6 +3435,7 @@ class MyCustomHandler(CustomLogger):
                 )
             )
             _save_json("pre_call", {"call_type": call_type, "incoming": filtered_data})
+        _save_precall_to_log(data)
         return data
 
     async def async_post_call_failure_hook(
@@ -3169,6 +3531,21 @@ class MyCustomHandler(CustomLogger):
         )
         final_msg_dict = raw_msg_dict
 
+        # 记录 instruction 数量，供 policy 保护时标记本次添加的 instructions
+        _policy_instruction_count_before = 0
+        _policy_trace_id_for_block: Optional[str] = None
+        if InstructionBuilder is not None:
+            metadata = data.get("metadata") if isinstance(data, dict) else {}
+            _policy_trace_id_for_block = (
+                metadata.get("arbiteros_trace_id")
+                if isinstance(metadata, dict) else None
+            )
+            if isinstance(_policy_trace_id_for_block, str) and _policy_trace_id_for_block.strip():
+                builder_pre = _get_instruction_builder_for_trace(_policy_trace_id_for_block)
+                _policy_instruction_count_before = (
+                    len(getattr(builder_pre, "instructions", [])) if builder_pre else 0
+                )
+
         # instruction_parsing: 在 post_call_success 时立即截获 tool_calls（name+arguments），单独存一条
         if raw_msg_dict is not None and InstructionBuilder is not None:
             metadata = data.get("metadata") if isinstance(data, dict) else {}
@@ -3212,6 +3589,55 @@ class MyCustomHandler(CustomLogger):
                                 setattr(response, "output_text", new_content)
                     except Exception:
                         pass
+
+        # Policy check: 剥完 category/topic 后，在回复 agent 前检查
+        if isinstance(final_msg_dict, dict):
+            metadata = data.get("metadata") if isinstance(data, dict) else {}
+            trace_id = (
+                metadata.get("arbiteros_trace_id")
+                if isinstance(metadata, dict) else None
+            )
+            if isinstance(trace_id, str) and trace_id.strip():
+                builder = _get_instruction_builder_for_trace(trace_id)
+                instructions = list(getattr(builder, "instructions", [])) if builder else []
+                latest_instructions = instructions[_policy_instruction_count_before:]
+                policy_result = check_response_policy(
+                    trace_id=trace_id,
+                    instructions=instructions,
+                    current_response=final_msg_dict,
+                    latest_instructions=latest_instructions,
+                )
+                if policy_result.modified:
+                    final_msg_dict = policy_result.response
+                    error_type_str = policy_result.error_type or ""
+                    if builder is not None:
+                        # 用修改后的 response 重新生成 instructions 并替换
+                        _replace_instructions_from_modified_response(
+                            builder, final_msg_dict, _policy_instruction_count_before
+                        )
+                        if error_type_str:
+                            # 本次 post_call_success 相关的每条 instruction 都加 policy_protected
+                            for instr in builder.instructions[_policy_instruction_count_before:]:
+                                instr["policy_protected"] = error_type_str
+                        _save_instructions_to_trace_file(trace_id, builder)
+                        # 若有 tool_calls，存 tool_call_id 供后续 tool result 时加 policy_protected
+                        tool_calls = raw_msg_dict.get("tool_calls") if isinstance(raw_msg_dict, dict) else None
+                        if isinstance(tool_calls, list):
+                            by_trace = _policy_protected_tool_call_ids.setdefault(trace_id, {})
+                            for tc in tool_calls:
+                                if isinstance(tc, dict):
+                                    tc_id = tc.get("id") or tc.get("tool_call_id")
+                                    if isinstance(tc_id, str) and tc_id.strip():
+                                        by_trace[tc_id] = error_type_str
+                    try:
+                        if is_chat_completion:
+                            response.choices[0].message = Message(**final_msg_dict)
+                        else:
+                            if isinstance(final_msg_dict.get("content"), str) and hasattr(response, "output_text"):
+                                setattr(response, "output_text", final_msg_dict.get("content"))
+                    except Exception:
+                        pass
+
         fallback_text = os.getenv(
             "ARBITEROS_EMPTY_ASSISTANT_FALLBACK",
             "抱歉，我这次没有生成有效回复，请重试。",
@@ -3392,6 +3818,20 @@ class MyCustomHandler(CustomLogger):
         # 先存 modify 之前的版本（带 category/content 的原始结构）
         _save_json("post_call_success", {"response": msg_dict})
 
+        # 记录 instruction 数量，供 policy 保护时标记本次添加的 instructions
+        _policy_instruction_count_before_stream = 0
+        if InstructionBuilder is not None:
+            metadata = request_data.get("metadata") if isinstance(request_data, dict) else {}
+            _policy_trace_id_stream = (
+                metadata.get("arbiteros_trace_id")
+                if isinstance(metadata, dict) else None
+            )
+            if isinstance(_policy_trace_id_stream, str) and _policy_trace_id_stream.strip():
+                builder_pre = _get_instruction_builder_for_trace(_policy_trace_id_stream)
+                _policy_instruction_count_before_stream = (
+                    len(getattr(builder_pre, "instructions", [])) if builder_pre else 0
+                )
+
         # instruction_parsing: 流式场景下同样在 post_call 时立即截获 tool_calls
         if msg_dict is not None and InstructionBuilder is not None:
             metadata = request_data.get("metadata") if isinstance(request_data, dict) else {}
@@ -3422,6 +3862,43 @@ class MyCustomHandler(CustomLogger):
                 modified_dict = response_transform(request_data, msg_dict)
             if modified_dict is not None and isinstance(modified_dict, dict):
                 msg_dict = modified_dict
+
+        # Policy check: 剥完 category/topic 后，在回复 agent 前检查
+        if isinstance(msg_dict, dict):
+            metadata = request_data.get("metadata") if isinstance(request_data, dict) else {}
+            trace_id = (
+                metadata.get("arbiteros_trace_id")
+                if isinstance(metadata, dict) else None
+            )
+            if isinstance(trace_id, str) and trace_id.strip():
+                builder = _get_instruction_builder_for_trace(trace_id)
+                instructions = list(getattr(builder, "instructions", [])) if builder else []
+                latest_instructions = instructions[_policy_instruction_count_before_stream:]
+                policy_result = check_response_policy(
+                    trace_id=trace_id,
+                    instructions=instructions,
+                    current_response=msg_dict,
+                    latest_instructions=latest_instructions,
+                )
+                if policy_result.modified:
+                    msg_dict = policy_result.response
+                    error_type_str = policy_result.error_type or ""
+                    if builder is not None:
+                        _replace_instructions_from_modified_response(
+                            builder, msg_dict, _policy_instruction_count_before_stream
+                        )
+                        if error_type_str:
+                            for instr in builder.instructions[_policy_instruction_count_before_stream:]:
+                                instr["policy_protected"] = error_type_str
+                        _save_instructions_to_trace_file(trace_id, builder)
+                        tool_calls = raw_msg_dict.get("tool_calls") if isinstance(raw_msg_dict, dict) else None
+                        if isinstance(tool_calls, list):
+                            by_trace = _policy_protected_tool_call_ids.setdefault(trace_id, {})
+                            for tc in tool_calls:
+                                if isinstance(tc, dict):
+                                    tc_id = tc.get("id") or tc.get("tool_call_id")
+                                    if isinstance(tc_id, str) and tc_id.strip():
+                                        by_trace[tc_id] = error_type_str
 
         fallback_text = os.getenv(
             "ARBITEROS_EMPTY_ASSISTANT_FALLBACK",
