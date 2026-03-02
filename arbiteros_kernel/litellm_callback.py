@@ -28,6 +28,7 @@ from langfuse import Langfuse
 from dotenv import load_dotenv
 from arbiteros_kernel.langfuse_env import ensure_langfuse_env_compat
 from arbiteros_kernel.policy_check import check_response_policy
+from arbiteros_kernel.policy_runtime import RUNTIME as POLICY_RUNTIME
 from litellm.caching.dual_cache import DualCache
 from litellm.integrations.custom_logger import CustomLogger, UserAPIKeyAuth
 from litellm.types.utils import (
@@ -96,6 +97,7 @@ class _DeviceContext:
     has_explicit_user_id: bool
     latest_user_text: Optional[str]
     latest_user_fingerprint: Optional[str]
+    latest_user_message_count: int
     reset_requested: bool
 
 
@@ -107,6 +109,7 @@ class _TraceState:
     user_id: str
     sequence: int = 0
     last_user_fingerprint: Optional[str] = None
+    last_user_message_count: int = 0
     last_reset_fingerprint: Optional[str] = None
     root_observation_id: Optional[str] = None
     current_turn_observation_id: Optional[str] = None
@@ -133,6 +136,9 @@ _recent_tool_result_key_set: set[str] = set()
 _MAX_RECENT_TOOL_RESULT_KEYS = 1024
 # trace_id -> {tool_call_id: error_type}：policy 保护后待 tool result 时加 policy_protected
 _policy_protected_tool_call_ids: dict[str, dict[str, str]] = {}
+_policy_config_metadata_cache_lock = threading.Lock()
+_policy_config_metadata_cache_key: Optional[str] = None
+_policy_config_metadata_cache_value: Optional[dict[str, Any]] = None
 _TOOL_RESULT_NAME_INDEX_RE = re.compile(
     r"^(?P<tool_name>.+)\.(?P<index>\d+)$"
 )
@@ -187,6 +193,7 @@ def _trace_state_to_dict(state: _TraceState) -> dict[str, Any]:
         "user_id": state.user_id,
         "sequence": state.sequence,
         "last_user_fingerprint": state.last_user_fingerprint,
+        "last_user_message_count": state.last_user_message_count,
         "last_reset_fingerprint": state.last_reset_fingerprint,
         "root_observation_id": state.root_observation_id,
         "current_turn_observation_id": state.current_turn_observation_id,
@@ -231,6 +238,9 @@ def _trace_state_from_dict(device_key: str, payload: Any) -> Optional[_TraceStat
     last_user_fingerprint = payload.get("last_user_fingerprint")
     if not isinstance(last_user_fingerprint, str) or not last_user_fingerprint:
         last_user_fingerprint = None
+    last_user_message_count = payload.get("last_user_message_count")
+    if not isinstance(last_user_message_count, int) or last_user_message_count < 0:
+        last_user_message_count = 0
 
     last_reset_fingerprint = payload.get("last_reset_fingerprint")
     if not isinstance(last_reset_fingerprint, str) or not last_reset_fingerprint:
@@ -273,6 +283,7 @@ def _trace_state_from_dict(device_key: str, payload: Any) -> Optional[_TraceStat
         user_id=user_id,
         sequence=sequence,
         last_user_fingerprint=last_user_fingerprint,
+        last_user_message_count=last_user_message_count,
         last_reset_fingerprint=last_reset_fingerprint,
         root_observation_id=root_observation_id,
         current_turn_observation_id=current_turn_observation_id,
@@ -1007,6 +1018,17 @@ def _build_device_context(incoming: dict) -> _DeviceContext:
         if latest_user_text
         else None
     )
+    latest_user_message_count = 0
+    for msg in messages:
+        if not isinstance(msg, dict):
+            continue
+        if msg.get("role") != "user":
+            continue
+        text = _extract_text_from_message_content(msg.get("content"))
+        if text.strip():
+            latest_user_message_count += 1
+    if latest_user_message_count <= 0 and latest_user_text:
+        latest_user_message_count = 1
 
     return _DeviceContext(
         device_key=device_key,
@@ -1015,6 +1037,7 @@ def _build_device_context(incoming: dict) -> _DeviceContext:
         has_explicit_user_id=has_explicit_user_id,
         latest_user_text=latest_user_text,
         latest_user_fingerprint=latest_user_fingerprint,
+        latest_user_message_count=latest_user_message_count,
         reset_requested=reset_requested,
     )
 
@@ -1111,6 +1134,8 @@ def _resolve_trace_state_from_metadata(
             if current.trace_id == trace_id:
                 if context.latest_user_fingerprint:
                     current.last_user_fingerprint = context.latest_user_fingerprint
+                    if context.latest_user_message_count > current.last_user_message_count:
+                        current.last_user_message_count = context.latest_user_message_count
                     if context.reset_requested:
                         current.last_reset_fingerprint = context.latest_user_fingerprint
                 result = current
@@ -1120,6 +1145,8 @@ def _resolve_trace_state_from_metadata(
                 # that still include the previous arbiteros_trace_id.
                 if context.latest_user_fingerprint:
                     current.last_user_fingerprint = context.latest_user_fingerprint
+                    if context.latest_user_message_count > current.last_user_message_count:
+                        current.last_user_message_count = context.latest_user_message_count
                     if context.reset_requested:
                         current.last_reset_fingerprint = context.latest_user_fingerprint
                 result = current
@@ -1141,6 +1168,7 @@ def _resolve_trace_state_from_metadata(
                 user_id=user_id,
                 sequence=0,
                 last_user_fingerprint=context.latest_user_fingerprint,
+                last_user_message_count=context.latest_user_message_count,
                 last_reset_fingerprint=(
                     context.latest_user_fingerprint if context.reset_requested else None
                 ),
@@ -1623,6 +1651,14 @@ def _emit_langfuse_node(
         "user_id": state.user_id,
         **(metadata or {}),
     }
+    metadata_policy_violation = bool(node_metadata.get("policy_violation"))
+    level_policy_violation = (
+        isinstance(level, str) and level.strip().upper() == "POLICY_VIOLATION"
+    )
+    if metadata_policy_violation or level_policy_violation:
+        policy_config_metadata = _build_policy_config_for_langfuse()
+        for key, value in policy_config_metadata.items():
+            node_metadata.setdefault(key, value)
     if isinstance(level, str) and level.strip():
         node_metadata["langfuse_level"] = level.strip().upper()
     if isinstance(status_message, str) and status_message.strip():
@@ -1751,6 +1787,161 @@ def _extract_tool_calls(message_dict: Optional[dict]) -> list[dict]:
         if isinstance(tool_call, dict):
             out.append(tool_call)
     return out
+
+
+def _extract_tool_call_id_set(message_dict: Optional[dict]) -> set[str]:
+    out: set[str] = set()
+    for tool_call in _extract_tool_calls(message_dict):
+        tc_id = tool_call.get("id") or tool_call.get("tool_call_id")
+        if isinstance(tc_id, str) and tc_id.strip():
+            out.add(tc_id.strip())
+    return out
+
+
+def _extract_tool_call_map_by_id(message_dict: Optional[dict]) -> dict[str, dict]:
+    out: dict[str, dict] = {}
+    for tool_call in _extract_tool_calls(message_dict):
+        tc_id = tool_call.get("id") or tool_call.get("tool_call_id")
+        if isinstance(tc_id, str) and tc_id.strip():
+            out[tc_id.strip()] = tool_call
+    return out
+
+
+def _normalize_policy_violation_reason(reason: str, *, max_chars: int = 450) -> str:
+    normalized = re.sub(r"\s+", " ", reason).strip()
+    if len(normalized) > max_chars:
+        normalized = f"{normalized[:max_chars]} ... [truncated]"
+    return normalized
+
+
+def _build_policy_violation_tags(reason: str) -> list[str]:
+    lowered_reason = reason.lower()
+    tags = ["policy_violation", "tool_call_blocked"]
+    if "hard_code" in lowered_reason:
+        tags.append("hard_code")
+    if ".env" in lowered_reason:
+        tags.append("dotenv")
+    if "read path" in lowered_reason:
+        tags.append("read_path")
+    if "targets .env" in lowered_reason:
+        tags.append("target_env_file")
+    return list(dict.fromkeys(tags))
+
+
+def _extract_policy_violation_reason_from_text(content: Any) -> Optional[str]:
+    if not isinstance(content, str):
+        return None
+    text = content.strip()
+    if not text:
+        return None
+    upper_text = text.upper()
+    if (
+        "POLICY_BLOCK" in upper_text
+        or "POLICY_TRANSFORM" in upper_text
+        or "TOOL CALL BLOCKED:" in upper_text
+    ):
+        return text
+    return None
+
+
+def _resolve_policy_config_source_for_langfuse() -> str:
+    inline = os.getenv("ARBITEROS_POLICY_CONFIG_JSON", "").strip()
+    if inline:
+        return "ARBITEROS_POLICY_CONFIG_JSON:inline"
+    configured_path = os.getenv("ARBITEROS_POLICY_CONFIG", "").strip()
+    if not configured_path:
+        configured_path = "~/.arbiteros/policy.json"
+    expanded_path = os.path.expandvars(os.path.expanduser(configured_path))
+    return f"ARBITEROS_POLICY_CONFIG:{expanded_path}"
+
+
+def _build_policy_config_for_langfuse() -> dict[str, Any]:
+    global _policy_config_metadata_cache_key, _policy_config_metadata_cache_value
+
+    cfg = getattr(POLICY_RUNTIME, "cfg", {}) if POLICY_RUNTIME is not None else {}
+    cfg_jsonable = _to_json(cfg if isinstance(cfg, dict) else {})
+    if not isinstance(cfg_jsonable, dict):
+        cfg_jsonable = {}
+
+    source = _resolve_policy_config_source_for_langfuse()
+    serialized = json.dumps(cfg_jsonable, ensure_ascii=False, sort_keys=True, default=str)
+    max_chars = max(
+        2048,
+        int(os.getenv("ARBITEROS_LANGFUSE_POLICY_CONFIG_MAX_CHARS", "24000")),
+    )
+    cache_key = hashlib.sha256(
+        f"{source}|{max_chars}|{serialized}".encode("utf-8", errors="ignore")
+    ).hexdigest()
+
+    with _policy_config_metadata_cache_lock:
+        if (
+            _policy_config_metadata_cache_key == cache_key
+            and isinstance(_policy_config_metadata_cache_value, dict)
+        ):
+            return dict(_policy_config_metadata_cache_value)
+
+    payload: dict[str, Any] = {
+        "policy_config_source": source,
+        "policy_config_hash": hashlib.sha256(
+            serialized.encode("utf-8", errors="ignore")
+        ).hexdigest(),
+    }
+    if len(serialized) <= max_chars:
+        payload["policy_config"] = cfg_jsonable
+        payload["policy_config_truncated"] = False
+    else:
+        payload["policy_config"] = {
+            "_truncated": True,
+            "_preview_json": serialized[:max_chars],
+            "_total_chars": len(serialized),
+        }
+        payload["policy_config_truncated"] = True
+
+    with _policy_config_metadata_cache_lock:
+        _policy_config_metadata_cache_key = cache_key
+        _policy_config_metadata_cache_value = dict(payload)
+
+    return payload
+
+
+def _record_policy_protected_tool_calls(
+    *,
+    trace_id: str,
+    raw_response: Optional[dict],
+    policy_checked_response: Optional[dict],
+    policy_reason: str,
+) -> None:
+    reason = policy_reason.strip()
+    if not reason:
+        return
+    raw_tool_calls = _extract_tool_calls(raw_response)
+    if not raw_tool_calls:
+        return
+
+    final_tool_call_ids = _extract_tool_call_id_set(policy_checked_response)
+    final_tool_call_by_id = _extract_tool_call_map_by_id(policy_checked_response)
+
+    affected_tool_call_ids: set[str] = set()
+    for raw_tool_call in raw_tool_calls:
+        if not isinstance(raw_tool_call, dict):
+            continue
+        tool_call_id = raw_tool_call.get("id") or raw_tool_call.get("tool_call_id")
+        if not isinstance(tool_call_id, str) or not tool_call_id.strip():
+            continue
+        tool_call_id = tool_call_id.strip()
+        if tool_call_id not in final_tool_call_ids:
+            affected_tool_call_ids.add(tool_call_id)
+            continue
+        final_tool_call = final_tool_call_by_id.get(tool_call_id)
+        if isinstance(final_tool_call, dict) and final_tool_call != raw_tool_call:
+            affected_tool_call_ids.add(tool_call_id)
+
+    if not affected_tool_call_ids:
+        return
+
+    by_trace = _policy_protected_tool_call_ids.setdefault(trace_id, {})
+    for blocked_id in sorted(affected_tool_call_ids):
+        by_trace[blocked_id] = reason
 
 
 def _replace_instructions_from_modified_response(
@@ -2280,6 +2471,17 @@ def _emit_tool_result_nodes_if_needed(request_data: dict, state: _TraceState) ->
         parser_snapshot: dict[str, Any] = {}
         policy_protected_reason: Optional[str] = None
         instruction_for_metadata: Optional[dict[str, Any]] = None
+        if state.trace_id:
+            by_trace = _policy_protected_tool_call_ids.get(state.trace_id)
+            error_type = (
+                by_trace.pop(tool_call_id, None)
+                if isinstance(by_trace, dict) and isinstance(tool_call_id, str)
+                else None
+            )
+            if isinstance(error_type, str) and error_type.strip():
+                policy_protected_reason = error_type.strip()
+            if isinstance(by_trace, dict) and not by_trace:
+                _policy_protected_tool_call_ids.pop(state.trace_id, None)
         if InstructionBuilder is not None and state.trace_id:
             builder = _get_instruction_builder_for_trace(state.trace_id)
             if builder is not None:
@@ -2292,14 +2494,10 @@ def _emit_tool_result_nodes_if_needed(request_data: dict, state: _TraceState) ->
                     )
                     instruction_for_metadata = instr if isinstance(instr, dict) else None
                     # tool call 第二次记录（含 result）：若该 tool_call_id 曾被 policy 保护，加 policy_protected
-                    by_trace = _policy_protected_tool_call_ids.get(state.trace_id, {})
-                    error_type = (
-                        by_trace.pop(tool_call_id, None)
-                        if isinstance(tool_call_id, str)
-                        else None
-                    )
-                    if isinstance(error_type, str) and error_type.strip():
-                        policy_protected_reason = error_type.strip()
+                    if (
+                        isinstance(policy_protected_reason, str)
+                        and policy_protected_reason.strip()
+                    ):
                         builder.instructions[-1]["policy_protected"] = (
                             policy_protected_reason
                         )
@@ -2314,34 +2512,14 @@ def _emit_tool_result_nodes_if_needed(request_data: dict, state: _TraceState) ->
         formatted_result = _format_tool_result_output_for_langfuse(content)
         emitted_level = formatted_result.get("level")
         emitted_status_message = formatted_result.get("status_message")
-        policy_violation_tags: list[str] = []
         if (
             isinstance(policy_protected_reason, str)
             and policy_protected_reason.strip()
         ):
-            emitted_level = "POLICY_VIOLATION"
-            normalized_policy_reason = re.sub(
-                r"\s+",
-                " ",
-                policy_protected_reason,
-            ).strip()
-            if len(normalized_policy_reason) > 450:
-                normalized_policy_reason = (
-                    f"{normalized_policy_reason[:450]} ... [truncated]"
-                )
-            emitted_status_message = f"Policy violation: {normalized_policy_reason}"
-            lowered_reason = normalized_policy_reason.lower()
-            policy_violation_tags = ["policy_violation", "tool_call_blocked"]
-            if "hard_code" in lowered_reason:
-                policy_violation_tags.append("hard_code")
-            if ".env" in lowered_reason:
-                policy_violation_tags.append("dotenv")
-            if "read path" in lowered_reason:
-                policy_violation_tags.append("read_path")
-            if "targets .env" in lowered_reason:
-                policy_violation_tags.append("target_env_file")
-            # Keep deterministic order while removing duplicates.
-            policy_violation_tags = list(dict.fromkeys(policy_violation_tags))
+            normalized_policy_reason = _normalize_policy_violation_reason(
+                policy_protected_reason
+            )
+            emitted_status_message = normalized_policy_reason
         output_payload = (
             {"content": parsed_result}
             if isinstance(parsed_result, dict)
@@ -2387,8 +2565,6 @@ def _emit_tool_result_nodes_if_needed(request_data: dict, state: _TraceState) ->
                 **(
                     {
                         "policy_protected": policy_protected_reason,
-                        "policy_violation": True,
-                        "policy_violation_tags": policy_violation_tags,
                     }
                     if isinstance(policy_protected_reason, str)
                     and policy_protected_reason.strip()
@@ -2442,8 +2618,15 @@ def _ensure_turn_node_if_needed(context: _DeviceContext, state: _TraceState) -> 
     next_turn_index = 0
     preview = _short_text_preview(context.latest_user_text)
     with _trace_state_lock:
-        if state.last_user_fingerprint != context.latest_user_fingerprint:
+        fingerprint_changed = state.last_user_fingerprint != context.latest_user_fingerprint
+        message_count_advanced = (
+            context.latest_user_message_count > 0
+            and context.latest_user_message_count > state.last_user_message_count
+        )
+        if fingerprint_changed or message_count_advanced:
             state.last_user_fingerprint = context.latest_user_fingerprint
+            if context.latest_user_message_count > 0:
+                state.last_user_message_count = context.latest_user_message_count
             state.latest_user_preview = preview
             state.current_turn_observation_id = None
             state.turn_index += 1
@@ -2509,6 +2692,7 @@ def _emit_response_nodes(
     request_data: dict,
     response_before_transform: Optional[dict],
     response_after_transform: Optional[dict],
+    policy_violation_reason: Optional[str] = None,
 ) -> None:
     incoming = request_data if isinstance(request_data, dict) else {}
     context = _build_device_context(incoming)
@@ -2541,6 +2725,11 @@ def _emit_response_nodes(
 
     model_name = incoming.get("model")
     model = model_name if isinstance(model_name, str) else None
+    normalized_policy_violation_reason = (
+        policy_violation_reason.strip()
+        if isinstance(policy_violation_reason, str) and policy_violation_reason.strip()
+        else None
+    )
 
     tool_calls = _extract_tool_calls(response_before_transform)
     if tool_calls:
@@ -2550,10 +2739,16 @@ def _emit_response_nodes(
             state.trace_id,
             _peek_instruction_builder_for_trace(state.trace_id),
         )
+        post_policy_tool_call_ids = _extract_tool_call_id_set(response_after_transform)
         parsed_tool_calls = _extract_tool_call_details_from_response(
             response_before_transform
         )
-        for tc_detail in parsed_tool_calls:
+        blocked_policy_reasons: list[str] = []
+        policy_reason_by_call_id = _policy_protected_tool_call_ids.get(state.trace_id)
+        has_targeted_policy_tool_calls = (
+            isinstance(policy_reason_by_call_id, dict) and bool(policy_reason_by_call_id)
+        )
+        for tc_position, tc_detail in enumerate(parsed_tool_calls):
             tool_call_id = tc_detail.get("tool_call_id")
             tool_name = tc_detail.get("tool_name")
             if not isinstance(tool_name, str) or not tool_name.strip():
@@ -2573,6 +2768,38 @@ def _emit_response_nodes(
                 "parser_trace_id": parser_snapshot.get("parser_trace_id"),
                 "instruction_count": parser_snapshot.get("instruction_count"),
             }
+            parser_level: Optional[str] = None
+            parser_status_message: Optional[str] = None
+            raw_policy_reason: Optional[str] = None
+            if isinstance(tool_call_id, str) and tool_call_id.strip():
+                if isinstance(policy_reason_by_call_id, dict):
+                    if tool_call_id in post_policy_tool_call_ids:
+                        maybe_reason = policy_reason_by_call_id.get(tool_call_id)
+                    else:
+                        maybe_reason = policy_reason_by_call_id.pop(tool_call_id, None)
+                    if isinstance(maybe_reason, str) and maybe_reason.strip():
+                        raw_policy_reason = maybe_reason
+                if raw_policy_reason is None and tool_call_id not in post_policy_tool_call_ids:
+                    raw_policy_reason = f"tool={tool_name} action was blocked by policy"
+            if (
+                raw_policy_reason is None
+                and isinstance(normalized_policy_violation_reason, str)
+                and not has_targeted_policy_tool_calls
+                and tc_position == 0
+            ):
+                raw_policy_reason = normalized_policy_violation_reason
+            if isinstance(raw_policy_reason, str) and raw_policy_reason.strip():
+                normalized_policy_reason = _normalize_policy_violation_reason(
+                    raw_policy_reason
+                )
+                blocked_policy_reasons.append(normalized_policy_reason)
+                parser_metadata["policy_protected"] = normalized_policy_reason
+                parser_metadata["policy_violation"] = True
+                parser_metadata["policy_violation_tags"] = _build_policy_violation_tags(
+                    normalized_policy_reason
+                )
+                parser_level = "POLICY_VIOLATION"
+                parser_status_message = normalized_policy_reason
             parser_observation_id = _emit_instruction_parser_node(
                 state=state,
                 parser_stage=parser_stage,
@@ -2585,6 +2812,8 @@ def _emit_response_nodes(
                     "instruction_snapshot": parser_snapshot,
                 },
                 metadata=parser_metadata,
+                level=parser_level,
+                status_message=parser_status_message,
                 parent_observation_id=_current_parent_observation_id(state),
             )
             _set_pending_tool_call_node(
@@ -2598,6 +2827,130 @@ def _emit_response_nodes(
                     "parser_metadata": parser_metadata,
                 },
             )
+        if isinstance(policy_reason_by_call_id, dict) and not policy_reason_by_call_id:
+            _policy_protected_tool_call_ids.pop(state.trace_id, None)
+        deduped_policy_reasons = list(dict.fromkeys(blocked_policy_reasons))
+        all_tool_calls_blocked = len(post_policy_tool_call_ids) == 0
+        should_emit_policy_block_output = (
+            all_tool_calls_blocked
+            and (
+                bool(deduped_policy_reasons)
+                or isinstance(normalized_policy_violation_reason, str)
+            )
+        )
+        if should_emit_policy_block_output:
+            policy_reason_for_output = (
+                deduped_policy_reasons[0]
+                if deduped_policy_reasons
+                else normalized_policy_violation_reason
+            )
+            if not isinstance(policy_reason_for_output, str) or not policy_reason_for_output:
+                policy_reason_for_output = "tool_call action was blocked by policy"
+            output_content = (
+                response_after_transform.get("content")
+                if isinstance(response_after_transform, dict)
+                else None
+            )
+            if not isinstance(output_content, str) or not output_content.strip():
+                output_content = (
+                    f"Tool call blocked by policy before execution: {policy_reason_for_output}"
+                )
+            turn_idx = max(state.turn_index, 1)
+            output_name = f"{_NODE_NAMESPACE_PREFIX}.output.turn_{turn_idx:03d}"
+            output_category = "EXECUTION_CORE__TOOL_CALL"
+            output_policy_metadata = {"policy_protected": policy_reason_for_output}
+            # Tool-call-only: use the tool name as the turn topic.
+            tool_topic = None
+            try:
+                if isinstance(parsed_tool_calls, list) and parsed_tool_calls:
+                    first = parsed_tool_calls[0]
+                    if isinstance(first, dict):
+                        tn = first.get("tool_name")
+                        if isinstance(tn, str) and tn.strip():
+                            tool_topic = tn.strip()
+            except Exception:
+                tool_topic = None
+            kernel_turn_topic = tool_topic or "tool_call"
+            trace_topic = kernel_turn_topic
+            persist_topic_needed = False
+            if isinstance(trace_topic, str) and trace_topic.strip():
+                with _trace_state_lock:
+                    if state.latest_topic_summary != trace_topic:
+                        state.latest_topic_summary = trace_topic
+                        persist_topic_needed = True
+            if persist_topic_needed:
+                _persist_trace_state_to_disk()
+
+            _emit_langfuse_node(
+                state=state,
+                node_type="output",
+                observation_type="generation",
+                name=output_name,
+                input_payload={
+                    "user_text": context.latest_user_text,
+                    "category": output_category,
+                },
+                output_payload={"content": output_content, "category": output_category},
+                metadata={
+                    "category": output_category,
+                    "raw_output_content": output_content,
+                    "turn_index": state.turn_index,
+                    "topic": trace_topic,
+                    "turn_topic": kernel_turn_topic,
+                    "agent_graph_node": output_name,
+                    "agent_graph_step": turn_idx * 10 + 1,
+                    **output_policy_metadata,
+                    **_build_policy_metadata(
+                        instruction_type=_normalize_category_to_instruction_type(
+                            output_category
+                        ),
+                        instruction_category=output_category,
+                    ),
+                },
+                model=model,
+                parent_observation_id=_current_parent_observation_id(state),
+                trace_name=_build_trace_display_name(state),
+            )
+
+            kernel_step_label = f"kernel.{output_category.lower()}"
+            kernel_step_name = (
+                f"{kernel_turn_topic} - {kernel_step_label} @turn_{turn_idx:03d}"
+                if kernel_turn_topic
+                else f"{kernel_step_label} @turn_{turn_idx:03d}"
+            )
+            _emit_langfuse_node(
+                state=state,
+                node_type="kernel_step",
+                observation_type="agent",
+                name=kernel_step_name,
+                input_payload={"content": output_content},
+                output_payload=None,
+                metadata={
+                    "category": output_category,
+                    "turn_index": state.turn_index,
+                    "topic": trace_topic,
+                    "turn_topic": kernel_turn_topic,
+                    "agent_graph_node": kernel_step_name,
+                    "agent_graph_step": turn_idx * 10 + 2,
+                    **output_policy_metadata,
+                    **_build_policy_metadata(
+                        instruction_type=_normalize_category_to_instruction_type(
+                            output_category
+                        ),
+                        instruction_category=output_category,
+                    ),
+                },
+                parent_observation_id=_current_parent_observation_id(state),
+                trace_name=_build_trace_display_name(state),
+            )
+            try:
+                with _trace_state_lock:
+                    turn_handle = state.current_turn_handle
+                    state.current_turn_handle = None
+                if turn_handle is not None:
+                    turn_handle.end()
+            except Exception:
+                pass
         _flush_langfuse()
         return
 
@@ -2621,6 +2974,29 @@ def _emit_response_nodes(
         output_content = response_after_transform.get("content")
     elif structured_content is not None:
         output_content = structured_content
+
+    output_level: Optional[str] = None
+    output_status_message: Optional[str] = None
+    output_policy_metadata: dict[str, Any] = {}
+    kernel_policy_metadata: dict[str, Any] = {}
+    policy_block_reason = (
+        normalized_policy_violation_reason
+        or _extract_policy_violation_reason_from_text(output_content)
+    )
+    if isinstance(policy_block_reason, str) and policy_block_reason.strip():
+        normalized_policy_reason = _normalize_policy_violation_reason(policy_block_reason)
+        output_policy_metadata = {
+            "policy_protected": normalized_policy_reason,
+            "policy_violation": True,
+            "policy_violation_tags": _build_policy_violation_tags(
+                normalized_policy_reason
+            ),
+        }
+        kernel_policy_metadata = {
+            "policy_protected": normalized_policy_reason,
+        }
+        output_level = "POLICY_VIOLATION"
+        output_status_message = normalized_policy_reason
 
     generation_input_payload = {
         "user_text": context.latest_user_text,
@@ -2705,14 +3081,19 @@ def _emit_response_nodes(
             "category": effective_category,
             "raw_output_content": raw_output_content,
             "turn_index": state.turn_index,
+            "topic": trace_topic,
+            "turn_topic": kernel_turn_topic,
             "agent_graph_node": output_name,
             "agent_graph_step": max(state.turn_index, 1) * 10 + 1,
+            **output_policy_metadata,
             **_build_policy_metadata(
                 instruction_type=_normalize_category_to_instruction_type(effective_category),
                 instruction_category=effective_category,
             ),
         },
         model=model,
+        level=output_level,
+        status_message=output_status_message,
         parent_observation_id=_current_parent_observation_id(state),
         trace_name=_build_trace_display_name(state),
     )
@@ -2744,8 +3125,11 @@ def _emit_response_nodes(
         metadata={
             "category": effective_category,
             "turn_index": state.turn_index,
+            "topic": trace_topic,
+            "turn_topic": kernel_turn_topic,
             "agent_graph_node": kernel_step_name,
             "agent_graph_step": max(state.turn_index, 1) * 10 + 2,
+            **kernel_policy_metadata,
             **_build_policy_metadata(
                 instruction_type=_normalize_category_to_instruction_type(effective_category),
                 instruction_category=effective_category,
@@ -3033,6 +3417,8 @@ def _emit_instruction_parser_node(
     input_payload: Any,
     output_payload: Any,
     metadata: Optional[dict[str, Any]] = None,
+    level: Optional[str] = None,
+    status_message: Optional[str] = None,
     parent_observation_id: Optional[str] = None,
 ) -> Optional[str]:
     turn_idx = max(state.turn_index, 1)
@@ -3051,6 +3437,8 @@ def _emit_instruction_parser_node(
             "agent_graph_step": turn_idx * 10 + 3,
             **(metadata or {}),
         },
+        level=level,
+        status_message=status_message,
         parent_observation_id=parent_observation_id or _current_parent_observation_id(state),
         trace_name=_build_trace_display_name(state),
     )
@@ -3699,6 +4087,7 @@ class MyCustomHandler(CustomLogger):
                         pass
 
         # Policy check: 剥完 category/topic 后，在回复 agent 前检查
+        policy_violation_reason_for_langfuse: Optional[str] = None
         if isinstance(final_msg_dict, dict):
             metadata = data.get("metadata") if isinstance(data, dict) else {}
             trace_id = (
@@ -3717,7 +4106,17 @@ class MyCustomHandler(CustomLogger):
                 )
                 if policy_result.modified:
                     final_msg_dict = policy_result.response
-                    error_type_str = policy_result.error_type or ""
+                    error_type_str = (policy_result.error_type or "").strip()
+                    if error_type_str:
+                        policy_violation_reason_for_langfuse = error_type_str
+                        _record_policy_protected_tool_calls(
+                            trace_id=trace_id,
+                            raw_response=raw_msg_dict if isinstance(raw_msg_dict, dict) else None,
+                            policy_checked_response=(
+                                final_msg_dict if isinstance(final_msg_dict, dict) else None
+                            ),
+                            policy_reason=error_type_str,
+                        )
                     if builder is not None:
                         # 用修改后的 response 重新生成 instructions 并替换
                         _replace_instructions_from_modified_response(
@@ -3728,15 +4127,6 @@ class MyCustomHandler(CustomLogger):
                             for instr in builder.instructions[_policy_instruction_count_before:]:
                                 instr["policy_protected"] = error_type_str
                         _save_instructions_to_trace_file(trace_id, builder)
-                        # 若有 tool_calls，存 tool_call_id 供后续 tool result 时加 policy_protected
-                        tool_calls = raw_msg_dict.get("tool_calls") if isinstance(raw_msg_dict, dict) else None
-                        if isinstance(tool_calls, list):
-                            by_trace = _policy_protected_tool_call_ids.setdefault(trace_id, {})
-                            for tc in tool_calls:
-                                if isinstance(tc, dict):
-                                    tc_id = tc.get("id") or tc.get("tool_call_id")
-                                    if isinstance(tc_id, str) and tc_id.strip():
-                                        by_trace[tc_id] = error_type_str
                     try:
                         if is_chat_completion:
                             response.choices[0].message = Message(**final_msg_dict)
@@ -3771,6 +4161,7 @@ class MyCustomHandler(CustomLogger):
             request_data=data,
             response_before_transform=raw_msg_dict,
             response_after_transform=final_msg_dict,
+            policy_violation_reason=policy_violation_reason_for_langfuse,
         )
         return response
 
@@ -3972,6 +4363,7 @@ class MyCustomHandler(CustomLogger):
                 msg_dict = modified_dict
 
         # Policy check: 剥完 category/topic 后，在回复 agent 前检查
+        policy_violation_reason_for_langfuse: Optional[str] = None
         if isinstance(msg_dict, dict):
             metadata = request_data.get("metadata") if isinstance(request_data, dict) else {}
             trace_id = (
@@ -3990,7 +4382,17 @@ class MyCustomHandler(CustomLogger):
                 )
                 if policy_result.modified:
                     msg_dict = policy_result.response
-                    error_type_str = policy_result.error_type or ""
+                    error_type_str = (policy_result.error_type or "").strip()
+                    if error_type_str:
+                        policy_violation_reason_for_langfuse = error_type_str
+                        _record_policy_protected_tool_calls(
+                            trace_id=trace_id,
+                            raw_response=raw_msg_dict if isinstance(raw_msg_dict, dict) else None,
+                            policy_checked_response=(
+                                msg_dict if isinstance(msg_dict, dict) else None
+                            ),
+                            policy_reason=error_type_str,
+                        )
                     if builder is not None:
                         _replace_instructions_from_modified_response(
                             builder, msg_dict, _policy_instruction_count_before_stream
@@ -3999,14 +4401,6 @@ class MyCustomHandler(CustomLogger):
                             for instr in builder.instructions[_policy_instruction_count_before_stream:]:
                                 instr["policy_protected"] = error_type_str
                         _save_instructions_to_trace_file(trace_id, builder)
-                        tool_calls = raw_msg_dict.get("tool_calls") if isinstance(raw_msg_dict, dict) else None
-                        if isinstance(tool_calls, list):
-                            by_trace = _policy_protected_tool_call_ids.setdefault(trace_id, {})
-                            for tc in tool_calls:
-                                if isinstance(tc, dict):
-                                    tc_id = tc.get("id") or tc.get("tool_call_id")
-                                    if isinstance(tc_id, str) and tc_id.strip():
-                                        by_trace[tc_id] = error_type_str
 
         fallback_text = os.getenv(
             "ARBITEROS_EMPTY_ASSISTANT_FALLBACK",
@@ -4018,6 +4412,7 @@ class MyCustomHandler(CustomLogger):
             request_data=request_data,
             response_before_transform=raw_msg_dict,
             response_after_transform=msg_dict,
+            policy_violation_reason=policy_violation_reason_for_langfuse,
         )
 
         if apply_transform and msg_dict is not None:
