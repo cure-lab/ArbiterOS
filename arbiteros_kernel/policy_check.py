@@ -48,8 +48,7 @@ def check_response_policy(
         latest_instructions = []
 
     if policy_classes is None:
-        from arbiteros_kernel.policy import DEFAULT_POLICY_CLASSES
-
+        from arbiteros_kernel.policy.defaults import DEFAULT_POLICY_CLASSES
         policy_classes = DEFAULT_POLICY_CLASSES
 
     response = current_response

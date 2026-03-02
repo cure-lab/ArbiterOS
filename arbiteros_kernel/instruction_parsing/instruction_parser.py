@@ -290,7 +290,7 @@ class InstructionBuilder:
         """
         if path is None:
             base_dir = os.path.dirname(os.path.abspath(__file__))
-            path = os.path.join(base_dir, "instructions_output.json")
+            path = os.path.join(base_dir, "instructions_output.json") 
 
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:

@@ -1,7 +1,7 @@
 model_list:
-  - model_name: gpt-5.2
+  - model_name: gpt-4o-mini
     litellm_params:
-      model: openai/gpt-5.2
+      model: openai/gpt-4o-mini
       api_key: "your_api_key"
       api_base: "your_api_url"
       response_format:
@@ -26,13 +26,11 @@ model_list:
                 description: "The instruction category type. Use the most Accurate category possible, rather than only choose 'COGNITIVE_CORE__RESPOND'. "
               content:
                 type: string
-                description: "The actual content of the instruction. It can be anything and in any format you need to generate."
-            required:
-              - topic
-              - category
-              - content
+                description: "The actual content of the instruction"
+            required: [topic, category, content]
             additionalProperties: false
           strict: true
+
 
 litellm_settings:
   # Following settings for anthropics models
