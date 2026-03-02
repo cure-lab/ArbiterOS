@@ -1232,6 +1232,18 @@ def _short_text_preview(text: Optional[str], max_chars: int = 72) -> Optional[st
     return f"{cleaned[:max_chars].rstrip()}..."
 
 
+def _is_explicit_reuse_topic_marker(text: Optional[str]) -> bool:
+    """Whether topic text explicitly signals "reuse previous topic"."""
+    if not isinstance(text, str):
+        return False
+    cleaned = re.sub(r"\s+", " ", text).strip()
+    if not cleaned:
+        return True
+    if cleaned in {'""', "''", "“”", "‘’", "「」", "『』"}:
+        return True
+    return bool(re.fullmatch(r'["\'`“”‘’「」『』]+', cleaned))
+
+
 def _sanitize_topic_preview(
     text: Optional[str],
     *,
@@ -1240,6 +1252,9 @@ def _sanitize_topic_preview(
 ) -> Optional[str]:
     preview = _short_text_preview(text, max_chars=max_chars)
     if not preview:
+        return None
+    preview = _clean_topic_point(preview)
+    if not preview or _is_explicit_reuse_topic_marker(preview):
         return None
     if not allow_reset_control_topic and _is_reset_control_topic(preview):
         return None
@@ -1348,7 +1363,7 @@ def _clean_topic_point(text: str) -> str:
         t = p.sub(" ", t)
     t = re.sub(r"\s+", " ", t).strip()
     # Trim common separators left behind by removals.
-    t = t.strip(" -_/,:;，。；|")
+    t = t.strip(" -_/,:;，。；|\"'`“”‘’「」『』")
     return t
 
 
@@ -2551,15 +2566,18 @@ def _emit_response_nodes(
     )
 
     llm_topic_raw = llm_topic if isinstance(llm_topic, str) else None
-    llm_topic_reuse_previous = bool(
-        isinstance(llm_topic_raw, str) and not llm_topic_raw.strip()
-    )
-    llm_topic_clean = _normalize_topic_summary(
-        llm_topic_raw,
-        max_points=max_topic_points,
-        max_point_chars=max_topic_point_chars,
-        max_total_chars=max_topic_chars,
-    ) or _short_text_preview(llm_topic_raw, max_chars=max_topic_chars)
+    llm_topic_reuse_previous = _is_explicit_reuse_topic_marker(llm_topic_raw)
+    llm_topic_clean = None
+    if not llm_topic_reuse_previous:
+        llm_topic_clean = _normalize_topic_summary(
+            llm_topic_raw,
+            max_points=max_topic_points,
+            max_point_chars=max_topic_point_chars,
+            max_total_chars=max_topic_chars,
+        )
+        if not llm_topic_clean:
+            llm_topic_preview = _short_text_preview(llm_topic_raw, max_chars=max_topic_chars)
+            llm_topic_clean = _clean_topic_point(llm_topic_preview) if llm_topic_preview else None
     llm_topic_candidate = _sanitize_topic_preview(
         llm_topic_clean,
         max_chars=max_topic_chars,
@@ -2619,10 +2637,14 @@ def _emit_response_nodes(
     #   2) previous topic when LLM returns empty topic ("reuse previous")
     #   3) latest user text preview
     #   4) previous topic summary
+    turn_idx = max(state.turn_index, 1)
+    kernel_step_label = f"kernel.{effective_category.lower()}"
+    # NOTE: Langfuse execution graph may de-duplicate nodes by `name`.
+    # Suffix with turn index to keep each turn's kernel step distinct.
     kernel_step_name = (
-        f"{kernel_turn_topic} - kernel.{effective_category.lower()}"
+        f"{kernel_turn_topic} - {kernel_step_label} @turn_{turn_idx:03d}"
         if kernel_turn_topic
-        else f"kernel.{effective_category.lower()}"
+        else f"{kernel_step_label} @turn_{turn_idx:03d}"
     )
 
     # Update the corresponding turn node's input rendering to match the kernel label.
