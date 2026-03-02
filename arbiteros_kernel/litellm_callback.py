@@ -1959,59 +1959,82 @@ def _format_tool_result_output_for_langfuse(content: Any) -> dict:
         if not t:
             return False
         lowered = t.lower()
-        # Common structured error prefixes
+        first_line = t.splitlines()[0].strip().lower() if t.splitlines() else lowered
+        top_block = "\n".join(t.splitlines()[:8]).lower()
+
+        # Strong indicators: explicit error wrappers at the beginning.
         if lowered.startswith(("error:", "exception:", "traceback (most recent call last):")):
             return True
-
-        # HTTP-ish errors
-        if (
-            "client error" in lowered
-            or "server error" in lowered
-            or "bad request" in lowered
-            or "unauthorized" in lowered
-            or "forbidden" in lowered
-            or "not found" in lowered
-            or "too many requests" in lowered
-            or "internal server error" in lowered
-            or "bad gateway" in lowered
-            or "service unavailable" in lowered
-            or "gateway timeout" in lowered
-            or "http/1.1" in lowered
-            or "status code:" in lowered
-            or "error code:" in lowered
-            or "developer.mozilla.org/en-us/docs/web/http/status/" in lowered
-        ):
-            return True
-
-        # Rate limiting / quotas
-        if (
-            "rate limit" in lowered
-            or "rate_limited" in lowered
-            or "quota" in lowered
-            or "too many requests" in lowered
-            or " 429" in lowered
-        ):
-            return True
-
-        # Network / timeout / connectivity
-        if (
-            "timed out" in lowered
-            or "timeout" in lowered
-            or "connection refused" in lowered
-            or "connection reset" in lowered
-            or "connection error" in lowered
-            or "name or service not known" in lowered
-            or "temporary failure in name resolution" in lowered
-            or "dns" in lowered
-            or "econnrefused" in lowered
-            or "enotfound" in lowered
-            or "eai_again" in lowered
-            or "ssl" in lowered and "error" in lowered
-        ):
-            return True
-
-        # Light CN error indicators (keep strict to avoid false positives)
         if lowered.startswith(("错误:", "异常:", "失败:")):
+            return True
+        if re.match(
+            r"^(fatal|runtimeerror|valueerror|typeerror|keyerror|attributeerror|ioerror|oserror)\b",
+            first_line,
+        ):
+            return True
+
+        # Strong indicators: HTTP/transport failures near the top of the payload.
+        if (
+            re.search(r"\b(4\d{2}|5\d{2})\b", top_block)
+            and (
+                "client error" in top_block
+                or "server error" in top_block
+                or "bad request" in top_block
+                or "unauthorized" in top_block
+                or "forbidden" in top_block
+                or "not found" in top_block
+                or "too many requests" in top_block
+                or "internal server error" in top_block
+                or "bad gateway" in top_block
+                or "service unavailable" in top_block
+                or "gateway timeout" in top_block
+                or "status code:" in top_block
+                or "error code:" in top_block
+                or "http/1.1" in top_block
+            )
+        ):
+            return True
+        if (
+            "developer.mozilla.org/en-us/docs/web/http/status/" in top_block
+            and re.search(r"\b(4\d{2}|5\d{2})\b", top_block)
+        ):
+            return True
+
+        # Avoid false positives for long natural text blobs (docs, prompts, transcripts).
+        # For large bodies, only the strong indicators above can classify as ERROR.
+        if len(t) > 500 or t.count("\n") > 12:
+            return False
+
+        # Medium-confidence indicators for compact plain-text tool outputs.
+        medium_signals = (
+            "client error",
+            "server error",
+            "bad request",
+            "unauthorized",
+            "forbidden",
+            "not found",
+            "too many requests",
+            "rate limit",
+            "rate_limited",
+            "quota exceeded",
+            "timed out",
+            "timeout",
+            "connection refused",
+            "connection reset",
+            "connection error",
+            "name or service not known",
+            "temporary failure in name resolution",
+            "dns lookup failed",
+            "econnrefused",
+            "enotfound",
+            "eai_again",
+            "ssl error",
+            "tls error",
+            "certificate verify failed",
+        )
+        signal_count = sum(1 for marker in medium_signals if marker in lowered)
+        has_http_code = re.search(r"\b(4\d{2}|5\d{2})\b", lowered) is not None
+        if signal_count >= 2 and (has_http_code or len(t) <= 220):
             return True
 
         return False
@@ -2052,7 +2075,13 @@ def _format_tool_result_output_for_langfuse(content: Any) -> dict:
         raw_level = payload.get("level")
         if isinstance(raw_level, str):
             normalized_level = raw_level.strip().upper()
-            if normalized_level in {"DEBUG", "DEFAULT", "WARNING", "ERROR"}:
+            if normalized_level in {
+                "DEBUG",
+                "DEFAULT",
+                "WARNING",
+                "ERROR",
+                "POLICY_VIOLATION",
+            }:
                 level = normalized_level
 
         if level is None:
@@ -2126,6 +2155,14 @@ def _format_tool_result_output_for_langfuse(content: Any) -> dict:
             if status_message is None:
                 status_message = (
                     f"{tool if isinstance(tool, str) else 'tool'} returned warning status"
+                )
+        elif level == "POLICY_VIOLATION":
+            policy_reason = payload.get("policy_protected")
+            if isinstance(policy_reason, str) and policy_reason.strip():
+                status_message = _sanitize_error_text_for_langfuse(policy_reason)
+            else:
+                status_message = (
+                    f"{tool if isinstance(tool, str) else 'tool'} action was blocked by policy"
                 )
 
         if isinstance(status_message, str):
@@ -2240,6 +2277,7 @@ def _emit_tool_result_nodes_if_needed(request_data: dict, state: _TraceState) ->
             parsed_result = parsed if isinstance(parsed, dict) else {"raw": content}
 
         parser_snapshot: dict[str, Any] = {}
+        policy_protected_reason: Optional[str] = None
         instruction_for_metadata: Optional[dict[str, Any]] = None
         if InstructionBuilder is not None and state.trace_id:
             builder = _get_instruction_builder_for_trace(state.trace_id)
@@ -2254,9 +2292,16 @@ def _emit_tool_result_nodes_if_needed(request_data: dict, state: _TraceState) ->
                     instruction_for_metadata = instr if isinstance(instr, dict) else None
                     # tool call 第二次记录（含 result）：若该 tool_call_id 曾被 policy 保护，加 policy_protected
                     by_trace = _policy_protected_tool_call_ids.get(state.trace_id, {})
-                    error_type = by_trace.pop(tool_call_id, None) if isinstance(tool_call_id, str) else None
+                    error_type = (
+                        by_trace.pop(tool_call_id, None)
+                        if isinstance(tool_call_id, str)
+                        else None
+                    )
                     if isinstance(error_type, str) and error_type.strip():
-                        builder.instructions[-1]["policy_protected"] = error_type
+                        policy_protected_reason = error_type.strip()
+                        builder.instructions[-1]["policy_protected"] = (
+                            policy_protected_reason
+                        )
                     _save_instructions_to_trace_file(state.trace_id, builder)
                     parser_snapshot = _build_instruction_parser_snapshot(
                         state.trace_id,
@@ -2266,6 +2311,36 @@ def _emit_tool_result_nodes_if_needed(request_data: dict, state: _TraceState) ->
                     parser_snapshot = {}
 
         formatted_result = _format_tool_result_output_for_langfuse(content)
+        emitted_level = formatted_result.get("level")
+        emitted_status_message = formatted_result.get("status_message")
+        policy_violation_tags: list[str] = []
+        if (
+            isinstance(policy_protected_reason, str)
+            and policy_protected_reason.strip()
+        ):
+            emitted_level = "POLICY_VIOLATION"
+            normalized_policy_reason = re.sub(
+                r"\s+",
+                " ",
+                policy_protected_reason,
+            ).strip()
+            if len(normalized_policy_reason) > 450:
+                normalized_policy_reason = (
+                    f"{normalized_policy_reason[:450]} ... [truncated]"
+                )
+            emitted_status_message = f"Policy violation: {normalized_policy_reason}"
+            lowered_reason = normalized_policy_reason.lower()
+            policy_violation_tags = ["policy_violation", "tool_call_blocked"]
+            if "hard_code" in lowered_reason:
+                policy_violation_tags.append("hard_code")
+            if ".env" in lowered_reason:
+                policy_violation_tags.append("dotenv")
+            if "read path" in lowered_reason:
+                policy_violation_tags.append("read_path")
+            if "targets .env" in lowered_reason:
+                policy_violation_tags.append("target_env_file")
+            # Keep deterministic order while removing duplicates.
+            policy_violation_tags = list(dict.fromkeys(policy_violation_tags))
         output_payload = (
             {"content": parsed_result}
             if isinstance(parsed_result, dict)
@@ -2308,11 +2383,21 @@ def _emit_tool_result_nodes_if_needed(request_data: dict, state: _TraceState) ->
                 "parser_trace_id": parser_snapshot.get("parser_trace_id"),
                 "trace_id_consistent": parser_snapshot.get("trace_id_consistent"),
                 "instruction_count": parser_snapshot.get("instruction_count"),
+                **(
+                    {
+                        "policy_protected": policy_protected_reason,
+                        "policy_violation": True,
+                        "policy_violation_tags": policy_violation_tags,
+                    }
+                    if isinstance(policy_protected_reason, str)
+                    and policy_protected_reason.strip()
+                    else {}
+                ),
                 **policy_metadata,
                 **parser_metadata_from_pre,
             },
-            level=formatted_result.get("level"),
-            status_message=formatted_result.get("status_message"),
+            level=emitted_level,
+            status_message=emitted_status_message,
             parent_observation_id=(
                 parser_parent_observation_id or _current_parent_observation_id(state)
             ),
