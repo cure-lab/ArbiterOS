@@ -61,11 +61,11 @@ _INSTRUCTION_LOG_DIR.mkdir(parents=True, exist_ok=True)
 load_dotenv(override=False)
 
 # 剥去 assistant content 时记录的 category 与 topic。
-# 以 device_key 维度隔离，避免不同会话互相污染。
+# 以 trace_id 维度隔离，支持 multiagent/subagent 及跨设备同一 trace。
 # 当 response 有 content 但非严格 topic/category/content 格式时，记录此 label，request 时遇到则不包。
 _NO_WRAP_SENTINEL = "__arbiteros_no_wrap__"
-_stripped_categories_by_device: dict[str, list[str]] = {}
-_stripped_topics_by_device: dict[str, list[Optional[str]]] = {}
+_stripped_categories_by_trace: dict[str, list[str]] = {}
+_stripped_topics_by_trace: dict[str, list[Optional[str]]] = {}
 _stripped_categories_lock = threading.Lock()
 _MAX_STRIPPED_CATEGORIES = 1000
 
@@ -3248,18 +3248,18 @@ def _emit_failure_node(request_data: Optional[dict], original_exception: Excepti
 # 响应修改规则（流式 + 非流式）：用于在 post_call_success 时改写返回给调用方的内容
 # - 若有 tool_calls：不改动
 # - 若为 content 且为 JSON 字符串（含 category/content）：只保留内层 content，去掉 category，
-#   并按 device_key 记录剥去的 category，供 pre_call 时把 history 包回
+#   并按 trace_id 记录剥去的 category，供 pre_call 时把 history 包回
 # ---------------------------------------------------------------------------
-def _resolve_category_cache_device_key(data: dict) -> Optional[str]:
+def _resolve_category_cache_trace_id(data: dict) -> Optional[str]:
+    """从 data.metadata.arbiteros_trace_id 解析 trace_id，用于 category/topic 缓存的 key。"""
     if not isinstance(data, dict):
         return None
     metadata = data.get("metadata")
     if isinstance(metadata, dict):
-        explicit = metadata.get("arbiteros_device_key")
-        if isinstance(explicit, str) and explicit.strip():
-            return explicit.strip()
-    context = _build_device_context(data)
-    return context.device_key if isinstance(context.device_key, str) else None
+        trace_id = metadata.get("arbiteros_trace_id")
+        if isinstance(trace_id, str) and trace_id.strip():
+            return trace_id.strip()
+    return None
 
 
 def _get_instruction_builder_for_trace(trace_id: str) -> Optional[Any]:
@@ -3461,46 +3461,46 @@ def _normalize_category_to_instruction_type(category: Any) -> str:
 def _record_stripped_category(
     data: dict, category: Any, topic: Optional[str] = None
 ) -> None:
-    device_key = _resolve_category_cache_device_key(data)
-    if not device_key:
+    trace_id = _resolve_category_cache_trace_id(data)
+    if not trace_id:
         return
     normalized_category = category if isinstance(category, str) else ""
     normalized_topic = (
         topic if isinstance(topic, str) and topic.strip() else None
     )
     with _stripped_categories_lock:
-        categories = _stripped_categories_by_device.setdefault(device_key, [])
+        categories = _stripped_categories_by_trace.setdefault(trace_id, [])
         categories.append(normalized_category)
         if len(categories) > _MAX_STRIPPED_CATEGORIES:
             del categories[: len(categories) - _MAX_STRIPPED_CATEGORIES]
-        topics = _stripped_topics_by_device.setdefault(device_key, [])
+        topics = _stripped_topics_by_trace.setdefault(trace_id, [])
         topics.append(normalized_topic)
         if len(topics) > _MAX_STRIPPED_CATEGORIES:
             del topics[: len(topics) - _MAX_STRIPPED_CATEGORIES]
 
 
-def _get_stripped_categories_for_device(device_key: Optional[str]) -> list[str]:
-    if not isinstance(device_key, str) or not device_key.strip():
+def _get_stripped_categories_for_trace(trace_id: Optional[str]) -> list[str]:
+    if not isinstance(trace_id, str) or not trace_id.strip():
         return []
     with _stripped_categories_lock:
-        categories = _stripped_categories_by_device.get(device_key.strip(), [])
+        categories = _stripped_categories_by_trace.get(trace_id.strip(), [])
         return list(categories)
 
 
-def _get_stripped_topics_for_device(device_key: Optional[str]) -> list[Optional[str]]:
-    if not isinstance(device_key, str) or not device_key.strip():
+def _get_stripped_topics_for_trace(trace_id: Optional[str]) -> list[Optional[str]]:
+    if not isinstance(trace_id, str) or not trace_id.strip():
         return []
     with _stripped_categories_lock:
-        topics = _stripped_topics_by_device.get(device_key.strip(), [])
+        topics = _stripped_topics_by_trace.get(trace_id.strip(), [])
         return list(topics)
 
 
-def _clear_stripped_categories_for_device(device_key: Optional[str]) -> None:
-    if not isinstance(device_key, str) or not device_key.strip():
+def _clear_stripped_categories_for_trace(trace_id: Optional[str]) -> None:
+    if not isinstance(trace_id, str) or not trace_id.strip():
         return
     with _stripped_categories_lock:
-        _stripped_categories_by_device.pop(device_key.strip(), None)
-        _stripped_topics_by_device.pop(device_key.strip(), None)
+        _stripped_categories_by_trace.pop(trace_id.strip(), None)
+        _stripped_topics_by_trace.pop(trace_id.strip(), None)
 
 
 def _add_instruction_for_non_strict(data: dict, content: str) -> None:
@@ -3754,15 +3754,15 @@ def _merge_agent_response_format_into_content(data: dict) -> None:
     }
 
 
-def _wrap_messages_with_categories(data: dict, *, device_key: Optional[str] = None) -> dict:
+def _wrap_messages_with_categories(data: dict, *, trace_id: Optional[str] = None) -> dict:
     """在 pre_call 前把 incoming 里 role=assistant 且 content 有文本的 history 从后往前包回结构。
     包的时候从 category/topic 列表末尾往前按位置取，与 history 一一对应。
     遇到 NO_WRAP label 则不包，保持原样。
     content 为 null/空 的消息（如 tool_calls-only）不包、不消耗槽位，避免错位。
     """
-    resolved_device_key = device_key or _resolve_category_cache_device_key(data)
-    stripped_categories = _get_stripped_categories_for_device(resolved_device_key)
-    stripped_topics = _get_stripped_topics_for_device(resolved_device_key)
+    resolved_trace_id = trace_id or _resolve_category_cache_trace_id(data)
+    stripped_categories = _get_stripped_categories_for_trace(resolved_trace_id)
+    stripped_topics = _get_stripped_topics_for_trace(resolved_trace_id)
     messages = data.get("messages")
     if not messages or not stripped_categories:
         return data
@@ -3834,13 +3834,6 @@ class MyCustomHandler(CustomLogger):
         _merge_agent_response_format_into_content(data)
 
         context = _build_device_context(data)
-        if context.reset_requested:
-            # Reset should start with a clean category cache for this device.
-            _clear_stripped_categories_for_device(context.device_key)
-        else:
-            # 把 history 里 assistant 的 content 按当前会话记录的 category 从后往前包回结构，再请求
-            data = _wrap_messages_with_categories(data, device_key=context.device_key)
-        # Prefer explicit trace binding from caller metadata when provided.
         metadata = data.get("metadata") if isinstance(data, dict) else None
         bound_trace_id = (
             metadata.get("arbiteros_trace_id")
@@ -3870,6 +3863,15 @@ class MyCustomHandler(CustomLogger):
                 created_new_trace = previous_trace_id != state.trace_id
         if state is None:
             state, created_new_trace = _ensure_trace_state(context)
+
+        # 用 state.trace_id 做 category/topic 缓存的 key，不依赖客户端是否传 arbiteros_trace_id
+        trace_id_for_cache = state.trace_id.strip() if state.trace_id else None
+        if context.reset_requested:
+            # Reset should start with a clean category cache for this trace.
+            _clear_stripped_categories_for_trace(trace_id_for_cache)
+        else:
+            # 把 history 里 assistant 的 content 按当前 trace 记录的 category 从后往前包回结构，再请求
+            data = _wrap_messages_with_categories(data, trace_id=trace_id_for_cache)
 
         # Clean up any previously persisted noisy topic summaries so future traces
         # don't inherit "process step" labels (e.g., "new session / greet user / next").
