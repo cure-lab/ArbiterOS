@@ -10,7 +10,7 @@
   - **LLM structured output**: When the assistant returns `{"category":"...","content":"..."}`, it is parsed into an instruction with `instruction_category`, `instruction_type`, and `content`.
   - **Tool calls**: Each `tool_call` (name + arguments) from the assistant response is recorded; when tool results arrive, they are merged into the same instruction.
   - **Tool results**: Tool role messages with results are associated with their corresponding tool-call instructions.
-    Each `log/{trace_id}.json` contains `trace_id`, `created_at`, and an `instructions` array. Instructions include `id`, `content`, `runtime_step`, `parent_id`, `source_message_id`, `security_type`, `rule_types`, `instruction_category`, and `instruction_type`. This enables downstream analysis and replay of the parsed instruction flow.
+  Each `log/{trace_id}.json` contains `trace_id`, `created_at`, and an `instructions` array. Instructions include `id`, `content`, `runtime_step`, `parent_id`, `source_message_id`, `security_type`, `rule_types`, `instruction_category`, and `instruction_type`. This enables downstream analysis and replay of the parsed instruction flow.
 
 Configured in `litellm_config.yaml` ; Kernel's key logic lives in `_response_transform_content_only` in `arbiteros_kernel/litellm_callback.py`.
 
@@ -28,10 +28,10 @@ uv sync --group dev
 
 **2 Set Config**: Edit `litellm_config.yaml` to add your models. Each entry under `model_list` should specify:
 
-- **`model_name`**: ID exposed to clients (used in OpenClaw as `models[].id`)
-- **`litellm_params.model`**: LiteLLM format, e.g. `openai/gpt-5.2`
-- **`litellm_params.api_key`**: Your API key for the upstream provider
-- **`litellm_params.api_base`**:  API base URL
+- `**model_name`**: ID exposed to clients (used in OpenClaw as `models[].id`)
+- `**litellm_params.model**`: LiteLLM format, e.g. `openai/gpt-5.2`
+- `**litellm_params.api_key**`: Your API key for the upstream provider
+- `**litellm_params.api_base**`:  API base URL
 
 **3 Run**:
 
@@ -51,8 +51,28 @@ Use your local `langfuse` repo:
 cd langfuse
 pnpm run infra:dev:up
 pnpm i
-pnpm run dev:web
 ```
+
+**First-time setup**:
+
+1. **Initialize the database:**
+  ```bash
+   pnpm --filter=shared run db:deploy
+  ```
+2. **Create ClickHouse dev tables.** Choose one:
+  - **With ClickHouse CLI:** `pnpm --filter=shared run ch:dev-tables`
+  - **Without ClickHouse CLI (manual):** From the langfuse repo root:
+    ```bash
+    sed -n '70,688p' packages/shared/clickhouse/scripts/dev-tables.sh | \
+    docker exec -i langfuse-clickhouse clickhouse-client --user clickhouse --password clickhouse --database default --multiquery
+
+    sed -n '700,824p' packages/shared/clickhouse/scripts/dev-tables.sh | \
+    docker exec -i langfuse-clickhouse clickhouse-client --user clickhouse --password clickhouse --database default --multiquery
+    ```
+3. **Start the dev server:**
+  ```bash
+   pnpm run dev:web
+  ```
 
 Langfuse UI: [http://localhost:3000](http://localhost:3000)
 
@@ -199,3 +219,4 @@ Example snippet (full example: `config_example/openclaw.json`):
   }
 }
 ```
+
