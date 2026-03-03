@@ -22,7 +22,7 @@ def make_security_type(
     confidentiality: str,
     integrity: str,
     trustworthiness: str,
-    confidence: float,
+    confidence: str,
     reversible: bool,
     confidentiality_label: bool,
     authority_label: str,
@@ -70,14 +70,14 @@ def make_simple_rule(
 # ---------------------------------------------------------------------------
 
 INSTRUCTION_SECURITY_REGISTRY: Dict[str, Dict[str, Any]] = {
-    # Cognitive reasoning / planning: 中等完整性、不可回滚、仅提示/记录
+    # Cognitive reasoning / planning: 中等完整性、可回滚（纯认知无副作用）、仅提示/记录
     "REASON": {
         "security_type": make_security_type(
             confidentiality="LOW",
             integrity="MID",
             trustworthiness="UNVERIFIED",
-            confidence=0.7,
-            reversible=False,
+            confidence="MID",
+            reversible=True,
             confidentiality_label=False,
             authority_label="AGENT_APPROVED",
         ),
@@ -88,8 +88,8 @@ INSTRUCTION_SECURITY_REGISTRY: Dict[str, Dict[str, Any]] = {
             confidentiality="LOW",
             integrity="MID",
             trustworthiness="UNVERIFIED",
-            confidence=0.7,
-            reversible=False,
+            confidence="MID",
+            reversible=True,
             confidentiality_label=False,
             authority_label="AGENT_APPROVED",
         ),
@@ -100,8 +100,8 @@ INSTRUCTION_SECURITY_REGISTRY: Dict[str, Dict[str, Any]] = {
             confidentiality="LOW",
             integrity="MID",
             trustworthiness="UNVERIFIED",
-            confidence=0.6,
-            reversible=False,
+            confidence="MID",
+            reversible=True,
             confidentiality_label=False,
             authority_label="AGENT_APPROVED",
         ),
@@ -113,7 +113,7 @@ INSTRUCTION_SECURITY_REGISTRY: Dict[str, Dict[str, Any]] = {
             confidentiality="LOW",
             integrity="LOW",
             trustworthiness="UNVERIFIED",
-            confidence=0.5,
+            confidence="LOW",
             reversible=True,
             confidentiality_label=True,
             authority_label="AGENT_APPROVED",
@@ -131,7 +131,7 @@ INSTRUCTION_SECURITY_REGISTRY: Dict[str, Dict[str, Any]] = {
             confidentiality="LOW",
             integrity="MID",
             trustworthiness="UNVERIFIED",
-            confidence=0.6,
+            confidence="MID",
             reversible=True,
             confidentiality_label=True,
             authority_label="AGENT_APPROVED",
@@ -143,7 +143,7 @@ INSTRUCTION_SECURITY_REGISTRY: Dict[str, Dict[str, Any]] = {
             confidentiality="MID",
             integrity="MID",
             trustworthiness="UNVERIFIED",
-            confidence=1.0,
+            confidence="HIGH",
             reversible=False,
             confidentiality_label=True,
             authority_label="HUMAN_APPROVED",
@@ -187,7 +187,7 @@ def get_instruction_security(
 # InstructionType 与 instructions.md 中的 atomic action 保持一致：
 #   READ / WRITE / EXEC / WAIT  (EXECUTION.Env)
 #   ASK / RESPOND               (EXECUTION.Human)
-#   HANDOFF                     (EXECUTION.Agent) — 对应文档中的 DELEGATE
+#   DELEGATE                    (EXECUTION.Agent) — 对应文档中的 DELEGATE
 #   RETRIEVE / STORE            (MEMORY.Management)
 #   REASON / PLAN / CRITIQUE    (COGNITIVE.Reasoning)
 #   SUBSCRIBE / RECEIVE         (EXECUTION.Perception)
@@ -197,6 +197,7 @@ class ToolParseResult(NamedTuple):
     """
     单次 tool call 的解析结果。所有安全属性均由 parser 函数直接内联，无外部兜底。
     """
+
     instruction_type: str
     security_type: Optional[SecurityType] = None
     rule_types: Optional[List[RuleType]] = None
@@ -209,6 +210,7 @@ ToolParser = Callable[[Dict[str, Any]], ToolParseResult]
 # 文件系统工具
 # ---------------------------------------------------------------------------
 
+
 def _parse_read(args: Dict[str, Any]) -> ToolParseResult:
     """read: 只读文件，instruction_type 固定为 READ。"""
     return ToolParseResult(
@@ -217,7 +219,7 @@ def _parse_read(args: Dict[str, Any]) -> ToolParseResult:
             confidentiality="MID",
             integrity="MID",
             trustworthiness="UNVERIFIED",
-            confidence=0.8,
+            confidence="HIGH",
             reversible=True,
             confidentiality_label=True,
             authority_label="AGENT_APPROVED",
@@ -240,7 +242,7 @@ def _parse_edit(args: Dict[str, Any]) -> ToolParseResult:
             confidentiality="MID",
             integrity="HIGH",
             trustworthiness="UNVERIFIED",
-            confidence=0.75,
+            confidence="MID",
             reversible=False,
             confidentiality_label=True,
             authority_label="AGENT_APPROVED",
@@ -263,7 +265,7 @@ def _parse_write(args: Dict[str, Any]) -> ToolParseResult:
             confidentiality="MID",
             integrity="HIGH",
             trustworthiness="UNVERIFIED",
-            confidence=0.75,
+            confidence="MID",
             reversible=False,
             confidentiality_label=True,
             authority_label="AGENT_APPROVED",
@@ -282,11 +284,12 @@ def _parse_write(args: Dict[str, Any]) -> ToolParseResult:
 # 进程 / Shell 执行
 # ---------------------------------------------------------------------------
 
+
 def _parse_exec(args: Dict[str, Any]) -> ToolParseResult:
     """
     exec: 执行 shell 命令，instruction_type 固定为 EXEC。
     - 普通调用：HIGH 机密性，HUMAN_APPROVED，包含 WARN + BLOCK 规则。
-    - elevated=True：额外降低 confidence 至 0.4，追加专项 BLOCK 规则。
+    - elevated=True：额外降低 confidence 至 LOW，追加专项 BLOCK 规则。
     """
     base_rules = [
         make_simple_rule(
@@ -307,12 +310,13 @@ def _parse_exec(args: Dict[str, Any]) -> ToolParseResult:
                 confidentiality="HIGH",
                 integrity="HIGH",
                 trustworthiness="UNVERIFIED",
-                confidence=0.4,
+                confidence="LOW",
                 reversible=False,
                 confidentiality_label=True,
                 authority_label="HUMAN_APPROVED",
             ),
-            base_rules + [
+            base_rules
+            + [
                 make_simple_rule(
                     rule_id="exec_elevated_explicit_block",
                     message="Elevated (sudo/root) exec detected. Block until human explicitly approves.",
@@ -326,7 +330,7 @@ def _parse_exec(args: Dict[str, Any]) -> ToolParseResult:
             confidentiality="HIGH",
             integrity="HIGH",
             trustworthiness="UNVERIFIED",
-            confidence=0.6,
+            confidence="MID",
             reversible=False,
             confidentiality_label=True,
             authority_label="HUMAN_APPROVED",
@@ -370,7 +374,7 @@ def _parse_process(args: Dict[str, Any]) -> ToolParseResult:
             confidentiality="MID",
             integrity="HIGH",
             trustworthiness="UNVERIFIED",
-            confidence=0.7,
+            confidence="MID",
             reversible=False,
             confidentiality_label=False,
             authority_label="AGENT_APPROVED",
@@ -383,8 +387,17 @@ def _parse_process(args: Dict[str, Any]) -> ToolParseResult:
 # 浏览器控制
 # ---------------------------------------------------------------------------
 
-_BROWSER_READ_ACTIONS = {"status", "profiles", "tabs", "snapshot", "screenshot", "console", "pdf"}
-_BROWSER_ASK_ACTIONS  = {"dialog"}
+_BROWSER_READ_ACTIONS = {
+    "status",
+    "profiles",
+    "tabs",
+    "snapshot",
+    "screenshot",
+    "console",
+    "pdf",
+}
+_BROWSER_ASK_ACTIONS = {"dialog"}
+
 
 def _parse_browser(args: Dict[str, Any]) -> ToolParseResult:
     """
@@ -430,7 +443,7 @@ def _parse_browser(args: Dict[str, Any]) -> ToolParseResult:
             confidentiality="MID",
             integrity="MID",
             trustworthiness="UNVERIFIED",
-            confidence=0.65,
+            confidence="MID",
             reversible=False,
             confidentiality_label=True,
             authority_label="AGENT_APPROVED",
@@ -443,6 +456,7 @@ def _parse_browser(args: Dict[str, Any]) -> ToolParseResult:
 # Canvas（节点 UI 画布）
 # ---------------------------------------------------------------------------
 
+
 def _parse_canvas(args: Dict[str, Any]) -> ToolParseResult:
     """canvas: snapshot 为只读，其余（present/hide/navigate/eval/a2ui_*）有副作用。"""
     action = args.get("action", "")
@@ -452,7 +466,7 @@ def _parse_canvas(args: Dict[str, Any]) -> ToolParseResult:
             confidentiality="LOW",
             integrity="MID",
             trustworthiness="UNVERIFIED",
-            confidence=0.7,
+            confidence="MID",
             reversible=True,
             confidentiality_label=False,
             authority_label="AGENT_APPROVED",
@@ -466,10 +480,16 @@ def _parse_canvas(args: Dict[str, Any]) -> ToolParseResult:
 # ---------------------------------------------------------------------------
 
 _NODES_READ_ACTIONS = {
-    "status", "describe", "pending",
-    "camera_snap", "camera_list", "camera_clip",
-    "screen_record", "location_get",
+    "status",
+    "describe",
+    "pending",
+    "camera_snap",
+    "camera_list",
+    "camera_clip",
+    "screen_record",
+    "location_get",
 }
+
 
 def _parse_nodes(args: Dict[str, Any]) -> ToolParseResult:
     """
@@ -505,7 +525,7 @@ def _parse_nodes(args: Dict[str, Any]) -> ToolParseResult:
             confidentiality="HIGH",
             integrity="HIGH",
             trustworthiness="UNVERIFIED",
-            confidence=0.6,
+            confidence="MID",
             reversible=False,
             confidentiality_label=True,
             authority_label="HUMAN_APPROVED",
@@ -517,6 +537,7 @@ def _parse_nodes(args: Dict[str, Any]) -> ToolParseResult:
 # ---------------------------------------------------------------------------
 # 定时任务（Cron）
 # ---------------------------------------------------------------------------
+
 
 def _parse_cron(args: Dict[str, Any]) -> ToolParseResult:
     """
@@ -549,14 +570,18 @@ def _parse_cron(args: Dict[str, Any]) -> ToolParseResult:
                 effect="WARN",
             )
         )
+
+    # READ 操作可逆，WRITE/EXEC 操作不可逆
+    is_reversible = itype == "READ"
+
     return ToolParseResult(
         itype,
         make_security_type(
             confidentiality="MID",
             integrity="HIGH",
             trustworthiness="UNVERIFIED",
-            confidence=0.7,
-            reversible=False,
+            confidence="MID",
+            reversible=is_reversible,
             confidentiality_label=False,
             authority_label="AGENT_APPROVED",
         ),
@@ -567,6 +592,7 @@ def _parse_cron(args: Dict[str, Any]) -> ToolParseResult:
 # ---------------------------------------------------------------------------
 # 消息通道
 # ---------------------------------------------------------------------------
+
 
 def _parse_message(args: Dict[str, Any]) -> ToolParseResult:
     """
@@ -602,7 +628,7 @@ def _parse_message(args: Dict[str, Any]) -> ToolParseResult:
             confidentiality="MID",
             integrity="MID",
             trustworthiness="UNVERIFIED",
-            confidence=0.7,
+            confidence="MID",
             reversible=False,
             confidentiality_label=True,
             authority_label="AGENT_APPROVED",
@@ -615,6 +641,7 @@ def _parse_message(args: Dict[str, Any]) -> ToolParseResult:
 # TTS（文字转语音）
 # ---------------------------------------------------------------------------
 
+
 def _parse_tts(args: Dict[str, Any]) -> ToolParseResult:
     """tts: 文字转语音，产生音频输出，instruction_type 固定为 EXEC。"""
     return ToolParseResult(
@@ -623,7 +650,7 @@ def _parse_tts(args: Dict[str, Any]) -> ToolParseResult:
             confidentiality="LOW",
             integrity="LOW",
             trustworthiness="UNVERIFIED",
-            confidence=0.9,
+            confidence="HIGH",
             reversible=True,
             confidentiality_label=False,
             authority_label="AGENT_APPROVED",
@@ -635,6 +662,7 @@ def _parse_tts(args: Dict[str, Any]) -> ToolParseResult:
 # ---------------------------------------------------------------------------
 # Gateway 管理
 # ---------------------------------------------------------------------------
+
 
 def _parse_gateway(args: Dict[str, Any]) -> ToolParseResult:
     """
@@ -686,7 +714,7 @@ def _parse_gateway(args: Dict[str, Any]) -> ToolParseResult:
             confidentiality="HIGH",
             integrity="HIGH",
             trustworthiness="UNVERIFIED",
-            confidence=0.6,
+            confidence="MID",
             reversible=False,
             confidentiality_label=True,
             authority_label="HUMAN_APPROVED",
@@ -699,6 +727,7 @@ def _parse_gateway(args: Dict[str, Any]) -> ToolParseResult:
 # Agent / Session 管理
 # ---------------------------------------------------------------------------
 
+
 def _parse_agents_list(args: Dict[str, Any]) -> ToolParseResult:
     """agents_list: 列出可用 agent，纯检索，instruction_type 为 RETRIEVE。"""
     return ToolParseResult(
@@ -707,7 +736,7 @@ def _parse_agents_list(args: Dict[str, Any]) -> ToolParseResult:
             confidentiality="LOW",
             integrity="LOW",
             trustworthiness="VERIFIED",
-            confidence=0.95,
+            confidence="HIGH",
             reversible=True,
             confidentiality_label=False,
             authority_label="AGENT_APPROVED",
@@ -724,7 +753,7 @@ def _parse_sessions_list(args: Dict[str, Any]) -> ToolParseResult:
             confidentiality="LOW",
             integrity="LOW",
             trustworthiness="VERIFIED",
-            confidence=0.95,
+            confidence="HIGH",
             reversible=True,
             confidentiality_label=False,
             authority_label="AGENT_APPROVED",
@@ -759,7 +788,7 @@ def _parse_sessions_history(args: Dict[str, Any]) -> ToolParseResult:
             confidentiality="MID",
             integrity="LOW",
             trustworthiness="VERIFIED",
-            confidence=0.9,
+            confidence="HIGH",
             reversible=True,
             confidentiality_label=True,
             authority_label="AGENT_APPROVED",
@@ -769,14 +798,14 @@ def _parse_sessions_history(args: Dict[str, Any]) -> ToolParseResult:
 
 
 def _parse_sessions_send(args: Dict[str, Any]) -> ToolParseResult:
-    """sessions_send: 向另一 session 发送消息，instruction_type 为 HANDOFF。"""
+    """sessions_send: 向另一 session 发送消息，instruction_type 为 DELEGATE。"""
     return ToolParseResult(
-        "HANDOFF",
+        "DELEGATE",
         make_security_type(
             confidentiality="MID",
             integrity="MID",
             trustworthiness="UNVERIFIED",
-            confidence=0.7,
+            confidence="MID",
             reversible=False,
             confidentiality_label=True,
             authority_label="AGENT_APPROVED",
@@ -793,7 +822,7 @@ def _parse_sessions_send(args: Dict[str, Any]) -> ToolParseResult:
 
 def _parse_sessions_spawn(args: Dict[str, Any]) -> ToolParseResult:
     """
-    sessions_spawn: 启动子 agent，instruction_type 为 HANDOFF。
+    sessions_spawn: 启动子 agent，instruction_type 为 DELEGATE。
     runTimeoutSeconds 较大时追加长时运行告警。
     """
     rules = [
@@ -813,12 +842,12 @@ def _parse_sessions_spawn(args: Dict[str, Any]) -> ToolParseResult:
             )
         )
     return ToolParseResult(
-        "HANDOFF",
+        "DELEGATE",
         make_security_type(
             confidentiality="MID",
             integrity="MID",
             trustworthiness="UNVERIFIED",
-            confidence=0.65,
+            confidence="MID",
             reversible=False,
             confidentiality_label=True,
             authority_label="AGENT_APPROVED",
@@ -835,7 +864,7 @@ def _parse_session_status(args: Dict[str, Any]) -> ToolParseResult:
             confidentiality="LOW",
             integrity="LOW",
             trustworthiness="VERIFIED",
-            confidence=0.95,
+            confidence="HIGH",
             reversible=True,
             confidentiality_label=False,
             authority_label="AGENT_APPROVED",
@@ -848,6 +877,7 @@ def _parse_session_status(args: Dict[str, Any]) -> ToolParseResult:
 # Web 访问
 # ---------------------------------------------------------------------------
 
+
 def _parse_web_search(args: Dict[str, Any]) -> ToolParseResult:
     """web_search: 搜索外部网络，结果不可信，instruction_type 为 READ。"""
     return ToolParseResult(
@@ -856,7 +886,7 @@ def _parse_web_search(args: Dict[str, Any]) -> ToolParseResult:
             confidentiality="LOW",
             integrity="LOW",
             trustworthiness="UNVERIFIED",
-            confidence=0.5,
+            confidence="LOW",
             reversible=True,
             confidentiality_label=False,
             authority_label="AGENT_APPROVED",
@@ -898,7 +928,7 @@ def _parse_web_fetch(args: Dict[str, Any]) -> ToolParseResult:
             confidentiality="LOW",
             integrity="LOW",
             trustworthiness="UNVERIFIED",
-            confidence=0.45,
+            confidence="LOW",
             reversible=True,
             confidentiality_label=False,
             authority_label="AGENT_APPROVED",
@@ -911,6 +941,7 @@ def _parse_web_fetch(args: Dict[str, Any]) -> ToolParseResult:
 # 图像感知
 # ---------------------------------------------------------------------------
 
+
 def _parse_image(args: Dict[str, Any]) -> ToolParseResult:
     """image: 图像分析（感知），instruction_type 为 READ。"""
     return ToolParseResult(
@@ -919,7 +950,7 @@ def _parse_image(args: Dict[str, Any]) -> ToolParseResult:
             confidentiality="MID",
             integrity="LOW",
             trustworthiness="UNVERIFIED",
-            confidence=0.6,
+            confidence="MID",
             reversible=True,
             confidentiality_label=True,
             authority_label="AGENT_APPROVED",
@@ -938,6 +969,7 @@ def _parse_image(args: Dict[str, Any]) -> ToolParseResult:
 # 记忆管理
 # ---------------------------------------------------------------------------
 
+
 def _parse_memory_search(args: Dict[str, Any]) -> ToolParseResult:
     """memory_search: 语义检索 MEMORY.md，instruction_type 为 RETRIEVE。"""
     return ToolParseResult(
@@ -946,7 +978,7 @@ def _parse_memory_search(args: Dict[str, Any]) -> ToolParseResult:
             confidentiality="MID",
             integrity="MID",
             trustworthiness="VERIFIED",
-            confidence=0.85,
+            confidence="HIGH",
             reversible=True,
             confidentiality_label=True,
             authority_label="AGENT_APPROVED",
@@ -963,7 +995,7 @@ def _parse_memory_get(args: Dict[str, Any]) -> ToolParseResult:
             confidentiality="MID",
             integrity="MID",
             trustworthiness="VERIFIED",
-            confidence=0.9,
+            confidence="HIGH",
             reversible=True,
             confidentiality_label=True,
             authority_label="AGENT_APPROVED",
@@ -977,29 +1009,29 @@ def _parse_memory_get(args: Dict[str, Any]) -> ToolParseResult:
 # ---------------------------------------------------------------------------
 
 TOOL_PARSER_REGISTRY: Dict[str, ToolParser] = {
-    "read":             _parse_read,
-    "edit":             _parse_edit,
-    "write":            _parse_write,
-    "exec":             _parse_exec,
-    "process":          _parse_process,
-    "browser":          _parse_browser,
-    "canvas":           _parse_canvas,
-    "nodes":            _parse_nodes,
-    "cron":             _parse_cron,
-    "message":          _parse_message,
-    "tts":              _parse_tts,
-    "gateway":          _parse_gateway,
-    "agents_list":      _parse_agents_list,
-    "sessions_list":    _parse_sessions_list,
+    "read": _parse_read,
+    "edit": _parse_edit,
+    "write": _parse_write,
+    "exec": _parse_exec,
+    "process": _parse_process,
+    "browser": _parse_browser,
+    "canvas": _parse_canvas,
+    "nodes": _parse_nodes,
+    "cron": _parse_cron,
+    "message": _parse_message,
+    "tts": _parse_tts,
+    "gateway": _parse_gateway,
+    "agents_list": _parse_agents_list,
+    "sessions_list": _parse_sessions_list,
     "sessions_history": _parse_sessions_history,
-    "sessions_send":    _parse_sessions_send,
-    "sessions_spawn":   _parse_sessions_spawn,
-    "session_status":   _parse_session_status,
-    "web_search":       _parse_web_search,
-    "web_fetch":        _parse_web_fetch,
-    "image":            _parse_image,
-    "memory_search":    _parse_memory_search,
-    "memory_get":       _parse_memory_get,
+    "sessions_send": _parse_sessions_send,
+    "sessions_spawn": _parse_sessions_spawn,
+    "session_status": _parse_session_status,
+    "web_search": _parse_web_search,
+    "web_fetch": _parse_web_fetch,
+    "image": _parse_image,
+    "memory_search": _parse_memory_search,
+    "memory_get": _parse_memory_get,
 }
 
 
