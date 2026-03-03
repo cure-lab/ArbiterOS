@@ -43,7 +43,7 @@ INSTRUCTION_TYPE_TO_CATEGORY = {
     "RESPOND": "EXECUTION.Human",
     "USER_MESSAGE": "EXECUTION.Human",
     # Agent collaboration
-    "HANDOFF": "EXECUTION.Agent",
+    "DELEGATE": "EXECUTION.Agent",
     # Perception / events
     "SUBSCRIBE": "EXECUTION.Perception",
     "RECEIVE": "EXECUTION.Perception",
