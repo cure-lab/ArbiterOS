@@ -1,4 +1,4 @@
-# Langfuse Tracing (ArbiterOS Governance)
+# Langfuse Tracing
 
 This document describes the Langfuse-based tracing and governance UI used with ArbiterOS.
 
