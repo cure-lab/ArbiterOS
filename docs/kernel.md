@@ -1,5 +1,19 @@
 # ArbiterOS Kernel Architecture
 
+## Supported Agents and Models
+
+ArbiterOS Kernel supports agents that can **customize the LLM URL and API key** when making LLM calls. (Openclaw, Nanobot, ...)
+
+**Currently known supported models**:
+
+| Provider | Models |
+| -------- | ------ |
+| GPT | gpt-5.2, gpt-5.2-chat-latest, gpt-5.1, gpt-5.1-chat-latest, gpt-5, gpt-5-mini, gpt-5-nano, gpt-5-chat-latest, gpt-4.1, gpt-4.1-mini, gpt-4.1-nano |
+| O-series | o4-mini, o3, o3-mini, o1 |
+| GLM | GLM series |
+
+---
+
 ## 1. Overview
 
 ArbiterOS Kernel is an Agent protection and monitoring layer that runs on top of the LiteLLM proxy. It instructionizes model responses across the full Agent LLM request/response lifecycle, enforces policy protection, monitors execution, and visualizes various runtime information:
