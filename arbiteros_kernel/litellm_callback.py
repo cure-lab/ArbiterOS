@@ -3521,6 +3521,36 @@ def _clear_stripped_categories_for_trace(trace_id: Optional[str]) -> None:
         _stripped_topics_by_trace.pop(trace_id.strip(), None)
 
 
+def _add_policy_protected_category_topic(trace_id: Optional[str]) -> None:
+    """Policy 凭空新增 content 时，在 category/topic 列表末尾追加，保证 pre_call 能正确包回。"""
+    if not isinstance(trace_id, str) or not trace_id.strip():
+        return
+    tid = trace_id.strip()
+    with _stripped_categories_lock:
+        categories = _stripped_categories_by_trace.setdefault(tid, [])
+        categories.append("COGNITIVE_CORE__RESPOND")
+        if len(categories) > _MAX_STRIPPED_CATEGORIES:
+            del categories[: len(categories) - _MAX_STRIPPED_CATEGORIES]
+        topics = _stripped_topics_by_trace.setdefault(tid, [])
+        topics.append("policy protected")
+        if len(topics) > _MAX_STRIPPED_CATEGORIES:
+            del topics[: len(topics) - _MAX_STRIPPED_CATEGORIES]
+
+
+def _remove_latest_category_topic_for_trace(trace_id: Optional[str]) -> None:
+    """Policy 移除 content 时，去掉列表末尾刚加的 category/topic，保持同步。"""
+    if not isinstance(trace_id, str) or not trace_id.strip():
+        return
+    tid = trace_id.strip()
+    with _stripped_categories_lock:
+        categories = _stripped_categories_by_trace.get(tid)
+        if categories:
+            categories.pop()
+        topics = _stripped_topics_by_trace.get(tid)
+        if topics:
+            topics.pop()
+
+
 def _add_instruction_for_non_strict(data: dict, content: str) -> None:
     """非严格格式时，为 instruction_parsing 等赋予 topic:其他，category: COGNITIVE_CORE__RESPOND。"""
     if not isinstance(content, str) or not content.strip():
@@ -4127,6 +4157,26 @@ class MyCustomHandler(CustomLogger):
                     latest_instructions=latest_instructions,
                 )
                 if policy_result.modified:
+                    content_before = (
+                        final_msg_dict.get("content")
+                        if isinstance(final_msg_dict, dict)
+                        else None
+                    )
+                    content_after = (
+                        policy_result.response.get("content")
+                        if isinstance(policy_result.response, dict)
+                        else None
+                    )
+                    before_empty = not (
+                        isinstance(content_before, str) and content_before.strip()
+                    )
+                    after_empty = not (
+                        isinstance(content_after, str) and content_after.strip()
+                    )
+                    if before_empty and not after_empty:
+                        _add_policy_protected_category_topic(trace_id)
+                    elif not before_empty and after_empty:
+                        _remove_latest_category_topic_for_trace(trace_id)
                     final_msg_dict = policy_result.response
                     error_type_str = (policy_result.error_type or "").strip()
                     if error_type_str:
@@ -4409,6 +4459,26 @@ class MyCustomHandler(CustomLogger):
                     latest_instructions=latest_instructions,
                 )
                 if policy_result.modified:
+                    content_before = (
+                        msg_dict.get("content")
+                        if isinstance(msg_dict, dict)
+                        else None
+                    )
+                    content_after = (
+                        policy_result.response.get("content")
+                        if isinstance(policy_result.response, dict)
+                        else None
+                    )
+                    before_empty = not (
+                        isinstance(content_before, str) and content_before.strip()
+                    )
+                    after_empty = not (
+                        isinstance(content_after, str) and content_after.strip()
+                    )
+                    if before_empty and not after_empty:
+                        _add_policy_protected_category_topic(trace_id)
+                    elif not before_empty and after_empty:
+                        _remove_latest_category_topic_for_trace(trace_id)
                     msg_dict = policy_result.response
                     error_type_str = (policy_result.error_type or "").strip()
                     if error_type_str:
