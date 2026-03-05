@@ -234,7 +234,7 @@ class KernelPolicyRuntime:
         path = os.getenv("ARBITEROS_POLICY_CONFIG", "").strip()
         if not path:
             # sensible default
-            path = "~/.arbiteros/policy.json"
+            path = os.path.join(os.path.dirname(__file__), "policy.json")
         path = _expand_home(path)
         cfg: Dict[str, Any] = {}
         try:
@@ -617,18 +617,51 @@ class KernelPolicyRuntime:
 
     def check_path_and_budget(self, *, tool: str, args: Dict[str, Any]) -> Tuple[bool, str]:
         path_cfg = self.cfg.get("paths", {}) or {}
-        deny_prefixes = [normalize_path(p) for p in (path_cfg.get("deny_prefixes", []) or [])]
-        allow_prefixes = [normalize_path(p) for p in (path_cfg.get("allow_prefixes", []) or [])]
+
+        def _norm_prefixes(xs: Any) -> List[str]:
+            out: List[str] = []
+            if not isinstance(xs, list):
+                return out
+            for x in xs:
+                if not isinstance(x, str) or not x.strip():
+                    continue
+                out.append(normalize_path(_expand_home(x.strip())))
+            seen = set()
+            dedup: List[str] = []
+            for p in out:
+                if p and p not in seen:
+                    seen.add(p)
+                    dedup.append(p)
+            return dedup
+
+        deny_prefixes = _norm_prefixes(path_cfg.get("deny_prefixes", []))
+        allow_prefixes = _norm_prefixes(path_cfg.get("allow_prefixes", []))
+
+        def _prefix_match(p: str, pref: str) -> bool:
+            if not pref:
+                return False
+            if p == pref:
+                return True
+            return p.startswith(pref.rstrip("/") + "/")
+
+        def _longest_hit(p: str, prefixes: List[str]) -> Optional[str]:
+            hits = [pref for pref in prefixes if _prefix_match(p, pref)]
+            return max(hits, key=len) if hits else None
 
         paths = _collect_paths_from_args(args)
 
         for p in paths:
-            for dp in deny_prefixes:
-                if dp and p.startswith(dp):
+            allow_hit = _longest_hit(p, allow_prefixes) if allow_prefixes else None
+            deny_hit = _longest_hit(p, deny_prefixes) if deny_prefixes else None
+
+            # 1) allowlist 非空：必须命中 allow
+            if allow_prefixes and not allow_hit:
+                return False, f"path not in allow_prefixes: {p}"
+
+            # 2) 同时命中 deny/allow：最具体前缀胜出（长度相等时 deny 胜出）
+            if deny_hit:
+                if (not allow_hit) or (len(deny_hit) >= len(allow_hit)):
                     return False, f"path denied by prefix: {p}"
-            if allow_prefixes:
-                if not any(ap and p.startswith(ap) for ap in allow_prefixes):
-                    return False, f"path not in allow_prefixes: {p}"
 
         in_budget = self.cfg.get("input_budget", {}) or {}
         max_str = int(in_budget.get("max_str_len", 0) or 0)
@@ -1039,10 +1072,25 @@ class KernelPolicyRuntime:
         if not tool:
             return True, "rate ok"
 
-        # count tail consecutive same tool in history
+        # NEW: count only if the *tail of instructions* are tool-events,
+        # and stop counting as soon as we see any non-tool instruction (RESPOND/ASK/REASON/etc).
         streak = 0
-        tail = list(self.iter_tool_events(history_instructions))
-        for _, tname in reversed(tail):
+        for ins in reversed(history_instructions):
+            it = (ins.get("instruction_type") or "").strip().upper()
+
+            # any non-tool instruction breaks the consecutive chain
+            if it not in {"READ", "WRITE", "EXEC"}:
+                break
+
+            content = ins.get("content")
+            if not isinstance(content, dict):
+                break
+
+            tname = content.get("tool_name")
+            if not (isinstance(tname, str) and tname.strip()):
+                break
+            tname = tname.strip()
+
             if tname == tool:
                 streak += 1
             else:

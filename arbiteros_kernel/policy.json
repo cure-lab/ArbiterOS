@@ -2,7 +2,7 @@
   "audit": { "log_allow": true },
 
   "allow": {
-    "tools": ["read", "write", "exec", "gmail_read", "web_fetch"],
+    "tools": ["read", "write", "exec", "gmail_read", "web_fetch","web_search"],
     "instruction_types": [],
     "categories": []
   },
@@ -15,7 +15,7 @@
 
   "paths": {
     "deny_prefixes": [
-      "/etc", "/usr", "/bin", "/sbin", "/var", "/proc", "/sys", "/dev", "/root",
+      "/proc", "/sys", "/dev", "/run",
       "/Windows", "/System32"
     ],
     "allow_prefixes": [
@@ -30,7 +30,7 @@
   "output_budget": { "max_chars": 500 },
 
   "rate_limit": {
-    "max_consecutive_same_tool": 5,
+    "max_consecutive_same_tool": 20,
     "window_seconds": 10,
     "max_calls_per_window": 20
   },
