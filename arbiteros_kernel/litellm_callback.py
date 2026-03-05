@@ -27,6 +27,7 @@ import litellm
 from langfuse import Langfuse
 from dotenv import load_dotenv
 from arbiteros_kernel.langfuse_env import ensure_langfuse_env_compat
+from arbiteros_kernel.policy.defaults import POLICY_DESCRIPTIONS
 from arbiteros_kernel.policy_check import check_response_policy
 from arbiteros_kernel.policy_runtime import RUNTIME as POLICY_RUNTIME
 from litellm.caching.dual_cache import DualCache
@@ -2693,6 +2694,8 @@ def _emit_response_nodes(
     response_before_transform: Optional[dict],
     response_after_transform: Optional[dict],
     policy_violation_reason: Optional[str] = None,
+    policy_names: Optional[list[str]] = None,
+    policy_sources: Optional[dict[str, str]] = None,
 ) -> None:
     incoming = request_data if isinstance(request_data, dict) else {}
     context = _build_device_context(incoming)
@@ -2730,6 +2733,15 @@ def _emit_response_nodes(
         if isinstance(policy_violation_reason, str) and policy_violation_reason.strip()
         else None
     )
+    policy_names_list = policy_names if isinstance(policy_names, list) else []
+    policy_sources_dict = policy_sources if isinstance(policy_sources, dict) else {}
+    policy_extra_metadata: dict[str, Any] = {}
+    if policy_names_list:
+        policy_extra_metadata["policy_names"] = policy_names_list
+        policy_extra_metadata["policy_sources"] = dict(policy_sources_dict)
+        policy_extra_metadata["policy_descriptions"] = {
+            n: POLICY_DESCRIPTIONS.get(n, "") for n in policy_names_list
+        }
 
     tool_calls = _extract_tool_calls(response_before_transform)
     if tool_calls:
@@ -2798,6 +2810,7 @@ def _emit_response_nodes(
                 parser_metadata["policy_violation_tags"] = _build_policy_violation_tags(
                     normalized_policy_reason
                 )
+                parser_metadata.update(policy_extra_metadata)
                 parser_level = "POLICY_VIOLATION"
                 parser_status_message = normalized_policy_reason
             parser_observation_id = _emit_instruction_parser_node(
@@ -2858,7 +2871,10 @@ def _emit_response_nodes(
             turn_idx = max(state.turn_index, 1)
             output_name = f"{_NODE_NAMESPACE_PREFIX}.output.turn_{turn_idx:03d}"
             output_category = "EXECUTION_CORE__TOOL_CALL"
-            output_policy_metadata = {"policy_protected": policy_reason_for_output}
+            output_policy_metadata = {
+                "policy_protected": policy_reason_for_output,
+                **policy_extra_metadata,
+            }
             # Tool-call-only: use the tool name as the turn topic.
             tool_topic = None
             try:
@@ -2991,9 +3007,11 @@ def _emit_response_nodes(
             "policy_violation_tags": _build_policy_violation_tags(
                 normalized_policy_reason
             ),
+            **policy_extra_metadata,
         }
         kernel_policy_metadata = {
             "policy_protected": normalized_policy_reason,
+            **policy_extra_metadata,
         }
         output_level = "POLICY_VIOLATION"
         output_status_message = normalized_policy_reason
@@ -4090,6 +4108,8 @@ class MyCustomHandler(CustomLogger):
 
         # Policy check: 剥完 category/topic 后，在回复 agent 前检查
         policy_violation_reason_for_langfuse: Optional[str] = None
+        policy_names_for_langfuse: list[str] = []
+        policy_sources_for_langfuse: dict[str, str] = {}
         if isinstance(final_msg_dict, dict):
             metadata = data.get("metadata") if isinstance(data, dict) else {}
             trace_id = (
@@ -4119,6 +4139,8 @@ class MyCustomHandler(CustomLogger):
                             ),
                             policy_reason=error_type_str,
                         )
+                    policy_names_for_langfuse = list(policy_result.policy_names)
+                    policy_sources_for_langfuse = dict(policy_result.policy_sources)
                     if builder is not None:
                         # 用修改后的 response 重新生成 instructions 并替换
                         _replace_instructions_from_modified_response(
@@ -4164,6 +4186,8 @@ class MyCustomHandler(CustomLogger):
             response_before_transform=raw_msg_dict,
             response_after_transform=final_msg_dict,
             policy_violation_reason=policy_violation_reason_for_langfuse,
+            policy_names=policy_names_for_langfuse,
+            policy_sources=policy_sources_for_langfuse,
         )
         return response
 
@@ -4366,6 +4390,8 @@ class MyCustomHandler(CustomLogger):
 
         # Policy check: 剥完 category/topic 后，在回复 agent 前检查
         policy_violation_reason_for_langfuse: Optional[str] = None
+        policy_names_for_langfuse: list[str] = []
+        policy_sources_for_langfuse: dict[str, str] = {}
         if isinstance(msg_dict, dict):
             metadata = request_data.get("metadata") if isinstance(request_data, dict) else {}
             trace_id = (
@@ -4395,6 +4421,8 @@ class MyCustomHandler(CustomLogger):
                             ),
                             policy_reason=error_type_str,
                         )
+                    policy_names_for_langfuse = list(policy_result.policy_names)
+                    policy_sources_for_langfuse = dict(policy_result.policy_sources)
                     if builder is not None:
                         _replace_instructions_from_modified_response(
                             builder, msg_dict, _policy_instruction_count_before_stream
@@ -4415,6 +4443,8 @@ class MyCustomHandler(CustomLogger):
             response_before_transform=raw_msg_dict,
             response_after_transform=msg_dict,
             policy_violation_reason=policy_violation_reason_for_langfuse,
+            policy_names=policy_names_for_langfuse,
+            policy_sources=policy_sources_for_langfuse,
         )
 
         if apply_transform and msg_dict is not None:
