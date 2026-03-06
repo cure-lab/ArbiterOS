@@ -107,6 +107,44 @@ INSTRUCTION_SECURITY_REGISTRY: Dict[str, Dict[str, Any]] = {
         ),
         "rule_types": [],
     },
+    # Memory management — RETRIEVE: 从长期记忆中检索，只读，可逆
+    "RETRIEVE": {
+        "security_type": make_security_type(
+            confidentiality="MID",
+            integrity="MID",
+            trustworthiness="VERIFIED",
+            confidence="HIGH",
+            reversible=True,
+            confidentiality_label=True,
+            authority_label="AGENT_APPROVED",
+        ),
+        "rule_types": [
+            make_simple_rule(
+                rule_id="retrieve_memory_sensitive_content",
+                message="Retrieved memory may contain sensitive personal or contextual data. Handle with care.",
+                effect="LOG_ONLY",
+            )
+        ],
+    },
+    # Memory management — STORE: 持久化到长期记忆，不可逆
+    "STORE": {
+        "security_type": make_security_type(
+            confidentiality="MID",
+            integrity="HIGH",
+            trustworthiness="UNVERIFIED",
+            confidence="MID",
+            reversible=False,
+            confidentiality_label=True,
+            authority_label="AGENT_APPROVED",
+        ),
+        "rule_types": [
+            make_simple_rule(
+                rule_id="store_memory_integrity_warn",
+                message="Writing to long-term memory is persistent. Verify content accuracy before storing.",
+                effect="WARN",
+            )
+        ],
+    },
     # Human-facing respond：完整性较低、可信度较低，需要人审
     "RESPOND": {
         "security_type": make_security_type(
@@ -210,9 +248,44 @@ ToolParser = Callable[[Dict[str, Any]], ToolParseResult]
 # 文件系统工具
 # ---------------------------------------------------------------------------
 
+# 这三个文件被视为 Agent 的长期记忆载体：
+# 读取 → RETRIEVE（从记忆中召回），写入 → STORE（持久化经验）
+_MEMORY_FILE_NAMES = {"SOUL.md", "MEMORY.md", "AGENTS.md"}
+
+
+def _get_path_basename(args: Dict[str, Any]) -> str:
+    """从 args 中提取文件名（兼容 path / file_path 两种参数名）。"""
+    raw = args.get("path") or args.get("file_path") or ""
+    return os.path.basename(str(raw))
+
+
+def _is_memory_file(args: Dict[str, Any]) -> bool:
+    """判断 tool 调用是否针对长期记忆文件。"""
+    return _get_path_basename(args) in _MEMORY_FILE_NAMES
+
 
 def _parse_read(args: Dict[str, Any]) -> ToolParseResult:
-    """read: 只读文件，instruction_type 固定为 READ。"""
+    """read: 普通读取 → READ；读取记忆文件（SOUL/MEMORY/AGENTS）→ RETRIEVE。"""
+    if _is_memory_file(args):
+        return ToolParseResult(
+            "RETRIEVE",
+            make_security_type(
+                confidentiality="MID",
+                integrity="MID",
+                trustworthiness="VERIFIED",
+                confidence="HIGH",
+                reversible=True,
+                confidentiality_label=True,
+                authority_label="AGENT_APPROVED",
+            ),
+            [
+                make_simple_rule(
+                    rule_id="retrieve_memory_sensitive_content",
+                    message="Retrieved memory may contain sensitive personal or contextual data. Handle with care.",
+                    effect="LOG_ONLY",
+                )
+            ],
+        )
     return ToolParseResult(
         "READ",
         make_security_type(
@@ -235,7 +308,27 @@ def _parse_read(args: Dict[str, Any]) -> ToolParseResult:
 
 
 def _parse_edit(args: Dict[str, Any]) -> ToolParseResult:
-    """edit: 原地修改文件，instruction_type 固定为 WRITE。"""
+    """edit: 普通编辑 → WRITE；编辑记忆文件（SOUL/MEMORY/AGENTS）→ STORE。"""
+    if _is_memory_file(args):
+        return ToolParseResult(
+            "STORE",
+            make_security_type(
+                confidentiality="MID",
+                integrity="HIGH",
+                trustworthiness="UNVERIFIED",
+                confidence="MID",
+                reversible=False,
+                confidentiality_label=True,
+                authority_label="AGENT_APPROVED",
+            ),
+            [
+                make_simple_rule(
+                    rule_id="store_memory_integrity_warn",
+                    message="Writing to long-term memory is persistent. Verify content accuracy before storing.",
+                    effect="WARN",
+                )
+            ],
+        )
     return ToolParseResult(
         "WRITE",
         make_security_type(
@@ -258,7 +351,27 @@ def _parse_edit(args: Dict[str, Any]) -> ToolParseResult:
 
 
 def _parse_write(args: Dict[str, Any]) -> ToolParseResult:
-    """write: 覆写或创建文件，instruction_type 固定为 WRITE。"""
+    """write: 普通覆写 → WRITE；写入记忆文件（SOUL/MEMORY/AGENTS）→ STORE。"""
+    if _is_memory_file(args):
+        return ToolParseResult(
+            "STORE",
+            make_security_type(
+                confidentiality="MID",
+                integrity="HIGH",
+                trustworthiness="UNVERIFIED",
+                confidence="MID",
+                reversible=False,
+                confidentiality_label=True,
+                authority_label="AGENT_APPROVED",
+            ),
+            [
+                make_simple_rule(
+                    rule_id="store_memory_integrity_warn",
+                    message="Writing to long-term memory is persistent. Verify content accuracy before storing.",
+                    effect="WARN",
+                )
+            ],
+        )
     return ToolParseResult(
         "WRITE",
         make_security_type(
