@@ -2743,6 +2743,39 @@ def _emit_response_nodes(
             n: POLICY_DESCRIPTIONS.get(n, "") for n in policy_names_list
         }
 
+    max_topic_chars = int(os.getenv("ARBITEROS_LANGFUSE_TOPIC_MAX_CHARS", "40"))
+    max_topic_points = int(os.getenv("ARBITEROS_LANGFUSE_TOPIC_MAX_POINTS", "3"))
+    max_topic_point_chars = int(
+        os.getenv("ARBITEROS_LANGFUSE_TOPIC_POINT_MAX_CHARS", "24")
+    )
+    with _trace_state_lock:
+        previous_topic_summary = state.latest_topic_summary
+    previous_topic_clean = _normalize_topic_summary(
+        previous_topic_summary,
+        max_points=max_topic_points,
+        max_point_chars=max_topic_point_chars,
+        max_total_chars=max_topic_chars,
+    )
+    previous_topic_for_fallback = _sanitize_topic_preview(
+        previous_topic_clean or previous_topic_summary,
+        max_chars=max_topic_chars,
+        allow_reset_control_topic=False,
+    )
+    allow_reset_control_topic = (
+        context.reset_requested
+        and max(state.turn_index, 1) <= 1
+        and not previous_topic_for_fallback
+    )
+    fallback_user_topic = _sanitize_topic_preview(
+        context.latest_user_text,
+        max_chars=max_topic_chars,
+        allow_reset_control_topic=allow_reset_control_topic,
+    ) or _sanitize_topic_preview(
+        state.latest_user_preview,
+        max_chars=max_topic_chars,
+        allow_reset_control_topic=allow_reset_control_topic,
+    )
+
     tool_calls = _extract_tool_calls(response_before_transform)
     if tool_calls:
         # Before actual tool execution, emit parser.pre_{tool}.{n} and reserve
@@ -2886,8 +2919,19 @@ def _emit_response_nodes(
                             tool_topic = tn.strip()
             except Exception:
                 tool_topic = None
-            kernel_turn_topic = tool_topic or "tool_call"
-            trace_topic = kernel_turn_topic
+            kernel_turn_topic = (
+                _sanitize_topic_preview(
+                    tool_topic,
+                    max_chars=max_topic_chars,
+                    allow_reset_control_topic=False,
+                )
+                or "tool_call"
+            )
+            # Keep tool label for this turn, but don't let it overwrite the
+            # whole trace topic when we already have a stronger conversation topic.
+            trace_topic = (
+                previous_topic_for_fallback or fallback_user_topic or kernel_turn_topic
+            )
             persist_topic_needed = False
             if isinstance(trace_topic, str) and trace_topic.strip():
                 with _trace_state_lock:
@@ -3020,29 +3064,6 @@ def _emit_response_nodes(
         "user_text": context.latest_user_text,
         "category": effective_category,
     }
-    max_topic_chars = int(os.getenv("ARBITEROS_LANGFUSE_TOPIC_MAX_CHARS", "40"))
-    max_topic_points = int(os.getenv("ARBITEROS_LANGFUSE_TOPIC_MAX_POINTS", "3"))
-    max_topic_point_chars = int(
-        os.getenv("ARBITEROS_LANGFUSE_TOPIC_POINT_MAX_CHARS", "24")
-    )
-    with _trace_state_lock:
-        previous_topic_summary = state.latest_topic_summary
-    previous_topic_clean = _normalize_topic_summary(
-        previous_topic_summary,
-        max_points=max_topic_points,
-        max_point_chars=max_topic_point_chars,
-        max_total_chars=max_topic_chars,
-    )
-    previous_topic_for_fallback = _sanitize_topic_preview(
-        previous_topic_clean or previous_topic_summary,
-        max_chars=max_topic_chars,
-        allow_reset_control_topic=False,
-    )
-    allow_reset_control_topic = (
-        context.reset_requested
-        and max(state.turn_index, 1) <= 1
-        and not previous_topic_for_fallback
-    )
 
     llm_topic_raw = llm_topic if isinstance(llm_topic, str) else None
     llm_topic_reuse_previous = _is_explicit_reuse_topic_marker(llm_topic_raw)
@@ -3059,15 +3080,6 @@ def _emit_response_nodes(
             llm_topic_clean = _clean_topic_point(llm_topic_preview) if llm_topic_preview else None
     llm_topic_candidate = _sanitize_topic_preview(
         llm_topic_clean,
-        max_chars=max_topic_chars,
-        allow_reset_control_topic=allow_reset_control_topic,
-    )
-    fallback_user_topic = _sanitize_topic_preview(
-        context.latest_user_text,
-        max_chars=max_topic_chars,
-        allow_reset_control_topic=allow_reset_control_topic,
-    ) or _sanitize_topic_preview(
-        state.latest_user_preview,
         max_chars=max_topic_chars,
         allow_reset_control_topic=allow_reset_control_topic,
     )
