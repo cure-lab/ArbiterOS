@@ -171,7 +171,7 @@ The Graph area is controlled mainly via the top-right toolbar and mouse interact
   - Shift + Enter: jump to previous match
   - Or use the left/right arrow buttons to cycle through matches
 
-![Node search](./images/langfuse/cb1020c8-9edf-412f-88bf-490181a056ce.png)
+![Node search](./images/langfuse/search-graph.png)
 
 ### Node selection and cycling
 
@@ -204,13 +204,15 @@ You can also click the Analyze button (top-right) to generate manually if Error 
 
 ### B. POLICY_VIOLATION nodes
 
-The panel focuses on policy execution explanation:
+The panel focuses on policy enforcement details for blocked requests:
 
-- **Action**: The blocked action and reason (e.g., a tool request rejected by policy)
-- **Policy Details**: Matched policy keys, related policy snippets, or descriptions
+- **Action**: The blocked action and reason (e.g., a tool call rejected by policy)
+- **Policy Protected**: A concise rule hit summary for the current block
+- **Policy Names / Policy Descriptions**: Matched policy names and their intent
+- **Policy Sources**: Source policy snippet/path used for the decision
 - Long content can be expanded/collapsed for easier reading
 
-![Policy Violation panel](./images/langfuse/caa0d81f-992f-41b9-8cef-4185f9b9a02e.png)
+![Policy Violation panel](./images/langfuse/policy-violation-node.png)
 
 ---
 
@@ -231,7 +233,7 @@ The Analysis page has two main view modes:
 
   - Supports batch **Analysis** on selected error nodes
 
-  ![Batch Analysis](./images/langfuse/eddc15af-7e5b-483d-95b9-3ac25f76e71f.png)
+  ![Batch Analysis](./images/langfuse/batch-analysis.png)
 
 - **Policy Violation**
   - Shows only POLICY_VIOLATION nodes
@@ -245,7 +247,7 @@ The Analysis page has two main view modes:
 
 ### Click a node to navigate to its Trace
 
-![Trace navigation](./images/langfuse/3cd313f6-a799-45b3-a24e-9cee71bc1693.png)
+![Trace navigation](./images/langfuse/click-node.png)
 
 ---
 
