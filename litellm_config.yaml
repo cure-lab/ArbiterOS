@@ -2,8 +2,8 @@ model_list:
   - model_name: gpt-4o-mini
     litellm_params:
       model: openai/gpt-4o-mini
-      api_key:  sk-zk23220cd000ee8b8158ee787686bb5b23e6972169825447
-      api_base: https://api.zhizengzeng.com/v1
+      api_key:  
+      api_base: 
       response_format:
         type: json_schema
         json_schema:
