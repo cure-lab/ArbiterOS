@@ -11,6 +11,7 @@ OPENCLAW_CFG="${OPENCLAW_CFG:-$HOME/.openclaw/openclaw.json}"
 ARBITEROS_KERNEL="$WORKSPACE_DIR/ArbiterOS-Kernel"
 LANGFUSE_DIR="$WORKSPACE_DIR/langfuse"
 LANGFUSE_PID=""
+LANGFUSE_PGID=""
 
 export PATH="${HOME}/.local/bin:${PATH}"
 [ -d "${HOME}/.local/share/pnpm" ] && export PATH="${HOME}/.local/share/pnpm:${PATH}"
@@ -19,25 +20,24 @@ log() { echo "[INFO] $*"; }
 warn() { echo "[WARN] $*" >&2; }
 err() { echo "[ERROR] $*" >&2; }
 
+# Stop OpenClaw gateway if available.
+stop_openclaw_gateway() {
+  if command -v openclaw >/dev/null 2>&1; then
+    log "Stopping OpenClaw gateway (if running)..."
+    openclaw gateway stop >/dev/null 2>&1 || true
+  fi
+}
+
 # Stop Langfuse dev:web if we started it.
 stop_langfuse() {
-  if [ -n "${LANGFUSE_PID:-}" ] && kill -0 "$LANGFUSE_PID" >/dev/null 2>&1; then
-    log "Stopping Langfuse dev server (PID: $LANGFUSE_PID)..."
-    kill "$LANGFUSE_PID" >/dev/null 2>&1 || true
-    local i
-    for i in $(seq 1 20); do
-      if kill -0 "$LANGFUSE_PID" >/dev/null 2>&1; then
-        sleep 1
-      else
-        log "Langfuse dev server stopped."
-        LANGFUSE_PID=""
-        return 0
-      fi
-    done
-    warn "Langfuse did not exit in time; sending SIGKILL..."
-    kill -9 "$LANGFUSE_PID" >/dev/null 2>&1 || true
-    LANGFUSE_PID=""
+  if ! command -v pkill >/dev/null 2>&1; then
+    warn "pkill not found; cannot automatically stop Langfuse dev processes."
+    return 0
   fi
+
+  log "Stopping Langfuse dev processes via pkill (next/turbo)..."
+  pkill -f "next dev --turbopack --turbo" >/dev/null 2>&1 || true
+  pkill -f "turbo run dev --filter=web" >/dev/null 2>&1 || true
 }
 
 # Ask Y/N until valid answer. Returns 0 for Y, 1 for N.
@@ -69,19 +69,36 @@ config_openclaw_json() {
   log "=== Step 1: Configure OpenClaw (openclaw.json) ==="
   ensure_jq || return 1
 
-  local api_key workspace
-  read -r -p "Enter ArbiterOS API key (e.g. sk-zk...): " api_key
-  api_key="${api_key:-sk-zk}"
-  read -r -p "Enter OpenClaw workspace path [default: $HOME/.openclaw/workspace]: " workspace
-  workspace="${workspace:-$HOME/.openclaw/workspace}"
-
-  mkdir -p "$(dirname "$OPENCLAW_CFG")"
   local existing
   if [ -f "$OPENCLAW_CFG" ]; then
     existing="$(cat "$OPENCLAW_CFG")"
   else
     existing="{}"
   fi
+
+  # Show existing values (if any) and ask whether to update
+  local current_api_key current_workspace
+  current_api_key="$(echo "$existing" | jq -r '.models.providers.arbiteros.apiKey // empty' 2>/dev/null || true)"
+  current_workspace="$(echo "$existing" | jq -r '.agents.defaults.workspace // empty' 2>/dev/null || true)"
+
+  if [ -n "${current_api_key}${current_workspace}" ]; then
+    echo "Current OpenClaw configuration in $OPENCLAW_CFG:"
+    [ -n "$current_api_key" ] && echo "  ArbiterOS API key: $current_api_key"
+    [ -n "$current_workspace" ] && echo "  Workspace: $current_workspace"
+
+    if ! ask_yn "Do you want to update these OpenClaw settings in $OPENCLAW_CFG?"; then
+      log "Keeping existing OpenClaw settings in $OPENCLAW_CFG. Skipping OpenClaw configuration."
+      return 0
+    fi
+  fi
+
+  local api_key workspace
+  read -r -p "Enter ArbiterOS API key (e.g. sk-zk...): " api_key
+  api_key="${api_key:-${current_api_key:-sk-zk}}"
+  read -r -p "Enter OpenClaw workspace path [default: ${current_workspace:-$HOME/.openclaw/workspace}]: " workspace
+  workspace="${workspace:-${current_workspace:-$HOME/.openclaw/workspace}}"
+
+  mkdir -p "$(dirname "$OPENCLAW_CFG")"
 
   local updated
   updated="$(echo "$existing" | jq --arg apiKey "$api_key" --arg workspace "$workspace" '
@@ -150,6 +167,10 @@ langfuse_wait_main_ui() {
   cd "$LANGFUSE_DIR"
   nohup pnpm run dev:web > "$WORKSPACE_DIR/langfuse-dev-web.log" 2>&1 &
   LANGFUSE_PID="$!"
+  # Record the process group id so we can kill the whole dev:web tree later.
+  if command -v ps >/dev/null 2>&1; then
+    LANGFUSE_PGID="$(ps -o pgid= "$LANGFUSE_PID" 2>/dev/null | tr -d '[:space:]' || true)"
+  fi
   cd - >/dev/null 2>&1 || true
   sleep 2
   log "Langfuse dev server started (PID: $LANGFUSE_PID). Open the URL in your browser (e.g. http://localhost:3000). See $WORKSPACE_DIR/langfuse-dev-web.log for output."
@@ -210,10 +231,6 @@ langfuse_api_keys_prompt() {
 collect_langfuse_keys_and_update_env() {
   log "=== Step 8: Enter Langfuse keys and update ArbiterOS .env ==="
   local public_key secret_key base_url
-  read -r -p "Enter Langfuse PUBLIC key (starts with pk-lf-): " public_key
-  read -r -p "Enter Langfuse SECRET key (starts with sk-lf-): " secret_key
-  read -r -p "Enter Langfuse base URL [default: http://localhost:3000]: " base_url
-  base_url="${base_url:-http://localhost:3000}"
 
   if [ ! -d "$ARBITEROS_KERNEL" ]; then
     err "ArbiterOS-Kernel not found: $ARBITEROS_KERNEL"
@@ -227,6 +244,32 @@ collect_langfuse_keys_and_update_env() {
     cp "$example_file" "$env_file"
     log "Created $env_file from .env.example."
   fi
+
+  # Check existing LANGFUSE_* values and ask whether to update
+  local existing_public existing_secret existing_base
+  if [ -f "$env_file" ]; then
+    existing_public="$(grep -E '^LANGFUSE_PUBLIC_KEY=' "$env_file" | head -n1 | sed 's/^LANGFUSE_PUBLIC_KEY=//')"
+    existing_secret="$(grep -E '^LANGFUSE_SECRET_KEY=' "$env_file" | head -n1 | sed 's/^LANGFUSE_SECRET_KEY=//')"
+    existing_base="$(grep -E '^LANGFUSE_BASE_URL=' "$env_file" | head -n1 | sed 's/^LANGFUSE_BASE_URL=//')"
+  fi
+
+  if [ -n "${existing_public}${existing_secret}${existing_base}" ]; then
+    echo "Current Langfuse configuration found in $env_file:"
+    [ -n "$existing_public" ] && echo "  LANGFUSE_PUBLIC_KEY=$existing_public"
+    [ -n "$existing_secret" ] && echo "  LANGFUSE_SECRET_KEY=$existing_secret"
+    [ -n "$existing_base" ] && echo "  LANGFUSE_BASE_URL=$existing_base"
+
+    if ! ask_yn "Do you want to update these Langfuse keys in $env_file?"; then
+      log "Keeping existing Langfuse keys in $env_file. Skipping Langfuse key update."
+      return 0
+    fi
+  fi
+
+  # Ask user for new Langfuse keys (previous logic)
+  read -r -p "Enter Langfuse PUBLIC key (starts with pk-lf-): " public_key
+  read -r -p "Enter Langfuse SECRET key (starts with sk-lf-): " secret_key
+  read -r -p "Enter Langfuse base URL [default: http://localhost:3000]: " base_url
+  base_url="${base_url:-http://localhost:3000}"
 
   # Update or add LANGFUSE_* lines
   [ -f "$env_file" ] || touch "$env_file"
@@ -243,7 +286,7 @@ collect_langfuse_keys_and_update_env() {
 }
 
 main() {
-  trap 'stop_langfuse' EXIT
+  trap 'stop_langfuse; stop_openclaw_gateway' EXIT
   log "Interactive configuration for OpenClaw, Langfuse, and ArbiterOS."
   log "Workspace: $WORKSPACE_DIR"
 
@@ -258,6 +301,7 @@ main() {
 
   # Stop Langfuse after configuration is done (per requirement).
   stop_langfuse
+  stop_openclaw_gateway
 
   log "Configuration complete. You can start services (e.g. via tmux or manually): ArbiterOS kernel, Langfuse, OpenClaw gateway."
 }
