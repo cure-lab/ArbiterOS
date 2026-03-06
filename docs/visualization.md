@@ -2,6 +2,14 @@
 
 This document describes the Langfuse-based tracing and governance UI used with ArbiterOS.
 
+## Table of Contents
+
+- [Home Page](#home-page)
+- [Tracing](#tracing)
+- [Analysis](#analysis)
+- [Summary](#summary)
+- [Setting](#setting)
+
 ---
 
 # Home Page
@@ -49,6 +57,32 @@ Each point on the chart represents the count for the corresponding time bucket.
 ![Governance Trend](./images/langfuse/bc7f5712-82cd-486a-8e92-7b2272d293d2.png)
 
 ![Governance Trend detail](./images/langfuse/d52703ca-5106-4e4f-8bd6-c25b4169c796.png)
+
+## Policy violations (Home quick entry)
+
+The Home page includes a **Policy violations** table card for policy-focused triage.
+
+- **Main fields**:
+  - **Policy name**
+  - **Description**
+  - **Triggered** (count)
+- **Unclassified row**:
+  - Includes policy violation nodes where no policy name is extracted
+- **Common usage**:
+  - Quickly identify high-frequency violated policies from the `Triggered` column
+
+### Link navigation
+
+- **Card title link** (`Policy violations`, top-left of the card):
+  - Jumps to Analysis page with policy-violation mode:
+  - `/project/{projectId}/analysis?analysisLevel=policy_violation`
+- **Triggered count link** (per row):
+  - Jumps to Analysis page filtered by the specific policy type:
+  - `/project/{projectId}/analysis?analysisLevel=policy_violation&policyType={policyName}`
+- **Result**:
+  - Directly lands in the policy investigation view, reducing manual filtering steps
+
+![Policy violations card](./images/langfuse/policy-violation-card.png)
 
 ---
 
@@ -99,7 +133,7 @@ A governance summary Banner (Trace Banner) appears at the top of the Tracing pag
 - Click Error node types / Policy violation node types to find high-frequency types
 - Open the Analysis panel for specific nodes to see root causes and fix suggestions
 
-![Trace Banner](./images/langfuse/6a2c00fe-acce-4091-908e-e6b55190157f.png)
+![Trace Banner](./images/langfuse/banner-policy-violation.png)
 
 ![Trace Banner detail](./images/langfuse/5fb1c28f-4751-48a3-8902-1c51538ca8ad.png)
 
@@ -191,11 +225,11 @@ The Analysis page has two main view modes:
 - **Error & Warning**
   - Shows only ERROR and WARNING level nodes
 
-  ![Error & Warning view](./images/langfuse/81fa18a2-207e-44e9-859d-5de94895a176.png)
+  ![Error & Warning view](./images/langfuse/error-warning.png)
 
   - Supports filtering by **Error Type**
 
-  ![Error Type filter](./images/langfuse/19d0b1de-25ea-4652-aa4e-4b86ad1a9a87.png)
+  ![Error Type filter](./images/langfuse/error-warning-filter.png)
 
   - Supports batch **Analysis** on selected error nodes
 
@@ -204,9 +238,12 @@ The Analysis page has two main view modes:
 - **Policy Violation**
   - Shows only POLICY_VIOLATION nodes
 
-  ![Policy Violation view](./images/langfuse/a68f1abe-c470-4a8b-ad89-6c5ecf31e009.png)
+  ![Policy Violation view](./images/langfuse/policy-violation.png)
 
   - Focused on policy violation investigation
+  - Supports filtering by **Policy type**
+
+  ![Policy Violation filter](./images/langfuse/policy-violation-filter.png)
 
 ### Click a node to navigate to its Trace
 
