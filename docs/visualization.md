@@ -74,11 +74,9 @@ The Home page includes a **Policy violations** table card for policy-focused tri
 ### Link navigation
 
 - **Card title link** (`Policy violations`, top-left of the card):
-  - Jumps to Analysis page with policy-violation mode:
-  - `/project/{projectId}/analysis?analysisLevel=policy_violation`
+  - Jumps to Analysis page with policy-violation mode
 - **Triggered count link** (per row):
-  - Jumps to Analysis page filtered by the specific policy type:
-  - `/project/{projectId}/analysis?analysisLevel=policy_violation&policyType={policyName}`
+  - Jumps to Analysis page filtered by the specific policy type
 - **Result**:
   - Directly lands in the policy investigation view, reducing manual filtering steps
 
