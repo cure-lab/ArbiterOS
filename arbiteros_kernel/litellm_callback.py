@@ -1,6 +1,5 @@
 import asyncio
 import copy
-import copy
 import hashlib
 import json
 import os
@@ -34,6 +33,7 @@ from litellm.caching.dual_cache import DualCache
 from litellm.integrations.custom_logger import CustomLogger, UserAPIKeyAuth
 from litellm.types.utils import (
     CallTypesLiteral,
+    Choices,
     Delta,
     LLMResponseTypes,
     Message,
@@ -63,7 +63,8 @@ load_dotenv(override=False)
 
 # 剥去 assistant content 时记录的 category 与 topic。
 # 以 trace_id 维度隔离，支持 multiagent/subagent 及跨设备同一 trace。
-# 当 response 有 content 但非严格 topic/category/content 格式时，记录此 label，request 时遇到则不包。
+# NO_WRAP：仅当 LLM 返回的原始 response 有 content 且结构非严格 topic/category/content 时记录，
+# 表示「也是一种 category/topic，但不包」。与「压根没有 content」不同：没 content 则不记录、不包。
 _NO_WRAP_SENTINEL = "__arbiteros_no_wrap__"
 _stripped_categories_by_trace: dict[str, list[str]] = {}
 _stripped_topics_by_trace: dict[str, list[Optional[str]]] = {}
@@ -138,6 +139,17 @@ _MAX_RECENT_TOOL_RESULT_KEYS = 1024
 # trace_id -> {tool_call_id: error_type}：policy 保护后待 tool result 时加 policy_protected
 _policy_protected_tool_call_ids: dict[str, dict[str, str]] = {}
 _policy_config_metadata_cache_lock = threading.Lock()
+
+# Policy confirmation: trace_id -> {original_response, protected_response, policy_reason, policy_names, policy_sources}
+# When user replies Yes/No in next turn, we return cached response without calling model.
+_POLICY_CONFIRMATION_SUFFIX = "do you want to apply the protection? Please reply Yes/No."
+_policy_confirmation_pending: dict[str, dict[str, Any]] = {}
+_policy_confirmation_lock = threading.Lock()
+_MAX_POLICY_CONFIRMATION_PENDING = 256
+# When user said Yes, we store apply info for post_call to emit Langfuse violation
+_policy_confirmation_apply_info: dict[str, dict[str, Any]] = {}
+# When user said No, we skip policy check in post_call (response is original, pass through)
+_policy_confirmation_no_apply: set[str] = set()
 _policy_config_metadata_cache_key: Optional[str] = None
 _policy_config_metadata_cache_value: Optional[dict[str, Any]] = None
 _TOOL_RESULT_NAME_INDEX_RE = re.compile(
@@ -1829,6 +1841,18 @@ def _build_policy_violation_tags(reason: str) -> list[str]:
     return list(dict.fromkeys(tags))
 
 
+def _is_policy_block_or_transform_content(content: Any) -> bool:
+    """Content 是否为 policy 修改后的 response（POLICY_BLOCK/POLICY_TRANSFORM 等），需用默认 category/topic 包。"""
+    if not isinstance(content, str) or not content.strip():
+        return False
+    upper = content.strip().upper()
+    return (
+        "POLICY_BLOCK" in upper
+        or "POLICY_TRANSFORM" in upper
+        or "TOOL CALL BLOCKED:" in upper
+    )
+
+
 def _extract_policy_violation_reason_from_text(content: Any) -> Optional[str]:
     if not isinstance(content, str):
         return None
@@ -1943,6 +1967,37 @@ def _record_policy_protected_tool_calls(
     by_trace = _policy_protected_tool_call_ids.setdefault(trace_id, {})
     for blocked_id in sorted(affected_tool_call_ids):
         by_trace[blocked_id] = reason
+
+
+def _add_instructions_from_modified_response(builder: Any, modified_response: dict) -> int:
+    """
+    根据 modified_response 追加 instructions（tool_calls 先，再 content）。
+    返回新增的 instruction 数量，供调用方标记 policy_protected。
+    """
+    if InstructionBuilder is None or builder is None:
+        return 0
+    count_before = len(getattr(builder, "instructions", []) or [])
+    tc_details = _extract_tool_call_details_from_response(modified_response)
+    for tc_detail in tc_details:
+        try:
+            builder.add_from_tool_call(
+                tool_name=tc_detail["tool_name"],
+                tool_call_id=tc_detail["tool_call_id"],
+                arguments=tc_detail.get("arguments") or {},
+                result=None,
+            )
+        except Exception:
+            pass
+    content = modified_response.get("content")
+    if isinstance(content, str) and content.strip():
+        try:
+            builder.add_from_structured_output(
+                structured={"intent": "RESPOND", "content": content},
+            )
+        except Exception:
+            pass
+    count_after = len(getattr(builder, "instructions", []) or [])
+    return count_after - count_before
 
 
 def _replace_instructions_from_modified_response(
@@ -2696,6 +2751,9 @@ def _emit_response_nodes(
     policy_violation_reason: Optional[str] = None,
     policy_names: Optional[list[str]] = None,
     policy_sources: Optional[dict[str, str]] = None,
+    policy_confirmation_state: Optional[str] = None,
+    policy_confirmation_accepted: Optional[bool] = None,
+    policy_confirmation_rejected: Optional[bool] = None,
 ) -> None:
     incoming = request_data if isinstance(request_data, dict) else {}
     context = _build_device_context(incoming)
@@ -2742,6 +2800,31 @@ def _emit_response_nodes(
         policy_extra_metadata["policy_descriptions"] = {
             n: POLICY_DESCRIPTIONS.get(n, "") for n in policy_names_list
         }
+    policy_confirmation_metadata: dict[str, Any] = {}
+    if (
+        isinstance(policy_confirmation_state, str)
+        and policy_confirmation_state.strip() in {"ask", "accepted", "rejected"}
+    ):
+        normalized_confirmation_state = policy_confirmation_state.strip()
+        policy_confirmation_metadata["policy_confirmation_state"] = (
+            normalized_confirmation_state
+        )
+        if not isinstance(policy_confirmation_accepted, bool):
+            policy_confirmation_accepted = normalized_confirmation_state == "accepted"
+        if not isinstance(policy_confirmation_rejected, bool):
+            policy_confirmation_rejected = normalized_confirmation_state == "rejected"
+    if isinstance(policy_confirmation_accepted, bool):
+        policy_confirmation_metadata["policy_confirmation_accepted"] = (
+            policy_confirmation_accepted
+        )
+    if isinstance(policy_confirmation_rejected, bool):
+        policy_confirmation_metadata["policy_confirmation_rejected"] = (
+            policy_confirmation_rejected
+        )
+    policy_confirmation_extra_metadata: dict[str, Any] = {
+        **policy_extra_metadata,
+        **policy_confirmation_metadata,
+    }
 
     max_topic_chars = int(os.getenv("ARBITEROS_LANGFUSE_TOPIC_MAX_CHARS", "40"))
     max_topic_points = int(os.getenv("ARBITEROS_LANGFUSE_TOPIC_MAX_POINTS", "3"))
@@ -2812,6 +2895,7 @@ def _emit_response_nodes(
                 "trace_id_consistent": parser_snapshot.get("trace_id_consistent"),
                 "parser_trace_id": parser_snapshot.get("parser_trace_id"),
                 "instruction_count": parser_snapshot.get("instruction_count"),
+                **policy_confirmation_extra_metadata,
             }
             parser_level: Optional[str] = None
             parser_status_message: Optional[str] = None
@@ -2843,7 +2927,7 @@ def _emit_response_nodes(
                 parser_metadata["policy_violation_tags"] = _build_policy_violation_tags(
                     normalized_policy_reason
                 )
-                parser_metadata.update(policy_extra_metadata)
+                parser_metadata.update(policy_confirmation_extra_metadata)
                 parser_level = "POLICY_VIOLATION"
                 parser_status_message = normalized_policy_reason
             parser_observation_id = _emit_instruction_parser_node(
@@ -2906,7 +2990,7 @@ def _emit_response_nodes(
             output_category = "EXECUTION_CORE__TOOL_CALL"
             output_policy_metadata = {
                 "policy_protected": policy_reason_for_output,
-                **policy_extra_metadata,
+                **policy_confirmation_extra_metadata,
             }
             # Tool-call-only: use the tool name as the turn topic.
             tool_topic = None
@@ -2959,6 +3043,7 @@ def _emit_response_nodes(
                     "turn_topic": kernel_turn_topic,
                     "agent_graph_node": output_name,
                     "agent_graph_step": turn_idx * 10 + 1,
+                    **policy_confirmation_extra_metadata,
                     **output_policy_metadata,
                     **_build_policy_metadata(
                         instruction_type=_normalize_category_to_instruction_type(
@@ -2992,6 +3077,7 @@ def _emit_response_nodes(
                     "turn_topic": kernel_turn_topic,
                     "agent_graph_node": kernel_step_name,
                     "agent_graph_step": turn_idx * 10 + 2,
+                    **policy_confirmation_extra_metadata,
                     **output_policy_metadata,
                     **_build_policy_metadata(
                         instruction_type=_normalize_category_to_instruction_type(
@@ -3051,11 +3137,11 @@ def _emit_response_nodes(
             "policy_violation_tags": _build_policy_violation_tags(
                 normalized_policy_reason
             ),
-            **policy_extra_metadata,
+            **policy_confirmation_extra_metadata,
         }
         kernel_policy_metadata = {
             "policy_protected": normalized_policy_reason,
-            **policy_extra_metadata,
+            **policy_confirmation_extra_metadata,
         }
         output_level = "POLICY_VIOLATION"
         output_status_message = normalized_policy_reason
@@ -3115,6 +3201,7 @@ def _emit_response_nodes(
             "turn_topic": kernel_turn_topic,
             "agent_graph_node": output_name,
             "agent_graph_step": max(state.turn_index, 1) * 10 + 1,
+            **policy_confirmation_extra_metadata,
             **output_policy_metadata,
             **_build_policy_metadata(
                 instruction_type=_normalize_category_to_instruction_type(effective_category),
@@ -3159,6 +3246,7 @@ def _emit_response_nodes(
             "turn_topic": kernel_turn_topic,
             "agent_graph_node": kernel_step_name,
             "agent_graph_step": max(state.turn_index, 1) * 10 + 2,
+            **policy_confirmation_extra_metadata,
             **kernel_policy_metadata,
             **_build_policy_metadata(
                 instruction_type=_normalize_category_to_instruction_type(effective_category),
@@ -3491,6 +3579,9 @@ def _normalize_category_to_instruction_type(category: Any) -> str:
 def _record_stripped_category(
     data: dict, category: Any, topic: Optional[str] = None
 ) -> None:
+    # mock_response 路径下 pre_call 已 append slot，此处不再重复记录，避免 category/topic 重复
+    if data.get("_skip_category_topic_recording"):
+        return
     trace_id = _resolve_category_cache_trace_id(data)
     if not trace_id:
         return
@@ -3534,17 +3625,29 @@ def _clear_stripped_categories_for_trace(trace_id: Optional[str]) -> None:
 
 
 def _add_policy_protected_category_topic(trace_id: Optional[str]) -> None:
-    """Policy 凭空新增 content 时，在 category/topic 列表末尾追加，保证 pre_call 能正确包回。"""
+    """Policy 凭空新增 content 时，在 category/topic 列表末尾追加默认值，保证 pre_call 能正确包回。"""
+    _append_category_topic_for_trace(
+        trace_id, category="COGNITIVE_CORE__RESPOND", topic="policy protected"
+    )
+
+
+def _append_category_topic_for_trace(
+    trace_id: Optional[str],
+    *,
+    category: str,
+    topic: Optional[str] = None,
+) -> None:
+    """在 category/topic 列表末尾追加指定值。"""
     if not isinstance(trace_id, str) or not trace_id.strip():
         return
     tid = trace_id.strip()
     with _stripped_categories_lock:
         categories = _stripped_categories_by_trace.setdefault(tid, [])
-        categories.append("COGNITIVE_CORE__RESPOND")
+        categories.append(category if isinstance(category, str) else "")
         if len(categories) > _MAX_STRIPPED_CATEGORIES:
             del categories[: len(categories) - _MAX_STRIPPED_CATEGORIES]
         topics = _stripped_topics_by_trace.setdefault(tid, [])
-        topics.append("policy protected")
+        topics.append(topic if isinstance(topic, str) and topic.strip() else None)
         if len(topics) > _MAX_STRIPPED_CATEGORIES:
             del topics[: len(topics) - _MAX_STRIPPED_CATEGORIES]
 
@@ -3561,6 +3664,103 @@ def _remove_latest_category_topic_for_trace(trace_id: Optional[str]) -> None:
         topics = _stripped_topics_by_trace.get(tid)
         if topics:
             topics.pop()
+
+
+def _record_non_strict_content_category(
+    data: dict, message_dict: dict, content: str
+) -> None:
+    """非严格格式 content：若有 tool_calls 则 NO_WRAP；若无 tool_calls（疑似 policy 保护：原 content+tool_calls 被去 tool 留 content）则沿用 slot 中最后的 category/topic。
+    若已有 slot 可复用，则不追加（避免与 confirmation 等错位导致两个相同 topic）；无 slot 时用默认。"""
+    has_tool_calls = bool(
+        message_dict.get("tool_calls") or message_dict.get("function_call")
+    )
+    if has_tool_calls:
+        _record_stripped_category(data, _NO_WRAP_SENTINEL, topic=None)
+        return
+    trace_id = _resolve_category_cache_trace_id(data)
+    ct = _peek_latest_category_topic_for_trace(trace_id) if trace_id else None
+    if ct is not None:
+        # 已有 slot 可复用：不追加，protected response 将用该 slot 包上，避免与 confirmation 错位
+        return
+    # 无 slot 时（如 guardrail 先于 callback 修改）：用默认，保证 policy 保护的 content 仍能包上
+    _record_stripped_category(data, "COGNITIVE_CORE__RESPOND", topic="其他")
+
+
+def _peek_latest_category_topic_for_trace(
+    trace_id: Optional[str],
+) -> Optional[tuple[str, Optional[str]]]:
+    """查看列表末尾的 category/topic 但不移除。用于 policy 保护后纯文本 content 沿用原 category/topic。"""
+    if not isinstance(trace_id, str) or not trace_id.strip():
+        return None
+    tid = trace_id.strip()
+    with _stripped_categories_lock:
+        categories = _stripped_categories_by_trace.get(tid)
+        topics = _stripped_topics_by_trace.get(tid)
+        if not categories:
+            return None
+        cat = categories[-1]
+        top = topics[-1] if topics and len(topics) == len(categories) else None
+        if cat == _NO_WRAP_SENTINEL:
+            return None
+        return (cat, top)
+
+
+def _pop_and_get_latest_category_topic_for_trace(
+    trace_id: Optional[str],
+) -> Optional[tuple[str, Optional[str]]]:
+    """移除列表末尾的 category/topic 并返回。剥壳时已记录，policy 替换时复用。"""
+    if not isinstance(trace_id, str) or not trace_id.strip():
+        return None
+    tid = trace_id.strip()
+    with _stripped_categories_lock:
+        categories = _stripped_categories_by_trace.get(tid)
+        topics = _stripped_topics_by_trace.get(tid)
+        if not categories:
+            return None
+        cat = categories.pop()
+        top = topics.pop() if topics else None
+        return (cat, top)
+
+
+def _detect_policy_confirmation_reply(messages: list) -> Optional[bool]:
+    """
+    Last message must be user (Yes/No). Assistant with confirmation may be at [-2] or [-3]
+    ([-2] can be system injected by caller). Return True (apply), False (don't), or None (not a confirmation turn).
+    """
+    if not isinstance(messages, list) or len(messages) < 2:
+        return None
+    last_msg = messages[-1]
+    if not isinstance(last_msg, dict) or last_msg.get("role") != "user":
+        return None
+    second_last = messages[-2]
+    assistant_msg = None
+    if isinstance(second_last, dict) and second_last.get("role") == "assistant":
+        assistant_msg = second_last
+    elif len(messages) >= 3:
+        third_last = messages[-3]
+        if isinstance(third_last, dict) and third_last.get("role") == "assistant":
+            assistant_msg = third_last
+    if assistant_msg is None:
+        return None
+    assistant_text = _extract_text_from_message_content(assistant_msg.get("content"))
+    if _POLICY_CONFIRMATION_SUFFIX not in assistant_text:
+        return None
+    user_text = _extract_text_from_message_content(last_msg.get("content")).strip()
+    normalized = user_text.lower()
+    if "no" in normalized:
+        return False
+    if "yes" in normalized:
+        return True
+    return True
+
+
+def _msg_dict_to_model_response(msg_dict: dict, model: str = "arbiteros-policy") -> ModelResponse:
+    """Build ModelResponse from message dict for mock_response."""
+    msg = dict(msg_dict)
+    if "role" not in msg:
+        msg["role"] = "assistant"
+    choice = Choices(message=msg, finish_reason="stop", index=0)
+    return ModelResponse(choices=[choice], model=model)
 
 
 def _add_instruction_for_non_strict(data: dict, content: str) -> None:
@@ -3598,9 +3798,17 @@ def _is_strict_topic_category_content(obj: dict) -> bool:
 
 
 def _response_transform_content_only(data: dict, message_dict: dict) -> Optional[dict]:
-    """没 content 才忽略；有 content 且为严格的 topic/category/content 结构则剥 structure，否则不操作但记录 NO_WRAP。"""
-    content = message_dict.get("content")
-    if not isinstance(content, str) or not content.strip():
+    """没 content 才忽略；有 content 且为严格的 topic/category/content 结构则剥 structure，否则不操作但记录 NO_WRAP。
+    支持 content 为字符串或列表 [{"type":"text","text":"..."}]。"""
+    raw_content = message_dict.get("content")
+    content: str
+    if isinstance(raw_content, str):
+        content = raw_content
+    elif isinstance(raw_content, list):
+        content = _extract_text_from_message_content(raw_content)
+    else:
+        return message_dict
+    if not content or not content.strip():
         return message_dict
     try:
         inner = json.loads(content)
@@ -3631,13 +3839,25 @@ def _response_transform_content_only(data: dict, message_dict: dict) -> Optional
 
             out = {**message_dict, "content": inner_content}
             return out
-        # 有 content 但非严格格式：不剥，记录 NO_WRAP。request 时遇到则不包。
-        # 其他处（如 instruction_parsing、Langfuse）需用时，人为赋予 topic:其他，category: COGNITIVE_CORE__RESPOND
-        _record_stripped_category(data, _NO_WRAP_SENTINEL, topic=None)
+        # 有 content 但非严格格式：POLICY_BLOCK/POLICY_TRANSFORM 等用默认 category/topic；
+        # 否则：若有 tool_calls 则 NO_WRAP；若无 tool_calls（疑似 policy 保护：原 content+tool_calls 被去 tool 留 content）
+        # 则沿用 slot 中最后的 category/topic，保证包得上。
+        if _is_policy_block_or_transform_content(content):
+            _record_stripped_category(
+                data, "COGNITIVE_CORE__RESPOND", topic="policy protected"
+            )
+        else:
+            _record_non_strict_content_category(data, message_dict, content)
         _add_instruction_for_non_strict(data, content)
     except (json.JSONDecodeError, TypeError):
-        # 非 JSON（如纯文本）：不剥，记录 NO_WRAP
-        _record_stripped_category(data, _NO_WRAP_SENTINEL, topic=None)
+        # 非 JSON（如纯文本）：POLICY_BLOCK 等用默认 category/topic；
+        # 否则：若无 tool_calls（疑似 policy 保护）则沿用 slot 中最后的 category/topic，否则 NO_WRAP
+        if _is_policy_block_or_transform_content(content):
+            _record_stripped_category(
+                data, "COGNITIVE_CORE__RESPOND", topic="policy protected"
+            )
+        else:
+            _record_non_strict_content_category(data, message_dict, content)
         _add_instruction_for_non_strict(data, content)
     return message_dict
 
@@ -3883,6 +4103,12 @@ class MyCustomHandler(CustomLogger):
     ) -> Optional[
         Union[Exception, str, dict]
     ]:  # raise exception if invalid, return a str for the user to receive - if rejected, or return a modified dictionary for passing into litellm
+        # 1) Policy confirmation: detect Yes/No (不删除确认消息和用户回复，precall 里每条都包)
+        _policy_confirm_apply: Optional[bool] = None
+        messages = data.get("messages")
+        if isinstance(messages, list):
+            _policy_confirm_apply = _detect_policy_confirmation_reply(messages)
+
         # If reset marker exists in history, drop prior stale turns first.
         messages = data.get("messages")
         if isinstance(messages, list):
@@ -3929,9 +4155,8 @@ class MyCustomHandler(CustomLogger):
         if context.reset_requested:
             # Reset should start with a clean category cache for this trace.
             _clear_stripped_categories_for_trace(trace_id_for_cache)
-        else:
-            # 把 history 里 assistant 的 content 按当前 trace 记录的 category 从后往前包回结构，再请求
-            data = _wrap_messages_with_categories(data, trace_id=trace_id_for_cache)
+        # 把 history 里 assistant 的 content 按当前 trace 记录的 category 从后往前包回结构，再请求
+        data = _wrap_messages_with_categories(data, trace_id=trace_id_for_cache)
 
         # Clean up any previously persisted noisy topic summaries so future traces
         # don't inherit "process step" labels (e.g., "new session / greet user / next").
@@ -3982,6 +4207,122 @@ class MyCustomHandler(CustomLogger):
         _ensure_turn_node_if_needed(context, state)
         _emit_tool_result_nodes_if_needed(data, state)
         data = _inject_trace_metadata(data, state)
+
+        # Policy confirmation: if detected, set mock_response (after category/topic etc. so trace_id is ready)
+        if _policy_confirm_apply is not None:
+            with _policy_confirmation_lock:
+                pending = (
+                    _policy_confirmation_pending.pop(trace_id_for_cache, None)
+                    if trace_id_for_cache
+                    else None
+                )
+                # 第一次保护时：客户端可能未带 trace_id，导致 trace_id_for_cache 与存储时不一致，fallback 用唯一 pending
+                if pending is None and len(_policy_confirmation_pending) == 1:
+                    actual_tid, pending = next(iter(_policy_confirmation_pending.items()))
+                    _policy_confirmation_pending.pop(actual_tid, None)
+                    trace_id_for_cache = actual_tid
+                    # 确保 response 带正确 trace_id，供客户端下次请求使用
+                    meta = data.get("metadata") or {}
+                    data = {**data, "metadata": {**meta, "arbiteros_trace_id": actual_tid}}
+                    # 同步 state，使后续请求用正确 trace_id
+                    if state is not None and state.device_key:
+                        with _trace_state_lock:
+                            current = _trace_state_by_device.get(state.device_key)
+                            if current is not None:
+                                current.trace_id = actual_tid
+                        _persist_trace_state_to_disk()
+            if pending is not None and trace_id_for_cache:
+                apply = _policy_confirm_apply
+                cached = pending["protected_response"] if apply else pending["original_response"]
+                if isinstance(cached, dict):
+                    data["mock_response"] = _msg_dict_to_model_response(
+                        cached, model=str(data.get("model") or "arbiteros-policy")
+                    )
+                    # 返回的 response 会进入下次 history，有 content 才需追加 slot。用剥壳时已记录的 popped_category_topic
+                    had_content_before = pending.get("had_content_before_replace")
+                    has_content_after = bool(
+                        _extract_text_from_message_content(
+                            cached.get("content") if isinstance(cached, dict) else None
+                        ).strip()
+                    )
+                    popped_ct = pending.get("popped_category_topic")
+                    use_popped = (
+                        popped_ct is not None
+                        and popped_ct[0] != _NO_WRAP_SENTINEL
+                    )
+                    if apply:
+                        # 选 Yes：原始有改完还有→用剥壳时记录的；原始有改完没了→不包；原始没改完有→默认；原始没改完也没→不包
+                        # 注意：not had_content_before and has_content_after 时，不在此处追加 policy protected，
+                        # 因为 post_call 会执行且 response_transform 会处理 mock response 并 _record_stripped_category，
+                        # 若 pre_call 也追加会导致重复 slot，确认消息被误用 policy protected。
+                        if had_content_before and has_content_after and use_popped:
+                            cat, top = popped_ct
+                            _append_category_topic_for_trace(
+                                trace_id_for_cache,
+                                category=cat or "COGNITIVE_CORE__RESPOND",
+                                topic=top or "其他",
+                            )
+                    else:
+                        # 选 No：原始有 content 且剥壳时非 NO_WRAP 才包
+                        if had_content_before and use_popped:
+                            cat, top = popped_ct
+                            _append_category_topic_for_trace(
+                                trace_id_for_cache,
+                                category=cat or "COGNITIVE_CORE__RESPOND",
+                                topic=top or "其他",
+                            )
+                    if apply:
+                        with _policy_confirmation_lock:
+                            _policy_confirmation_no_apply.discard(trace_id_for_cache)
+                            instruction_applied_in_pre_call = False
+                            # mock_response 时 post_call 可能不执行，在 pre_call 立即追加 protected instruction
+                            # 确认消息已单独记过，此处只追加 protected response（不替换）
+                            if InstructionBuilder is not None and trace_id_for_cache:
+                                builder = _get_instruction_builder_for_trace(trace_id_for_cache)
+                                if builder is not None:
+                                    protected = pending.get("protected_response")
+                                    if isinstance(protected, dict):
+                                        count_before = len(getattr(builder, "instructions", []) or [])
+                                        _add_instructions_from_modified_response(builder, protected)
+                                        policy_reason = pending.get("policy_reason") or ""
+                                        for instr in builder.instructions[count_before:]:
+                                            instr["policy_protected"] = policy_reason
+                                        _save_instructions_to_trace_file(trace_id_for_cache, builder)
+                                        instruction_applied_in_pre_call = True
+                            # 仍写入 apply_info，供 post_call/streaming 消费（若执行了则做 Langfuse 等）
+                            slot_appended = bool(
+                                had_content_before and has_content_after and use_popped
+                            )
+                            _policy_confirmation_apply_info[trace_id_for_cache] = {
+                                "policy_reason": pending.get("policy_reason", ""),
+                                "policy_names": pending.get("policy_names", []),
+                                "policy_sources": pending.get("policy_sources", {}),
+                                "raw_response": pending.get("original_response"),
+                                "protected_response": pending.get("protected_response"),
+                                "instruction_already_applied": instruction_applied_in_pre_call,
+                                "slot_appended_in_pre_call": slot_appended,
+                                "policy_confirmation_state": "accepted",
+                                "policy_confirmation_accepted": True,
+                                "policy_confirmation_rejected": False,
+                            }
+                    else:
+                        with _policy_confirmation_lock:
+                            _policy_confirmation_apply_info[trace_id_for_cache] = {
+                                "policy_reason": pending.get("policy_reason", ""),
+                                "policy_names": pending.get("policy_names", []),
+                                "policy_sources": pending.get("policy_sources", {}),
+                                "raw_response": pending.get("original_response"),
+                                "protected_response": pending.get("protected_response"),
+                                "instruction_already_applied": True,
+                                "slot_appended_in_pre_call": bool(
+                                    had_content_before and use_popped
+                                ),
+                                "policy_confirmation_state": "rejected",
+                                "policy_confirmation_accepted": False,
+                                "policy_confirmation_rejected": True,
+                            }
+                            _policy_confirmation_no_apply.add(trace_id_for_cache)
+
         filtered_data = {
             k: data[k] for k in ["model", "messages", "tools", "metadata"] if k in data
         }
@@ -4076,7 +4417,22 @@ class MyCustomHandler(CustomLogger):
                     title="Post Call Success Hook - Response",
                 )
             )
-        _save_json("post_call_success", {"response": msg})
+        # 提前解析 trace_id，用于判断是否为 mock_response 路径（避免重复 log）
+        _metadata = data.get("metadata") if isinstance(data, dict) else None
+        _trace_id = _metadata.get("arbiteros_trace_id") if isinstance(_metadata, dict) else None
+        if not isinstance(_trace_id, str) or not _trace_id.strip():
+            _context = _build_device_context(data)
+            _state, _ = _ensure_trace_state(_context)
+            _trace_id = _state.trace_id if _state is not None else None
+        _is_mock_response_path = False
+        if isinstance(_trace_id, str) and _trace_id.strip():
+            with _policy_confirmation_lock:
+                _is_mock_response_path = (
+                    _trace_id.strip() in _policy_confirmation_apply_info
+                    or _trace_id.strip() in _policy_confirmation_no_apply
+                )
+        if not _is_mock_response_path:
+            _save_json("post_call_success", {"response": msg})
 
         raw_msg_dict = (
             _to_json(msg)
@@ -4127,14 +4483,40 @@ class MyCustomHandler(CustomLogger):
                     except Exception:
                         pass
 
-        # 若配置了 response_transform，用其返回值改写返回给调用方的内容
+        # 提前解析 trace_id 和 apply_info，供 response_transform 是否跳过判断
+        metadata = data.get("metadata") if isinstance(data, dict) else None
+        trace_id = metadata.get("arbiteros_trace_id") if isinstance(metadata, dict) else None
+        if not isinstance(trace_id, str) or not trace_id.strip():
+            context = _build_device_context(data)
+            _state, _ = _ensure_trace_state(context)
+            trace_id = _state.trace_id if _state is not None else None
+        with _policy_confirmation_lock:
+            apply_info = _policy_confirmation_apply_info.pop(trace_id.strip(), None) if isinstance(trace_id, str) and trace_id.strip() else None
+            skip_policy_check = (trace_id.strip() in _policy_confirmation_no_apply) if isinstance(trace_id, str) and trace_id.strip() else False
+            if skip_policy_check:
+                _policy_confirmation_no_apply.discard(trace_id.strip())
+
+        # 有 apply_info 时跳过 response_transform 的 instruction 添加（避免重复），但需补上 category/topic slot
+        # （pre_call 仅在 had_content_before+has_content_after+use_popped 时追加，否则依赖 response_transform）
+        # 仅当 mock 返回的 response 有 content 时才追加；tool_calls-only 不包、不消耗槽位，追加会导致多一个 policy protected 错位
+        if apply_info is not None and not apply_info.get("slot_appended_in_pre_call"):
+            mock_content = raw_msg_dict.get("content") if isinstance(raw_msg_dict, dict) else None
+            if _extract_text_from_message_content(mock_content).strip():
+                _record_stripped_category(data, "COGNITIVE_CORE__RESPOND", topic="policy protected")
+
+        # 若配置了 response_transform，用其返回值改写返回给调用方的内容（剥壳必须执行，否则回复带壳）
+        # mock 路径下仅跳过 category/topic 的 _record_stripped_category，避免重复 slot
         if msg is not None and response_transform is not None:
             msg_dict = raw_msg_dict
             if msg_dict is not None:
+                data_for_transform = data
+                if apply_info is not None or skip_policy_check:
+                    data_for_transform = dict(data) if isinstance(data, dict) else {}
+                    data_for_transform["_skip_category_topic_recording"] = True
                 if asyncio.iscoroutinefunction(response_transform):
-                    modified_dict = await response_transform(data, msg_dict)
+                    modified_dict = await response_transform(data_for_transform, msg_dict)
                 else:
-                    modified_dict = response_transform(data, msg_dict)
+                    modified_dict = response_transform(data_for_transform, msg_dict)
                 if modified_dict is not None and isinstance(modified_dict, dict):
                     final_msg_dict = modified_dict
                     try:
@@ -4152,12 +4534,54 @@ class MyCustomHandler(CustomLogger):
         policy_violation_reason_for_langfuse: Optional[str] = None
         policy_names_for_langfuse: list[str] = []
         policy_sources_for_langfuse: dict[str, str] = {}
-        if isinstance(final_msg_dict, dict):
-            metadata = data.get("metadata") if isinstance(data, dict) else {}
-            trace_id = (
-                metadata.get("arbiteros_trace_id")
-                if isinstance(metadata, dict) else None
-            )
+        policy_confirmation_state_for_langfuse: Optional[str] = None
+        policy_confirmation_accepted_for_langfuse: Optional[bool] = None
+        policy_confirmation_rejected_for_langfuse: Optional[bool] = None
+        if apply_info is not None:
+            policy_confirmation_state = apply_info.get("policy_confirmation_state")
+            if isinstance(policy_confirmation_state, str) and policy_confirmation_state.strip():
+                policy_confirmation_state_for_langfuse = policy_confirmation_state.strip()
+            elif apply_info.get("policy_reason"):
+                policy_confirmation_state_for_langfuse = "accepted"
+            if isinstance(apply_info.get("policy_confirmation_accepted"), bool):
+                policy_confirmation_accepted_for_langfuse = apply_info.get(
+                    "policy_confirmation_accepted"
+                )
+            if isinstance(apply_info.get("policy_confirmation_rejected"), bool):
+                policy_confirmation_rejected_for_langfuse = apply_info.get(
+                    "policy_confirmation_rejected"
+                )
+            if policy_confirmation_state_for_langfuse != "rejected":
+                policy_violation_reason_for_langfuse = (
+                    apply_info.get("policy_reason") or None
+                )
+            policy_names_for_langfuse = list(apply_info.get("policy_names") or [])
+            policy_sources_for_langfuse = dict(apply_info.get("policy_sources") or {})
+            if policy_violation_reason_for_langfuse:
+                _record_policy_protected_tool_calls(
+                    trace_id=trace_id,
+                    raw_response=apply_info.get("raw_response"),
+                    policy_checked_response=apply_info.get("protected_response"),
+                    policy_reason=policy_violation_reason_for_langfuse,
+                )
+            if (
+                InstructionBuilder is not None
+                and isinstance(trace_id, str)
+                and trace_id.strip()
+                and not apply_info.get("instruction_already_applied")
+            ):
+                builder = _get_instruction_builder_for_trace(trace_id)
+                if builder is not None:
+                    protected = apply_info.get("protected_response")
+                    if isinstance(protected, dict):
+                        count_before = len(getattr(builder, "instructions", []) or [])
+                        _add_instructions_from_modified_response(builder, protected)
+                        for instr in builder.instructions[count_before:]:
+                            instr["policy_protected"] = (
+                                policy_violation_reason_for_langfuse or ""
+                            )
+                        _save_instructions_to_trace_file(trace_id, builder)
+        elif not skip_policy_check and isinstance(final_msg_dict, dict):
             if isinstance(trace_id, str) and trace_id.strip():
                 builder = _get_instruction_builder_for_trace(trace_id)
                 instructions = list(getattr(builder, "instructions", [])) if builder else []
@@ -4169,56 +4593,61 @@ class MyCustomHandler(CustomLogger):
                     latest_instructions=latest_instructions,
                 )
                 if policy_result.modified:
-                    content_before = (
-                        final_msg_dict.get("content")
-                        if isinstance(final_msg_dict, dict)
-                        else None
-                    )
-                    content_after = (
-                        policy_result.response.get("content")
-                        if isinstance(policy_result.response, dict)
-                        else None
-                    )
-                    before_empty = not (
-                        isinstance(content_before, str) and content_before.strip()
-                    )
-                    after_empty = not (
-                        isinstance(content_after, str) and content_after.strip()
-                    )
-                    if before_empty and not after_empty:
-                        _add_policy_protected_category_topic(trace_id)
-                    elif not before_empty and after_empty:
-                        _remove_latest_category_topic_for_trace(trace_id)
-                    final_msg_dict = policy_result.response
                     error_type_str = (policy_result.error_type or "").strip()
-                    if error_type_str:
-                        policy_violation_reason_for_langfuse = error_type_str
-                        _record_policy_protected_tool_calls(
-                            trace_id=trace_id,
-                            raw_response=raw_msg_dict if isinstance(raw_msg_dict, dict) else None,
-                            policy_checked_response=(
-                                final_msg_dict if isinstance(final_msg_dict, dict) else None
-                            ),
-                            policy_reason=error_type_str,
+                    # Defer: store state, return confirmation message, don't emit Langfuse violation
+                    with _policy_confirmation_lock:
+                        if len(_policy_confirmation_pending) >= _MAX_POLICY_CONFIRMATION_PENDING:
+                            _policy_confirmation_pending.pop(next(iter(_policy_confirmation_pending)), None)
+                        raw_content = raw_msg_dict.get("content") if isinstance(raw_msg_dict, dict) else None
+                        had_content_before_replace = bool(
+                            _extract_text_from_message_content(raw_content).strip()
                         )
+                        # 剥壳时已记录 category/topic，pop 出来复用，无需再解析原始格式
+                        popped_ct = (
+                            _pop_and_get_latest_category_topic_for_trace(trace_id)
+                            if had_content_before_replace
+                            else None
+                        )
+                        _policy_confirmation_pending[trace_id] = {
+                            "original_response": dict(raw_msg_dict) if isinstance(raw_msg_dict, dict) else {},
+                            "protected_response": dict(policy_result.response),
+                            "policy_reason": error_type_str,
+                            "policy_names": list(policy_result.policy_names),
+                            "policy_sources": dict(policy_result.policy_sources),
+                            "had_content_before_replace": had_content_before_replace,
+                            "popped_category_topic": popped_ct,
+                            "instruction_count_before": _policy_instruction_count_before,
+                        }
+                    confirm_content = (
+                        f"policy violation {error_type_str} are detected, {_POLICY_CONFIRMATION_SUFFIX}"
+                    )
+                    final_msg_dict = {"content": confirm_content, "role": "assistant"}
+                    # 确认消息按普通信息包：默认 category + topic "protection confirmation"
+                    _append_category_topic_for_trace(
+                        trace_id, category="COGNITIVE_CORE__RESPOND", topic="protection confirmation"
+                    )
+                    policy_confirmation_state_for_langfuse = "ask"
+                    policy_confirmation_accepted_for_langfuse = False
+                    policy_confirmation_rejected_for_langfuse = False
+                    policy_violation_reason_for_langfuse = None
                     policy_names_for_langfuse = list(policy_result.policy_names)
                     policy_sources_for_langfuse = dict(policy_result.policy_sources)
                     if builder is not None:
-                        # 用修改后的 response 重新生成 instructions 并替换
-                        _replace_instructions_from_modified_response(
-                            builder, final_msg_dict, _policy_instruction_count_before
-                        )
-                        if error_type_str:
-                            # 本次 post_call_success 相关的每条 instruction 都加 policy_protected
-                            for instr in builder.instructions[_policy_instruction_count_before:]:
-                                instr["policy_protected"] = error_type_str
+                        builder.instructions = list(builder.instructions[:_policy_instruction_count_before])
+                        try:
+                            instr = builder.add_from_structured_output(
+                                structured={"intent": "RESPOND", "content": confirm_content}
+                            )
+                            instr["policy_confirmation_ask"] = True
+                        except Exception:
+                            pass
                         _save_instructions_to_trace_file(trace_id, builder)
                     try:
                         if is_chat_completion:
                             response.choices[0].message = Message(**final_msg_dict)
                         else:
-                            if isinstance(final_msg_dict.get("content"), str) and hasattr(response, "output_text"):
-                                setattr(response, "output_text", final_msg_dict.get("content"))
+                            if hasattr(response, "output_text"):
+                                setattr(response, "output_text", confirm_content)
                     except Exception:
                         pass
 
@@ -4250,6 +4679,9 @@ class MyCustomHandler(CustomLogger):
             policy_violation_reason=policy_violation_reason_for_langfuse,
             policy_names=policy_names_for_langfuse,
             policy_sources=policy_sources_for_langfuse,
+            policy_confirmation_state=policy_confirmation_state_for_langfuse,
+            policy_confirmation_accepted=policy_confirmation_accepted_for_langfuse,
+            policy_confirmation_rejected=policy_confirmation_rejected_for_langfuse,
         )
         return response
 
@@ -4402,16 +4834,13 @@ class MyCustomHandler(CustomLogger):
         msg_dict = _to_json(msg) if isinstance(msg, dict) else (msg.model_dump() if hasattr(msg, "model_dump") else (msg.dict() if hasattr(msg, "dict") else None))
         raw_msg_dict = msg_dict
 
-        # 先存 modify 之前的版本（带 category/content 的原始结构）
-        _save_json("post_call_success", {"response": msg_dict})
-
         # 记录 instruction 数量，供 policy 保护时标记本次添加的 instructions
         _policy_instruction_count_before_stream = 0
         if InstructionBuilder is not None:
-            metadata = request_data.get("metadata") if isinstance(request_data, dict) else {}
+            metadata_pre = request_data.get("metadata") if isinstance(request_data, dict) else {}
             _policy_trace_id_stream = (
-                metadata.get("arbiteros_trace_id")
-                if isinstance(metadata, dict) else None
+                metadata_pre.get("arbiteros_trace_id")
+                if isinstance(metadata_pre, dict) else None
             )
             if isinstance(_policy_trace_id_stream, str) and _policy_trace_id_stream.strip():
                 builder_pre = _get_instruction_builder_for_trace(_policy_trace_id_stream)
@@ -4419,14 +4848,35 @@ class MyCustomHandler(CustomLogger):
                     len(getattr(builder_pre, "instructions", [])) if builder_pre else 0
                 )
 
+        # 提前解析 trace_id 和 apply_info_stream，供 mock 路径判断（避免重复 log）及 response_transform 是否跳过
+        metadata = request_data.get("metadata") if isinstance(request_data, dict) else None
+        trace_id_stream = metadata.get("arbiteros_trace_id") if isinstance(metadata, dict) else None
+        if not isinstance(trace_id_stream, str) or not trace_id_stream.strip():
+            context = _build_device_context(request_data)
+            _state, _ = _ensure_trace_state(context)
+            trace_id_stream = _state.trace_id if _state is not None else None
+        with _policy_confirmation_lock:
+            apply_info_stream = _policy_confirmation_apply_info.pop(trace_id_stream.strip(), None) if isinstance(trace_id_stream, str) and trace_id_stream.strip() else None
+            skip_policy_check_stream = (trace_id_stream.strip() in _policy_confirmation_no_apply) if isinstance(trace_id_stream, str) and trace_id_stream.strip() else False
+            if skip_policy_check_stream:
+                _policy_confirmation_no_apply.discard(trace_id_stream.strip())
+
+        # mock_response 路径不重复 log（pre_call 已返回 mock，post_call 仍会执行，避免 api_calls 重复）
+        if not (apply_info_stream is not None or skip_policy_check_stream):
+            _save_json("post_call_success", {"response": msg_dict})
+
+        # 有 apply_info 时跳过 response_transform 的 instruction 添加（避免重复），但需补上 category/topic slot
+        # 仅当 mock 返回的 response 有 content 时才追加；tool_calls-only 不包、不消耗槽位，追加会导致多一个 policy protected 错位
+        if apply_info_stream is not None and not apply_info_stream.get("slot_appended_in_pre_call"):
+            mock_content = msg_dict.get("content") if isinstance(msg_dict, dict) else None
+            if _extract_text_from_message_content(mock_content).strip():
+                _record_stripped_category(
+                    request_data, "COGNITIVE_CORE__RESPOND", topic="policy protected"
+                )
+
         # instruction_parsing: 流式场景下同样在 post_call 时立即截获 tool_calls
         if msg_dict is not None and InstructionBuilder is not None:
-            metadata = request_data.get("metadata") if isinstance(request_data, dict) else {}
-            trace_id = (
-                metadata.get("arbiteros_trace_id")
-                if isinstance(metadata, dict)
-                else None
-            )
+            trace_id = trace_id_stream
             if isinstance(trace_id, str) and trace_id.strip():
                 for tc_detail in _extract_tool_call_details_from_response(msg_dict):
                     try:
@@ -4443,10 +4893,14 @@ class MyCustomHandler(CustomLogger):
                         pass
 
         if apply_transform and msg_dict is not None:
+            req_for_transform = request_data
+            if apply_info_stream is not None or skip_policy_check_stream:
+                req_for_transform = dict(request_data) if isinstance(request_data, dict) else {}
+                req_for_transform["_skip_category_topic_recording"] = True
             if asyncio.iscoroutinefunction(response_transform):
-                modified_dict = await response_transform(request_data, msg_dict)
+                modified_dict = await response_transform(req_for_transform, msg_dict)
             else:
-                modified_dict = response_transform(request_data, msg_dict)
+                modified_dict = response_transform(req_for_transform, msg_dict)
             if modified_dict is not None and isinstance(modified_dict, dict):
                 msg_dict = modified_dict
 
@@ -4454,12 +4908,55 @@ class MyCustomHandler(CustomLogger):
         policy_violation_reason_for_langfuse: Optional[str] = None
         policy_names_for_langfuse: list[str] = []
         policy_sources_for_langfuse: dict[str, str] = {}
-        if isinstance(msg_dict, dict):
-            metadata = request_data.get("metadata") if isinstance(request_data, dict) else {}
-            trace_id = (
-                metadata.get("arbiteros_trace_id")
-                if isinstance(metadata, dict) else None
-            )
+        policy_confirmation_state_for_langfuse: Optional[str] = None
+        policy_confirmation_accepted_for_langfuse: Optional[bool] = None
+        policy_confirmation_rejected_for_langfuse: Optional[bool] = None
+        trace_id = trace_id_stream
+        if apply_info_stream is not None:
+            policy_confirmation_state = apply_info_stream.get("policy_confirmation_state")
+            if isinstance(policy_confirmation_state, str) and policy_confirmation_state.strip():
+                policy_confirmation_state_for_langfuse = policy_confirmation_state.strip()
+            elif apply_info_stream.get("policy_reason"):
+                policy_confirmation_state_for_langfuse = "accepted"
+            if isinstance(apply_info_stream.get("policy_confirmation_accepted"), bool):
+                policy_confirmation_accepted_for_langfuse = apply_info_stream.get(
+                    "policy_confirmation_accepted"
+                )
+            if isinstance(apply_info_stream.get("policy_confirmation_rejected"), bool):
+                policy_confirmation_rejected_for_langfuse = apply_info_stream.get(
+                    "policy_confirmation_rejected"
+                )
+            if policy_confirmation_state_for_langfuse != "rejected":
+                policy_violation_reason_for_langfuse = (
+                    apply_info_stream.get("policy_reason") or None
+                )
+            policy_names_for_langfuse = list(apply_info_stream.get("policy_names") or [])
+            policy_sources_for_langfuse = dict(apply_info_stream.get("policy_sources") or {})
+            if policy_violation_reason_for_langfuse:
+                _record_policy_protected_tool_calls(
+                    trace_id=trace_id,
+                    raw_response=apply_info_stream.get("raw_response"),
+                    policy_checked_response=apply_info_stream.get("protected_response"),
+                    policy_reason=policy_violation_reason_for_langfuse,
+                )
+            if (
+                InstructionBuilder is not None
+                and isinstance(trace_id, str)
+                and trace_id.strip()
+                and not apply_info_stream.get("instruction_already_applied")
+            ):
+                builder = _get_instruction_builder_for_trace(trace_id)
+                if builder is not None:
+                    protected = apply_info_stream.get("protected_response")
+                    if isinstance(protected, dict):
+                        count_before = len(getattr(builder, "instructions", []) or [])
+                        _add_instructions_from_modified_response(builder, protected)
+                        for instr in builder.instructions[count_before:]:
+                            instr["policy_protected"] = (
+                                policy_violation_reason_for_langfuse or ""
+                            )
+                        _save_instructions_to_trace_file(trace_id, builder)
+        elif not skip_policy_check_stream and isinstance(msg_dict, dict):
             if isinstance(trace_id, str) and trace_id.strip():
                 builder = _get_instruction_builder_for_trace(trace_id)
                 instructions = list(getattr(builder, "instructions", [])) if builder else []
@@ -4471,47 +4968,53 @@ class MyCustomHandler(CustomLogger):
                     latest_instructions=latest_instructions,
                 )
                 if policy_result.modified:
-                    content_before = (
-                        msg_dict.get("content")
-                        if isinstance(msg_dict, dict)
-                        else None
-                    )
-                    content_after = (
-                        policy_result.response.get("content")
-                        if isinstance(policy_result.response, dict)
-                        else None
-                    )
-                    before_empty = not (
-                        isinstance(content_before, str) and content_before.strip()
-                    )
-                    after_empty = not (
-                        isinstance(content_after, str) and content_after.strip()
-                    )
-                    if before_empty and not after_empty:
-                        _add_policy_protected_category_topic(trace_id)
-                    elif not before_empty and after_empty:
-                        _remove_latest_category_topic_for_trace(trace_id)
-                    msg_dict = policy_result.response
                     error_type_str = (policy_result.error_type or "").strip()
-                    if error_type_str:
-                        policy_violation_reason_for_langfuse = error_type_str
-                        _record_policy_protected_tool_calls(
-                            trace_id=trace_id,
-                            raw_response=raw_msg_dict if isinstance(raw_msg_dict, dict) else None,
-                            policy_checked_response=(
-                                msg_dict if isinstance(msg_dict, dict) else None
-                            ),
-                            policy_reason=error_type_str,
+                    # Defer: store state, return confirmation message, don't emit Langfuse violation
+                    with _policy_confirmation_lock:
+                        if len(_policy_confirmation_pending) >= _MAX_POLICY_CONFIRMATION_PENDING:
+                            _policy_confirmation_pending.pop(next(iter(_policy_confirmation_pending)), None)
+                        raw_content = raw_msg_dict.get("content") if isinstance(raw_msg_dict, dict) else None
+                        had_content_before_replace = bool(
+                            _extract_text_from_message_content(raw_content).strip()
                         )
+                        popped_ct = (
+                            _pop_and_get_latest_category_topic_for_trace(trace_id)
+                            if had_content_before_replace
+                            else None
+                        )
+                        _policy_confirmation_pending[trace_id] = {
+                            "original_response": dict(raw_msg_dict) if isinstance(raw_msg_dict, dict) else {},
+                            "protected_response": dict(policy_result.response),
+                            "policy_reason": error_type_str,
+                            "policy_names": list(policy_result.policy_names),
+                            "policy_sources": dict(policy_result.policy_sources),
+                            "had_content_before_replace": had_content_before_replace,
+                            "popped_category_topic": popped_ct,
+                            "instruction_count_before": _policy_instruction_count_before_stream,
+                        }
+                    confirm_content = (
+                        f"policy violation {error_type_str} are detected, {_POLICY_CONFIRMATION_SUFFIX}"
+                    )
+                    msg_dict = {"content": confirm_content, "role": "assistant"}
+                    # 确认消息按普通信息包：默认 category + topic "protection confirmation"
+                    _append_category_topic_for_trace(
+                        trace_id, category="COGNITIVE_CORE__RESPOND", topic="protection confirmation"
+                    )
+                    policy_confirmation_state_for_langfuse = "ask"
+                    policy_confirmation_accepted_for_langfuse = False
+                    policy_confirmation_rejected_for_langfuse = False
+                    policy_violation_reason_for_langfuse = None
                     policy_names_for_langfuse = list(policy_result.policy_names)
                     policy_sources_for_langfuse = dict(policy_result.policy_sources)
                     if builder is not None:
-                        _replace_instructions_from_modified_response(
-                            builder, msg_dict, _policy_instruction_count_before_stream
-                        )
-                        if error_type_str:
-                            for instr in builder.instructions[_policy_instruction_count_before_stream:]:
-                                instr["policy_protected"] = error_type_str
+                        builder.instructions = list(builder.instructions[:_policy_instruction_count_before_stream])
+                        try:
+                            instr = builder.add_from_structured_output(
+                                structured={"intent": "RESPOND", "content": confirm_content}
+                            )
+                            instr["policy_confirmation_ask"] = True
+                        except Exception:
+                            pass
                         _save_instructions_to_trace_file(trace_id, builder)
 
         fallback_text = os.getenv(
@@ -4527,6 +5030,9 @@ class MyCustomHandler(CustomLogger):
             policy_violation_reason=policy_violation_reason_for_langfuse,
             policy_names=policy_names_for_langfuse,
             policy_sources=policy_sources_for_langfuse,
+            policy_confirmation_state=policy_confirmation_state_for_langfuse,
+            policy_confirmation_accepted=policy_confirmation_accepted_for_langfuse,
+            policy_confirmation_rejected=policy_confirmation_rejected_for_langfuse,
         )
 
         if apply_transform and msg_dict is not None:
