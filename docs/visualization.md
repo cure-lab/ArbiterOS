@@ -80,7 +80,38 @@ The Home page includes a **Policy violations** table card for policy-focused tri
 - **Result**:
   - Directly lands in the policy investigation view, reducing manual filtering steps
 
-![Policy violations card](./images/langfuse/policy-violation-card.png)
+## Policy confirmation stats (Home quick entry)
+
+The Home page also includes a **Policy confirmation stats** card for reviewing
+how users respond to policy confirmation prompts.
+
+- **Main fields**:
+  - **Policy**
+  - **Total**
+  - **Accepted** (rate and count)
+  - **Rejected** (rate and count)
+- **Sorting and highlight**:
+  - Rows are sorted by rejected ratio in descending order
+  - Rows at or above the configured reject-rate threshold are highlighted
+  - You can adjust this threshold in Settings via
+    **Policy reject-rate highlight threshold (%)**
+- **Clickable counts**:
+  - Clicking the accepted/rejected count opens a detail panel for that policy
+    and confirmation state
+  - The detail panel lists matching turns and shows the corresponding full trace
+
+![Policy confirmation count details](./images/langfuse/count_details.png)
+
+- **Turn-level inspection**:
+  - The node list is scoped to the matching `session.turn.xxx` node
+  - The matching turn node is selected by default so the trace detail view opens
+    directly on that node
+- **Common usage**:
+  - Quickly identify policies with high reject rates
+  - Drill from aggregate policy stats into the exact turn where the user
+    accepted or rejected the policy confirmation
+
+![Policy card](./images/langfuse/policy-card.png)
 
 ---
 
@@ -269,7 +300,8 @@ The Analysis page has two main view modes:
   - Insert the current Summary into a Markdown file (typically the system prompt) so the LLM can avoid repeating the same errors and know how to fix them.
 
 - **Settings**
-  - Open settings (analysis, Markdown file path, etc.).
+  - Open settings (analysis, Markdown file path,
+    **Policy reject-rate highlight threshold (%)**, etc.).
 
 - **Copy all**
   - Copy the full summary text for use in prompts (including Prompt Pack and experience lines).
@@ -361,14 +393,23 @@ Error Analysis and Summary generation depend on the API configuration in LLM Con
   - Must be a positive integer
   - Minimum value is 1
 
-### 4) Markdown summary output mode
+### 4) Policy reject-rate highlight threshold (%)
+
+- Controls when rows in the Home page **Policy confirmation stats** card are highlighted
+- If a policy's reject rate is at or above this threshold, that row is highlighted on Home
+- **Leave empty**: Use system default (70)
+- Common usage:
+  - Lower it to surface more policies for review
+  - Raise it to highlight only the most rejection-heavy policies
+
+### 5) Markdown summary output mode
 
 - Controls what is written to the Markdown file:
   - **Prompt pack only (recommended)**: Output only the Prompt Pack
   - **Prompt pack + experiences**: Output both Prompt Pack and Experiences
 - Note: This affects only the Markdown file content, not the full structured Summary data in the database
 
-### 5) Append summary prevention note to markdown path (optional)
+### 6) Append summary prevention note to markdown path (optional)
 
 - Specify an absolute path to a Markdown file for writing/updating the summary
 - The Markdown file is typically the Agent system prompt file. As experience accumulates, the Agent output becomes more reliable and avoids repeating the same errors.
