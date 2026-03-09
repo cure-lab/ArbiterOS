@@ -8,7 +8,7 @@ import re
 import time
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional, Tuple
-
+import threading
 try:
     import jsonschema  # type: ignore
 except Exception:
@@ -1101,5 +1101,76 @@ class KernelPolicyRuntime:
         return True, "rate ok"
 
 
-# Global runtime singleton (policies import this)
-RUNTIME = KernelPolicyRuntime.from_env()
+def _resolve_policy_config_path() -> str:
+    path = os.getenv("ARBITEROS_POLICY_CONFIG", "").strip()
+    if not path:
+        path = os.path.join(os.path.dirname(__file__), "policy.json")
+    return _expand_home(path)
+
+
+def _resolve_policy_audit_path() -> str:
+    return os.getenv("ARBITEROS_POLICY_AUDIT_PATH", "").strip()
+
+
+def _runtime_reload_key() -> str:
+    """
+    Build a stable cache key for current runtime source.
+    - Inline JSON: hash(json) + audit_path
+    - File JSON: path + mtime_ns + size + audit_path
+    """
+    inline = os.getenv("ARBITEROS_POLICY_CONFIG_JSON", "").strip()
+    audit_path = _resolve_policy_audit_path()
+
+    if inline:
+        return f"inline:{_sha256(inline)}|audit:{audit_path}"
+
+    path = _resolve_policy_config_path()
+    try:
+        st = os.stat(path)
+        return f"path:{path}|mtime_ns:{st.st_mtime_ns}|size:{st.st_size}|audit:{audit_path}"
+    except FileNotFoundError:
+        return f"path:{path}|missing|audit:{audit_path}"
+    except Exception:
+        return f"path:{path}|error|audit:{audit_path}"
+
+
+class ReloadableRuntimeProxy:
+    """
+    Lightweight proxy:
+    - keep old usage style: RUNTIME.xxx(...)
+    - auto reload policy.json when source changes
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._runtime: Optional[KernelPolicyRuntime] = None
+        self._reload_key: Optional[str] = None
+
+    def _get_runtime(self) -> KernelPolicyRuntime:
+        key = _runtime_reload_key()
+
+        with self._lock:
+            if self._runtime is None or self._reload_key != key:
+                self._runtime = KernelPolicyRuntime.from_env()
+                self._reload_key = key
+            return self._runtime
+
+    def reload_now(self) -> KernelPolicyRuntime:
+        with self._lock:
+            self._runtime = KernelPolicyRuntime.from_env()
+            self._reload_key = _runtime_reload_key()
+            return self._runtime
+
+    def current_reload_key(self) -> str:
+        return _runtime_reload_key()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._get_runtime(), name)
+
+
+def get_runtime() -> KernelPolicyRuntime:
+    return RUNTIME._get_runtime()
+
+
+# Global runtime proxy (policies import this)
+RUNTIME = ReloadableRuntimeProxy()

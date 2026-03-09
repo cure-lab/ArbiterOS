@@ -1,0 +1,37 @@
+[
+  {
+    "name": "PathBudgetPolicy",
+    "enabled": true,
+    "description": "Enforces path allow/deny prefixes and input string length budget for tool calls."
+  },
+  {
+    "name": "AllowDenyPolicy",
+    "enabled": true,
+    "description": "Allows or denies tool calls and instruction types by allow/deny lists."
+  },
+  {
+    "name": "EfsmGatePolicy",
+    "enabled": true,
+    "description": "Gates tool execution based on EFSM state and plan alignment."
+  },
+  {
+    "name": "TaintPolicy",
+    "enabled": true,
+    "description": "Blocks high-risk tools when args contain untrusted snippets from prior tool output."
+  },
+  {
+    "name": "RateLimitPolicy",
+    "enabled": true,
+    "description": "Limits consecutive repeated tool calls per config."
+  },
+  {
+    "name": "OutputBudgetPolicy",
+    "enabled": true,
+    "description": "Truncates assistant content when it exceeds output_budget.max_chars."
+  },
+  {
+    "name": "SecurityLabelPolicy",
+    "enabled": true,
+    "description": "Gates tool calls and RESPOND by security_type (confidence, authority_label, etc.)."
+  }
+]

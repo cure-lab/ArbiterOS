@@ -26,9 +26,9 @@ import litellm
 from langfuse import Langfuse
 from dotenv import load_dotenv
 from arbiteros_kernel.langfuse_env import ensure_langfuse_env_compat
-from arbiteros_kernel.policy.defaults import POLICY_DESCRIPTIONS
+from arbiteros_kernel.policy.defaults import get_policy_descriptions
 from arbiteros_kernel.policy_check import check_response_policy
-from arbiteros_kernel.policy_runtime import RUNTIME as POLICY_RUNTIME
+from arbiteros_kernel.policy_runtime import get_runtime
 from litellm.caching.dual_cache import DualCache
 from litellm.integrations.custom_logger import CustomLogger, UserAPIKeyAuth
 from litellm.types.utils import (
@@ -1883,7 +1883,8 @@ def _resolve_policy_config_source_for_langfuse() -> str:
 def _build_policy_config_for_langfuse() -> dict[str, Any]:
     global _policy_config_metadata_cache_key, _policy_config_metadata_cache_value
 
-    cfg = getattr(POLICY_RUNTIME, "cfg", {}) if POLICY_RUNTIME is not None else {}
+    runtime = get_runtime()
+    cfg = getattr(runtime, "cfg", {}) if runtime is not None else {}
     cfg_jsonable = _to_json(cfg if isinstance(cfg, dict) else {})
     if not isinstance(cfg_jsonable, dict):
         cfg_jsonable = {}
@@ -2795,10 +2796,11 @@ def _emit_response_nodes(
     policy_sources_dict = policy_sources if isinstance(policy_sources, dict) else {}
     policy_extra_metadata: dict[str, Any] = {}
     if policy_names_list:
+        policy_descriptions = get_policy_descriptions()
         policy_extra_metadata["policy_names"] = policy_names_list
         policy_extra_metadata["policy_sources"] = dict(policy_sources_dict)
         policy_extra_metadata["policy_descriptions"] = {
-            n: POLICY_DESCRIPTIONS.get(n, "") for n in policy_names_list
+            n: policy_descriptions.get(n, "") for n in policy_names_list
         }
     policy_confirmation_metadata: dict[str, Any] = {}
     if (
