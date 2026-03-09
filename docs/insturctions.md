@@ -22,8 +22,8 @@ We define two primary roles within the interaction loop:
     * `CRITIQUE`: **Self-Correction.** Analyzing past actions or errors to adjust future strategies (e.g., analyzing a stack trace).
 
 * **Memory Management**
-    * `STORE`: **Persist Experience.** Saving successful patterns, code snippets, or user preferences to long-term storage.
-    * `RETRIEVE`: **Recall Context.** Fetching relevant history or knowledge (RAG) based on the current query.
+    * `STORE`: **Persist Experience.** Persisting important information or outcomes into long-term memory for future retrieval.
+    * `RETRIEVE`: **Recall Context.** Fetching relevant history or knowledge (RAG) from long-term memory based on the current query.
     * `COMPRESS`: **Summarization.** Condensing the context window to retain essential facts while discarding noise (Semantic Compression).
     * `PRUNE`: **Context Pruning.** Selectively discarding specific parts of the context (e.g., sliding window, removing irrelevant history) to free up space.
 
