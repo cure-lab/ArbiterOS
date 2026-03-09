@@ -5,6 +5,7 @@
 - **Request logging**: `pre_call` writes each request’s `model`, `messages`, and `tools` to `log/api_calls.jsonl`.
 - **Response logging**: `post_call_success` writes the **raw** response (full structure including `category` / `content`) to the same jsonl for later analysis.
 - **Response transform**: Before returning to the client, if the assistant `content` is a JSON string `{"category":"...","content":"..."}`, only the inner `content` is returned (same for streaming and non-streaming). Messages with `tool_calls` are left unchanged.
+- **Policy confirmation**: When a policy blocks a response (e.g. blocks a tool call), the kernel returns a confirmation message and waits for the user to reply **Yes** or **No**. On the next request, pre-call detects the reply and returns the protected response (Yes) or original response (No) without calling the LLM. See `docs/kernel.md`for details.
 - **Live observability**: MLflow logging uses LiteLLM’s `mlflow` callbacks; Langfuse session tracing is emitted by `arbiteros_kernel.litellm_callback` when `LANGFUSE_PUBLIC_KEY` + `LANGFUSE_SECRET_KEY` are set (auto-loaded from `.env`). Langfuse nodes are also persisted to `log/langfuse_nodes.jsonl` for replay.
 - **Instruction parse & registry**: For each trace, the kernel generates `log/{trace_id}.json` to parse and register the original LLM input/output. The `InstructionBuilder` (from `arbiteros_kernel.instruction_parsing`) converts:
   - **LLM structured output**: When the assistant returns `{"category":"...","content":"..."}`, it is parsed into an instruction with `instruction_category`, `instruction_type`, and `content`.
@@ -29,7 +30,7 @@ uv sync --group dev
 **2 Set Config**: Edit `litellm_config.yaml` to add your models. Each entry under `model_list` should specify:
 
 - `**model_name`**: ID exposed to clients (used in OpenClaw as `models[].id`)
-- `**litellm_params.model**`: LiteLLM format, e.g. `openai/gpt-5.2`
+- `**litellm_params.model`**: LiteLLM format, e.g. `openai/gpt-5.2`
 - `**litellm_params.api_key**`: Your API key for the upstream provider
 - `**litellm_params.api_base**`:  API base URL
 
