@@ -66,8 +66,112 @@ ensure_jq() {
   return 1
 }
 
+update_litellm_config_yaml() {
+  log "=== Step 1: Configure ArbiterOS LiteLLM model (litellm_config.yaml) ==="
+
+  if [ ! -d "$ARBITEROS_KERNEL" ]; then
+    err "ArbiterOS-Kernel not found: $ARBITEROS_KERNEL"
+    return 1
+  fi
+
+  local cfg_file="$ARBITEROS_KERNEL/litellm_config.yaml"
+  if [ ! -f "$cfg_file" ]; then
+    err "litellm_config.yaml not found: $cfg_file"
+    return 1
+  fi
+
+  local current_model_name current_model current_api_key current_api_base
+  current_model_name="$(awk '
+    $0 ~ /^  - model_name:/ {print $3; exit}
+  ' "$cfg_file" 2>/dev/null || true)"
+  current_model="$(awk '
+    $0 ~ /^  - model_name:/ {in_first=1}
+    in_first && $0 ~ /^    litellm_params:/ {in_params=1; next}
+    in_first && in_params && $0 ~ /^      model:/ {print $2; exit}
+  ' "$cfg_file" 2>/dev/null || true)"
+  current_api_key="$(awk '
+    $0 ~ /^  - model_name:/ {in_first=1}
+    in_first && $0 ~ /^    litellm_params:/ {in_params=1; next}
+    in_first && in_params && $0 ~ /^      api_key:/ {print $2; exit}
+  ' "$cfg_file" 2>/dev/null || true)"
+  current_api_base="$(awk '
+    $0 ~ /^  - model_name:/ {in_first=1}
+    in_first && $0 ~ /^    litellm_params:/ {in_params=1; next}
+    in_first && in_params && $0 ~ /^      api_base:/ {print $2; exit}
+  ' "$cfg_file" 2>/dev/null || true)"
+
+  echo "Current LiteLLM model settings in $cfg_file (first model entry):"
+  [ -n "$current_model_name" ] && echo "  model_name: $current_model_name"
+  [ -n "$current_model" ] && echo "  model: $current_model"
+  [ -n "$current_api_key" ] && echo "  api_key: $current_api_key"
+  [ -n "$current_api_base" ] && echo "  api_base: $current_api_base"
+
+  local model model_name api_key api_base
+  read -r -p "Enter LiteLLM model (e.g. openai/gpt-5.2) [default: ${current_model:-openai/gpt-5.2}]: " model
+  model="${model:-${current_model:-openai/gpt-5.2}}"
+  read -r -p "Enter LiteLLM model_name / nickname (e.g. gpt-5.2) [default: ${current_model_name:-gpt-5.2}]: " model_name
+  model_name="${model_name:-${current_model_name:-gpt-5.2}}"
+  read -r -p "Enter LiteLLM api_key [default: ${current_api_key:-}]: " api_key
+  api_key="${api_key:-${current_api_key:-}}"
+  read -r -p "Enter LiteLLM api_base (e.g. https://api.zhizengzeng.com/v1) [default: ${current_api_base:-http://127.0.0.1:4000/v1}]: " api_base
+  api_base="${api_base:-${current_api_base:-http://127.0.0.1:4000/v1}}"
+
+  # Export values so OpenClaw configuration can stay in sync with LiteLLM.
+  LITELLM_MODEL="$model"
+  LITELLM_MODEL_NAME="$model_name"
+  LITELLM_API_KEY="$api_key"
+  LITELLM_API_BASE="$api_base"
+
+  local tmp_file
+  tmp_file="$(mktemp)"
+  awk -v new_model="$model" -v new_model_name="$model_name" -v new_api_key="$api_key" -v new_api_base="$api_base" '
+    BEGIN {
+      in_first=0; in_params=0;
+      did_name=0; did_model=0; did_key=0; did_base=0;
+    }
+
+    # Enter first model entry
+    /^  - model_name:/ && !in_first {
+      in_first=1;
+      did_name=1;
+      print "  - model_name: " new_model_name;
+      next
+    }
+
+    # Leave first model entry when next entry starts
+    in_first && /^  - model_name:/ && did_name {
+      in_first=0; in_params=0;
+      print
+      next
+    }
+
+    in_first && /^    litellm_params:/ { in_params=1; print; next }
+
+    in_first && in_params && /^      model:/ {
+      did_model=1;
+      print "      model: " new_model;
+      next
+    }
+    in_first && in_params && /^      api_key:/ {
+      did_key=1;
+      print "      api_key: " new_api_key;
+      next
+    }
+    in_first && in_params && /^      api_base:/ {
+      did_base=1;
+      print "      api_base: " new_api_base;
+      next
+    }
+
+    { print }
+  ' "$cfg_file" > "$tmp_file"
+
+  mv "$tmp_file" "$cfg_file"
+  log "Updated $cfg_file (first model entry): model, model_name, api_key, api_base."
+}
+
 config_openclaw_json() {
-  log "=== Step 1: Configure OpenClaw (openclaw.json) ==="
+  log "=== Step 2: Configure OpenClaw (openclaw.json) ==="
   ensure_jq || return 1
 
   local existing
@@ -81,27 +185,39 @@ config_openclaw_json() {
   current_api_key="$(echo "$existing" | jq -r '.models.providers.arbiteros.apiKey // empty' 2>/dev/null || true)"
   current_workspace="$(echo "$existing" | jq -r '.agents.defaults.workspace // empty' 2>/dev/null || true)"
 
-  if [ -n "${current_api_key}${current_workspace}" ]; then
-    echo "Current OpenClaw configuration in $OPENCLAW_CFG:"
-    [ -n "$current_api_key" ] && echo "  ArbiterOS API key: $current_api_key"
-    [ -n "$current_workspace" ] && echo "  Workspace: $current_workspace"
+  # Use LiteLLM configuration as the single source of truth, if available.
+  local default_api_key="${LITELLM_API_KEY:-$current_api_key}"
+  local default_api_base="${LITELLM_API_BASE:-http://127.0.0.1:4000/v1}"
+  local default_model="${LITELLM_MODEL:-openai/gpt-5.2}"
+  local default_model_name="${LITELLM_MODEL_NAME:-gpt-5.2}"
 
-    if ! ask_yn "Do you want to update these OpenClaw settings in $OPENCLAW_CFG?"; then
-      log "Keeping existing OpenClaw settings in $OPENCLAW_CFG. Skipping OpenClaw configuration."
-      return 0
-    fi
-  fi
+  echo "ArbiterOS / OpenClaw will use the same model settings as LiteLLM:"
+  echo "  model: ${default_model}"
+  echo "  model_name: ${default_model_name}"
+  echo "  api_base: ${default_api_base}"
+  echo "  api_key: ${default_api_key}"
 
-  local api_key workspace
-  read -r -p "Enter ArbiterOS API key (e.g. sk-zk...): " api_key
-  api_key="${api_key:-${current_api_key:-sk-zk}}"
+  local api_key api_base model model_name workspace
+  read -r -p "Confirm / override ArbiterOS API key [default: ${default_api_key:-sk-***}]: " api_key
+  api_key="${api_key:-${default_api_key:-sk-zk}}"
+  read -r -p "Confirm / override ArbiterOS API base [default: ${default_api_base}]: " api_base
+  api_base="${api_base:-$default_api_base}"
+  read -r -p "Confirm / override ArbiterOS model (e.g. openai/gpt-5.2) [default: ${default_model}]: " model
+  model="${model:-$default_model}"
+  read -r -p "Confirm / override ArbiterOS model_name / nickname (e.g. gpt-5.2) [default: ${default_model_name}]: " model_name
+  model_name="${model_name:-$default_model_name}"
   read -r -p "Enter OpenClaw workspace path [default: ${current_workspace:-$HOME/.openclaw/workspace}]: " workspace
   workspace="${workspace:-${current_workspace:-$HOME/.openclaw/workspace}}"
 
   mkdir -p "$(dirname "$OPENCLAW_CFG")"
 
   local updated
-  updated="$(echo "$existing" | jq --arg apiKey "$api_key" --arg workspace "$workspace" '
+  updated="$(echo "$existing" | jq \
+    --arg apiKey "$api_key" \
+    --arg workspace "$workspace" \
+    --arg apiBase "$api_base" \
+    --arg model "$model" \
+    --arg modelName "$model_name" '
     (.models.providers //= {} | .agents //= {}) |
     .models.providers.arbiteros = {
       "baseUrl": "http://127.0.0.1:4000/v1",
@@ -110,8 +226,8 @@ config_openclaw_json() {
       "authHeader": false,
       "models": [
         {
-          "id": "gpt-5.2",
-          "name": "GPT-5.2",
+          "id": $modelName,
+          "name": $modelName,
           "reasoning": false,
           "input": ["text"],
           "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
@@ -122,9 +238,9 @@ config_openclaw_json() {
       ]
     } |
     .agents.defaults = {
-      "model": { "primary": "arbiteros/gpt-5.2" },
+      "model": { "primary": ("arbiteros/" + $modelName) },
       "models": {
-        "arbiteros/gpt-5.2": { "alias": "gpt" },
+        ("arbiteros/" + $modelName): { "alias": "gpt" },
         "qwen-portal/coder-model": { "alias": "qwen" },
         "qwen-portal/vision-model": {},
         "openai/gpt-4": {},
@@ -167,6 +283,28 @@ langfuse_wait_main_ui() {
     err "docker is required for Langfuse production but not found."
     return 1
   fi
+
+   # Check if current user can talk to Docker daemon; if not, give clear guidance.
+   if ! docker ps >/dev/null 2>&1; then
+     if ! id -nG | grep -qw docker; then
+       err "Docker is installed, but the current user is not in the 'docker' group and cannot access the Docker daemon."
+       echo "To fix this:"
+       echo "  1) Add the current user to the docker group:"
+       echo "       sudo usermod -aG docker \"\$USER\""
+       echo "  2) Log out completely and log back in (or reboot) so the new group membership takes effect."
+       echo "  3) Verify with: groups   # you should see 'docker' in the list."
+       echo "  4) Then re-run this configuration script."
+     else
+       err "Docker command cannot talk to the Docker daemon (for example, the service may be stopped or misconfigured)."
+       echo "To fix this, try:"
+       echo "  1) Ensure the Docker service is running:"
+       echo "       sudo systemctl start docker"
+       echo "  2) Verify Docker works:"
+       echo "       docker ps"
+       echo "  3) If the above succeeds, re-run this configuration script."
+     fi
+     return 1
+   fi
 
   log "Starting Langfuse stack in background (docker compose up -d)..."
   (cd "$LANGFUSE_DIR" && docker compose -f docker-compose.yml up -d)
@@ -278,6 +416,7 @@ main() {
   log "Interactive configuration for OpenClaw, Langfuse (docker), and ArbiterOS."
   log "Workspace: $WORKSPACE_DIR"
 
+  update_litellm_config_yaml
   config_openclaw_json
   run_openclaw_onboard
   langfuse_wait_main_ui
