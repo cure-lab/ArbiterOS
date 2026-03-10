@@ -174,7 +174,6 @@ dependencies = [
     { name = "langfuse" },
     { name = "litellm", extra = ["proxy"] },
     { name = "mlflow", extra = ["genai"] },
-    { name = "pydantic" },
     { name = "pyyaml" },
 ]
 
@@ -190,7 +189,6 @@ requires-dist = [
     { name = "langfuse", specifier = ">=3.14.1" },
     { name = "litellm", extras = ["proxy"], specifier = ">=1.81.5" },
     { name = "mlflow", extras = ["genai"], specifier = ">=3.9.0" },
-    { name = "pydantic", specifier = ">=2.12.5" },
     { name = "pyyaml", specifier = ">=6.0.3" },
 ]
 
