@@ -1,0 +1,230 @@
+# File-path confidentiality classification.
+#
+# Keys   : HIGH | MID | LOW
+# Values : glob patterns matched against individual path-like tokens extracted
+#          from shell commands (using fnmatch / PurePosixPath.match).
+#
+# Matching priority: HIGH > MID > LOW.
+#   The resolver checks HIGH first; the first matching level wins.
+#   If nothing matches, the default is LOW.
+#
+# Notes
+#   - Patterns ending with /* match direct children only.
+#   - Patterns ending with /** match all descendants (recursive).
+#   - Quoted patterns starting with * must be quoted to be valid YAML.
+
+HIGH:
+  # ── Authentication & identity ───────────────────────────────────────────────
+  - /etc/shadow
+  - /etc/gshadow
+  - /etc/sudoers
+  - /etc/sudoers.d/*
+  - /etc/pam.d/*
+  - /etc/security/*
+  - /etc/ssh/*
+  - /etc/ssl/private/*
+  - /etc/pki/**
+  - /etc/openvpn/*
+  - /etc/wireguard/*
+
+  # ── System secrets / credentials storage ───────────────────────────────────
+  - /etc/secrets/*
+  - /etc/credentials/*
+  - /run/secrets/*
+  - /run/credentials/**
+
+  # ── Root home ───────────────────────────────────────────────────────────────
+  - /root/*
+  - /root/.**
+  - /root/**
+
+  # ── User private keys & credential stores ──────────────────────────────────
+  - ~/.ssh/*
+  - ~/.gnupg/*
+  - ~/.pgp/*
+  - ~/.netrc
+  - ~/.authinfo
+  - ~/.aws/credentials
+  - ~/.aws/config
+  - ~/.azure/*
+  - ~/.gcloud/*
+  - ~/.config/gcloud/*
+  - ~/.kube/config
+  - ~/.kube/**
+  - /etc/kubernetes/*
+  - /var/lib/kubelet/*
+  - ~/.docker/config.json
+
+  # ── Private-key / certificate file extensions ───────────────────────────────
+  - "*.pem"
+  - "*.key"
+  - "*.p12"
+  - "*.pfx"
+  - "*.pkcs12"
+  - "*.jks"
+  - "*.keystore"
+  - "*.der"
+
+  # ── Secret environment / config files ───────────────────────────────────────
+  - .env
+  - .env.*
+  - "*.secret"
+  - "*.secrets"
+  - secrets.yaml
+  - secrets.yml
+  - secrets.json
+  - secret.yaml
+  - secret.json
+  - vault.yaml
+  - vault.json
+
+  # ── Authentication / security logs ──────────────────────────────────────────
+  - /var/log/auth.log
+  - /var/log/secure
+  - /var/log/faillog
+  - /var/log/tallylog
+  - /var/log/btmp
+
+  # ── OpenClaw credentials & session transcripts (must not be committed) ──────
+  # Sources: ~/.openclaw/credentials/ (OAuth tokens, API keys)
+  #          ~/.openclaw/agents/*/sessions/ (full session transcripts)
+  #          ~/.openclaw/openclaw.json (gateway config; may embed tokens)
+  - ~/.openclaw/credentials/**
+  - ~/.openclaw/agents/*/sessions/**
+  - ~/.openclaw/openclaw.json
+
+  # ── OpenClaw workspace — identity & persistent memory files ─────────────────
+  # Files loaded at every agent session; contain persona, user profile (PII)
+  # and curated long-term memory. Profile-specific workspace-<name>/ is also covered.
+  - ~/.openclaw/workspace/SOUL.md
+  - ~/.openclaw/workspace/MEMORY.md
+  - ~/.openclaw/workspace/AGENTS.md
+  - ~/.openclaw/workspace/USER.md
+  - ~/.openclaw/workspace/IDENTITY.md
+  - ~/.openclaw/workspace/memory/**
+  - ~/.openclaw/workspace-*/SOUL.md
+  - ~/.openclaw/workspace-*/MEMORY.md
+  - ~/.openclaw/workspace-*/AGENTS.md
+  - ~/.openclaw/workspace-*/USER.md
+  - ~/.openclaw/workspace-*/IDENTITY.md
+  - ~/.openclaw/workspace-*/memory/**
+
+MID:
+  # ── System-wide configuration ────────────────────────────────────────────────
+  - /etc/*
+  - /etc/**
+
+  # ── User home directories (general) ─────────────────────────────────────────
+  - /home/*
+  - /home/*/.*
+  - /home/**
+
+  # ── System logs ─────────────────────────────────────────────────────────────
+  - /var/log/*
+  - /var/log/**
+  - /run/log/*
+
+  # ── User config & local state ────────────────────────────────────────────────
+  - ~/.config/*
+  - ~/.config/**
+  - ~/.local/*
+  - ~/.local/**
+  - ~/.cache/*
+  - ~/.bashrc
+  - ~/.bash_profile
+  - ~/.zshrc
+  - ~/.profile
+
+  # ── Temporary / shared directories ──────────────────────────────────────────
+  - /tmp/*
+  - /var/tmp/*
+
+  # ── Kernel / hardware / runtime interfaces ───────────────────────────────────
+  - /proc/*
+  - /proc/**
+  - /sys/*
+  - /sys/**
+  - /dev/*
+
+  # ── Config / data file extensions ───────────────────────────────────────────
+  - "*.conf"
+  - "*.cfg"
+  - "*.ini"
+  - "*.toml"
+  - "*.yaml"
+  - "*.yml"
+  - "*.json"
+  - "*.xml"
+  - "*.properties"
+  - "*.env"
+
+  # ── Database files ───────────────────────────────────────────────────────────
+  - "*.db"
+  - "*.sqlite"
+  - "*.sqlite3"
+  - "*.mdb"
+
+  # ── TLS certificates (public part, still sensitive) ──────────────────────────
+  - "*.crt"
+  - "*.cer"
+
+  # ── OpenClaw general workspace & managed files ─────────────────────────────
+  # General workspace files (TOOLS.md, HEARTBEAT.md, BOOT.md, canvas/, etc.)
+  # are workspace-private but not identity-sensitive → MID.
+  # The HIGH rules above take precedence for specific identity/memory files.
+  - ~/.openclaw/workspace/**
+  - ~/.openclaw/workspace-*/**
+  # ~/.openclaw/skills/  — managed skill bundles installed by the openclaw CLI
+  - ~/.openclaw/skills/**
+  # ~/.openclaw/agents/**  — general per-agent state (excl. sessions/ already in HIGH)
+  - ~/.openclaw/agents/**
+  # Catch-all for any other openclaw config under ~/.openclaw/
+  - ~/.openclaw/**
+
+LOW:
+  # ── System binaries / libraries ──────────────────────────────────────────────
+  - /usr/bin/*
+  - /usr/lib/*
+  - /usr/lib/**
+  - /usr/share/*
+  - /usr/share/**
+  - /usr/local/*
+  - /usr/local/**
+  - /bin/*
+  - /sbin/*
+  - /lib/*
+  - /lib/**
+  - /lib64/*
+  - /opt/*
+  - /opt/**
+
+  # ── Web-served / public content ─────────────────────────────────────────────
+  - /var/www/*
+  - /var/www/**
+  - /srv/http/*
+  - /srv/www/*
+
+  # ── Plain-text source / documentation ───────────────────────────────────────
+  - "*.txt"
+  - "*.md"
+  - "*.rst"
+  - "*.html"
+  - "*.htm"
+  - "*.css"
+  - "*.js"
+  - "*.ts"
+  - "*.py"
+  - "*.rb"
+  - "*.go"
+  - "*.rs"
+  - "*.c"
+  - "*.cpp"
+  - "*.h"
+  - "*.java"
+  - "*.sh"
+
+  # ── Log sinks that are already world-readable ────────────────────────────────
+  - /var/log/syslog
+  - /var/log/messages
+  - /var/log/dmesg
+  - /var/log/kern.log

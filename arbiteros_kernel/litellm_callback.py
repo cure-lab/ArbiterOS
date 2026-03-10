@@ -23,12 +23,8 @@ except ImportError:
     get_instruction_security = None  # type: ignore[misc, assignment]
 
 import litellm
-from langfuse import Langfuse
 from dotenv import load_dotenv
-from arbiteros_kernel.langfuse_env import ensure_langfuse_env_compat
-from arbiteros_kernel.policy.defaults import get_policy_descriptions
-from arbiteros_kernel.policy_check import check_response_policy
-from arbiteros_kernel.policy_runtime import get_runtime
+from langfuse import Langfuse
 from litellm.caching.dual_cache import DualCache
 from litellm.integrations.custom_logger import CustomLogger, UserAPIKeyAuth
 from litellm.types.utils import (
@@ -44,6 +40,11 @@ from litellm.types.utils import (
 from rich.console import Console
 from rich.panel import Panel
 from rich.pretty import Pretty
+
+from arbiteros_kernel.langfuse_env import ensure_langfuse_env_compat
+from arbiteros_kernel.policy.defaults import get_policy_descriptions
+from arbiteros_kernel.policy_check import check_response_policy
+from arbiteros_kernel.policy_runtime import get_runtime
 
 _console = Console()
 _LOG_FILE = Path(__file__).resolve().parent.parent / "log" / "api_calls.jsonl"
@@ -121,7 +122,9 @@ class _TraceState:
     # Per-trace monotonically increasing tool result indices per tool name.
     tool_result_counter_by_tool: dict[str, int] = field(default_factory=dict)
     # tool_call_id -> parser/tool node reservation (ephemeral, in-memory only)
-    pending_tool_call_nodes_by_id: dict[str, dict[str, Any]] = field(default_factory=dict)
+    pending_tool_call_nodes_by_id: dict[str, dict[str, Any]] = field(
+        default_factory=dict
+    )
     # Ephemeral handle to the current turn observation, for in-process updates.
     current_turn_handle: Any = None
 
@@ -142,7 +145,9 @@ _policy_config_metadata_cache_lock = threading.Lock()
 
 # Policy confirmation: trace_id -> {original_response, protected_response, policy_reason, policy_names, policy_sources}
 # When user replies Yes/No in next turn, we return cached response without calling model.
-_POLICY_CONFIRMATION_SUFFIX = "do you want to apply the protection? Please reply Yes/No."
+_POLICY_CONFIRMATION_SUFFIX = (
+    "do you want to apply the protection? Please reply Yes/No."
+)
 _policy_confirmation_pending: dict[str, dict[str, Any]] = {}
 _policy_confirmation_lock = threading.Lock()
 _MAX_POLICY_CONFIRMATION_PENDING = 256
@@ -152,9 +157,7 @@ _policy_confirmation_apply_info: dict[str, dict[str, Any]] = {}
 _policy_confirmation_no_apply: set[str] = set()
 _policy_config_metadata_cache_key: Optional[str] = None
 _policy_config_metadata_cache_value: Optional[dict[str, Any]] = None
-_TOOL_RESULT_NAME_INDEX_RE = re.compile(
-    r"^(?P<tool_name>.+)\.(?P<index>\d+)$"
-)
+_TOOL_RESULT_NAME_INDEX_RE = re.compile(r"^(?P<tool_name>.+)\.(?P<index>\d+)$")
 _TOOL_RESULT_LEGACY_NAME_INDEX_RE = re.compile(
     r"^tool\.(?P<tool_name>.+)\.result\.call_(?P<index>\d+)$"
 )
@@ -264,7 +267,10 @@ def _trace_state_from_dict(device_key: str, payload: Any) -> Optional[_TraceStat
         root_observation_id = None
 
     current_turn_observation_id = payload.get("current_turn_observation_id")
-    if not isinstance(current_turn_observation_id, str) or not current_turn_observation_id:
+    if (
+        not isinstance(current_turn_observation_id, str)
+        or not current_turn_observation_id
+    ):
         current_turn_observation_id = None
 
     turn_index = payload.get("turn_index")
@@ -416,7 +422,9 @@ def _max_emitted_tool_result_index(
     return max_index
 
 
-def _load_trace_state_snapshot_from_disk() -> tuple[dict[str, _TraceState], dict[str, str], Optional[int]]:
+def _load_trace_state_snapshot_from_disk() -> tuple[
+    dict[str, _TraceState], dict[str, str], Optional[int]
+]:
     try:
         stat = _TRACE_STATE_FILE.stat()
     except FileNotFoundError:
@@ -661,7 +669,9 @@ def _extract_text_from_responses_input(input_payload: Any) -> str:
     return ""
 
 
-def _extract_stream_text_from_responses_chunk(chunk: Any, chunk_dump: Optional[dict]) -> str:
+def _extract_stream_text_from_responses_chunk(
+    chunk: Any, chunk_dump: Optional[dict]
+) -> str:
     """Extract delta text from a Responses API stream chunk."""
     text_parts: list[str] = []
     # LiteLLM helper can parse ModelResponseStream/ModelResponse chunks.
@@ -762,7 +772,9 @@ def _truncate_messages_after_last_reset(messages: list[Any]) -> list[Any]:
     return tail
 
 
-def _find_match_in_messages(messages: list[Any], pattern: re.Pattern[str]) -> Optional[str]:
+def _find_match_in_messages(
+    messages: list[Any], pattern: re.Pattern[str]
+) -> Optional[str]:
     for msg in reversed(messages):
         if not isinstance(msg, dict):
             continue
@@ -775,7 +787,9 @@ def _find_match_in_messages(messages: list[Any], pattern: re.Pattern[str]) -> Op
     return None
 
 
-def _extract_current_session_from_text(text: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+def _extract_current_session_from_text(
+    text: Optional[str],
+) -> tuple[Optional[str], Optional[str]]:
     """Parse nanobot-style system prompt section:
     '## Current Session\\nChannel: <channel>\\nChat ID: <chat_id>'
     """
@@ -799,7 +813,9 @@ def _extract_current_session_from_text(text: Optional[str]) -> tuple[Optional[st
     return (channel or None, chat_id or None)
 
 
-def _extract_current_session_from_messages(messages: list[Any]) -> tuple[Optional[str], Optional[str]]:
+def _extract_current_session_from_messages(
+    messages: list[Any],
+) -> tuple[Optional[str], Optional[str]]:
     # Prefer the latest system prompt since it contains the current routing context.
     latest_system_text = _extract_latest_message_text(messages, role="system")
     channel, chat_id = _extract_current_session_from_text(latest_system_text)
@@ -885,7 +901,9 @@ def _extract_reset_requested_from_metadata(incoming: dict) -> bool:
 
 def _parse_device_key(device_key: str) -> tuple[str, str]:
     raw_channel, _, raw_user_id = device_key.partition(":")
-    channel = _normalize_device_fragment(raw_channel) if raw_channel else "unknown-channel"
+    channel = (
+        _normalize_device_fragment(raw_channel) if raw_channel else "unknown-channel"
+    )
     user_id = _normalize_device_fragment(raw_user_id) if raw_user_id else "unknown-user"
     return channel, user_id
 
@@ -924,7 +942,9 @@ def _get_latest_user_id_for_channel_including_anonymous(channel: str) -> Optiona
     _sync_trace_state_from_disk()
     with _trace_state_lock:
         states = [s for s in _trace_state_by_device.values() if s.channel == channel]
-        user_ids = {s.user_id for s in states if isinstance(s.user_id, str) and s.user_id}
+        user_ids = {
+            s.user_id for s in states if isinstance(s.user_id, str) and s.user_id
+        }
         non_anonymous = {u for u in user_ids if not u.startswith("anonymous-")}
         # If we have real user ids, only proceed when there's exactly one.
         if non_anonymous and len(non_anonymous) != 1:
@@ -949,7 +969,9 @@ def _build_device_context(incoming: dict) -> _DeviceContext:
 
     latest_user_text = _extract_latest_message_text(messages, role="user")
     if not latest_user_text and _is_responses_api_request(incoming):
-        latest_user_text = _extract_text_from_responses_input(incoming.get("input")) or None
+        latest_user_text = (
+            _extract_text_from_responses_input(incoming.get("input")) or None
+        )
     latest_system_text = _extract_latest_message_text(messages, role="system")
     first_system_text = _extract_first_message_text(messages, role="system")
 
@@ -964,7 +986,9 @@ def _build_device_context(incoming: dict) -> _DeviceContext:
         metadata_channel_hint = parsed_channel
         metadata_user_id_hint = parsed_user_id
 
-    channel = channel_value or session_channel or metadata_channel_hint or "unknown-channel"
+    channel = (
+        channel_value or session_channel or metadata_channel_hint or "unknown-channel"
+    )
     has_explicit_user_id = bool(
         (conversation_value and conversation_value.strip())
         or (session_chat_id and session_chat_id.strip())
@@ -987,10 +1011,15 @@ def _build_device_context(incoming: dict) -> _DeviceContext:
         channel = metadata_channel_hint
 
     normalized_user_cmd = (latest_user_text or "").strip().lower()
-    reset_requested = _extract_reset_requested_from_metadata(incoming) or normalized_user_cmd in {
-        "/new",
-        "/reset",
-    } or _is_reset_request_text(latest_user_text)
+    reset_requested = (
+        _extract_reset_requested_from_metadata(incoming)
+        or normalized_user_cmd
+        in {
+            "/new",
+            "/reset",
+        }
+        or _is_reset_request_text(latest_user_text)
+    )
 
     if raw_user_id == "unknown-user":
         # If this turn doesn't include a conversation_label / chat id (common for some
@@ -1025,9 +1054,7 @@ def _build_device_context(incoming: dict) -> _DeviceContext:
     device_key = f"{channel}:{user_id}"
 
     latest_user_fingerprint = (
-        hashlib.sha256(
-            latest_user_text.encode("utf-8", errors="ignore")
-        ).hexdigest()
+        hashlib.sha256(latest_user_text.encode("utf-8", errors="ignore")).hexdigest()
         if latest_user_text
         else None
     )
@@ -1147,8 +1174,13 @@ def _resolve_trace_state_from_metadata(
             if current.trace_id == trace_id:
                 if context.latest_user_fingerprint:
                     current.last_user_fingerprint = context.latest_user_fingerprint
-                    if context.latest_user_message_count > current.last_user_message_count:
-                        current.last_user_message_count = context.latest_user_message_count
+                    if (
+                        context.latest_user_message_count
+                        > current.last_user_message_count
+                    ):
+                        current.last_user_message_count = (
+                            context.latest_user_message_count
+                        )
                     if context.reset_requested:
                         current.last_reset_fingerprint = context.latest_user_fingerprint
                 result = current
@@ -1158,8 +1190,13 @@ def _resolve_trace_state_from_metadata(
                 # that still include the previous arbiteros_trace_id.
                 if context.latest_user_fingerprint:
                     current.last_user_fingerprint = context.latest_user_fingerprint
-                    if context.latest_user_message_count > current.last_user_message_count:
-                        current.last_user_message_count = context.latest_user_message_count
+                    if (
+                        context.latest_user_message_count
+                        > current.last_user_message_count
+                    ):
+                        current.last_user_message_count = (
+                            context.latest_user_message_count
+                        )
                     if context.reset_requested:
                         current.last_reset_fingerprint = context.latest_user_fingerprint
                 result = current
@@ -1220,9 +1257,9 @@ def _should_emit_response_once(state: _TraceState, payload: dict) -> bool:
         "transformed_content": payload.get("transformed_content"),
     }
     key = hashlib.sha256(
-        json.dumps(dedupe_payload, ensure_ascii=False, sort_keys=True, default=str).encode(
-            "utf-8", errors="ignore"
-        )
+        json.dumps(
+            dedupe_payload, ensure_ascii=False, sort_keys=True, default=str
+        ).encode("utf-8", errors="ignore")
     ).hexdigest()
     with _trace_state_lock:
         if key in _recent_response_key_set:
@@ -1246,7 +1283,9 @@ def _get_langfuse_client() -> Optional[Langfuse]:
 
     ensure_langfuse_env_compat()
 
-    timeout = int(os.getenv("ARBITEROS_LANGFUSE_TIMEOUT", os.getenv("LANGFUSE_TIMEOUT", "15")))
+    timeout = int(
+        os.getenv("ARBITEROS_LANGFUSE_TIMEOUT", os.getenv("LANGFUSE_TIMEOUT", "15"))
+    )
     flush_at = int(os.getenv("ARBITEROS_LANGFUSE_FLUSH_AT", "1"))
     flush_interval = float(os.getenv("ARBITEROS_LANGFUSE_FLUSH_INTERVAL", "1"))
 
@@ -1331,9 +1370,9 @@ def _build_kernel_step_name(
     *, category: str, context: _DeviceContext, state: _TraceState
 ) -> str:
     kernel_name = f"kernel.{category.lower()}"
-    topic_preview = _short_text_preview(context.latest_user_text) or _short_text_preview(
-        state.latest_user_preview
-    )
+    topic_preview = _short_text_preview(
+        context.latest_user_text
+    ) or _short_text_preview(state.latest_user_preview)
     if topic_preview:
         return f"{topic_preview} - {kernel_name}"
     return kernel_name
@@ -1466,7 +1505,9 @@ def _normalize_topic_summary(
         if lowered in dedupe:
             continue
         dedupe.add(lowered)
-        out.append(_short_text_preview(part_clean, max_chars=max_point_chars) or part_clean)
+        out.append(
+            _short_text_preview(part_clean, max_chars=max_point_chars) or part_clean
+        )
         if len(out) >= max_points:
             break
 
@@ -1567,7 +1608,11 @@ def _enforce_topic_point_count_on_shift(
     user_preview = _short_text_preview(latest_user_turn, max_chars=200)
 
     # If user is still on the same topic, collapse to a single best-matching point.
-    if prev_preview and user_preview and _topic_overlap_score(prev_preview, user_preview) >= 0.20:
+    if (
+        prev_preview
+        and user_preview
+        and _topic_overlap_score(prev_preview, user_preview) >= 0.20
+    ):
         best = max(points, key=lambda p: _topic_overlap_score(p, prev_preview))
         return _short_text_preview(best, max_chars=max_total_chars) or best
 
@@ -1701,7 +1746,9 @@ def _emit_langfuse_node(
         start_kwargs: dict[str, Any] = {
             "trace_context": {"trace_id": state.trace_id},
             "name": name,
-            "as_type": "generation" if observation_type == "generation" else observation_type,
+            "as_type": "generation"
+            if observation_type == "generation"
+            else observation_type,
             "input": input_payload,
             "metadata": node_metadata,
         }
@@ -1756,7 +1803,9 @@ def _emit_langfuse_node(
         emitted_observation_id = getattr(obs, "id", None)
         if end_observation:
             obs.end()
-        return emitted_observation_id if isinstance(emitted_observation_id, str) else None
+        return (
+            emitted_observation_id if isinstance(emitted_observation_id, str) else None
+        )
     except Exception as exc:
         _save_json(
             "langfuse_emit_error",
@@ -1890,7 +1939,9 @@ def _build_policy_config_for_langfuse() -> dict[str, Any]:
         cfg_jsonable = {}
 
     source = _resolve_policy_config_source_for_langfuse()
-    serialized = json.dumps(cfg_jsonable, ensure_ascii=False, sort_keys=True, default=str)
+    serialized = json.dumps(
+        cfg_jsonable, ensure_ascii=False, sort_keys=True, default=str
+    )
     max_chars = max(
         2048,
         int(os.getenv("ARBITEROS_LANGFUSE_POLICY_CONFIG_MAX_CHARS", "24000")),
@@ -1900,9 +1951,8 @@ def _build_policy_config_for_langfuse() -> dict[str, Any]:
     ).hexdigest()
 
     with _policy_config_metadata_cache_lock:
-        if (
-            _policy_config_metadata_cache_key == cache_key
-            and isinstance(_policy_config_metadata_cache_value, dict)
+        if _policy_config_metadata_cache_key == cache_key and isinstance(
+            _policy_config_metadata_cache_value, dict
         ):
             return dict(_policy_config_metadata_cache_value)
 
@@ -1970,7 +2020,9 @@ def _record_policy_protected_tool_calls(
         by_trace[blocked_id] = reason
 
 
-def _add_instructions_from_modified_response(builder: Any, modified_response: dict) -> int:
+def _add_instructions_from_modified_response(
+    builder: Any, modified_response: dict
+) -> int:
     """
     根据 modified_response 追加 instructions（tool_calls 先，再 content）。
     返回新增的 instruction 数量，供调用方标记 policy_protected。
@@ -2013,7 +2065,9 @@ def _replace_instructions_from_modified_response(
     if InstructionBuilder is None or builder is None:
         return
     instructions = getattr(builder, "instructions", None)
-    if not isinstance(instructions, list) or instruction_start_index >= len(instructions):
+    if not isinstance(instructions, list) or instruction_start_index >= len(
+        instructions
+    ):
         return
 
     # 1. 删除本次添加的 instructions
@@ -2045,13 +2099,13 @@ def _replace_instructions_from_modified_response(
             pass
 
 
-def _extract_tool_call_details_from_response(response_dict: Optional[dict]) -> list[dict[str, Any]]:
+def _extract_tool_call_details_from_response(
+    response_dict: Optional[dict],
+) -> list[dict[str, Any]]:
     """从 LLM 响应中提取 tool_calls 的 (id, name, arguments)，用于 post_call_success 时立即存储。"""
     out: list[dict[str, Any]] = []
     raw_tool_calls = (
-        response_dict.get("tool_calls")
-        if isinstance(response_dict, dict)
-        else None
+        response_dict.get("tool_calls") if isinstance(response_dict, dict) else None
     )
     if not isinstance(raw_tool_calls, list):
         return out
@@ -2068,16 +2122,16 @@ def _extract_tool_call_details_from_response(response_dict: Optional[dict]) -> l
             else "unknown_tool"
         )
         raw_args = fn.get("arguments") if isinstance(fn, dict) else None
-        parsed_args = (
-            _safe_json_loads(raw_args)
-            if isinstance(raw_args, str)
-            else None
+        parsed_args = _safe_json_loads(raw_args) if isinstance(raw_args, str) else None
+        out.append(
+            {
+                "tool_call_id": tool_call_id,
+                "tool_name": tool_name.strip() or "unknown_tool",
+                "arguments": parsed_args
+                if isinstance(parsed_args, dict)
+                else (raw_args or {}),
+            }
         )
-        out.append({
-            "tool_call_id": tool_call_id,
-            "tool_name": tool_name.strip() or "unknown_tool",
-            "arguments": parsed_args if isinstance(parsed_args, dict) else (raw_args or {}),
-        })
     return out
 
 
@@ -2172,9 +2226,9 @@ def _should_emit_tool_result_once(state: _TraceState, payload: dict) -> bool:
         "content": payload.get("content"),
     }
     key = hashlib.sha256(
-        json.dumps(dedupe_payload, ensure_ascii=False, sort_keys=True, default=str).encode(
-            "utf-8", errors="ignore"
-        )
+        json.dumps(
+            dedupe_payload, ensure_ascii=False, sort_keys=True, default=str
+        ).encode("utf-8", errors="ignore")
     ).hexdigest()
     with _trace_state_lock:
         if key in _recent_tool_result_key_set:
@@ -2190,7 +2244,9 @@ def _should_emit_tool_result_once(state: _TraceState, payload: dict) -> bool:
 def _sanitize_error_text_for_langfuse(text: str) -> str:
     # Remove prompt-injection wrapper blocks from tool error payloads.
     sanitized = _SECURITY_NOTICE_RE.sub("[security notice omitted]", text)
-    sanitized = _EXTERNAL_UNTRUSTED_BLOCK_RE.sub("[external untrusted content omitted]", sanitized)
+    sanitized = _EXTERNAL_UNTRUSTED_BLOCK_RE.sub(
+        "[external untrusted content omitted]", sanitized
+    )
     sanitized = sanitized.replace("<<<EXTERNAL_UNTRUSTED_CONTENT>>>", "")
     sanitized = sanitized.replace("<<<END_EXTERNAL_UNTRUSTED_CONTENT>>>", "")
     sanitized = re.sub(r"\n{3,}", "\n\n", sanitized).strip()
@@ -2212,7 +2268,9 @@ def _format_tool_result_output_for_langfuse(content: Any) -> dict:
         top_block = "\n".join(t.splitlines()[:8]).lower()
 
         # Strong indicators: explicit error wrappers at the beginning.
-        if lowered.startswith(("error:", "exception:", "traceback (most recent call last):")):
+        if lowered.startswith(
+            ("error:", "exception:", "traceback (most recent call last):")
+        ):
             return True
         if lowered.startswith(("错误:", "异常:", "失败:")):
             return True
@@ -2223,24 +2281,21 @@ def _format_tool_result_output_for_langfuse(content: Any) -> dict:
             return True
 
         # Strong indicators: HTTP/transport failures near the top of the payload.
-        if (
-            re.search(r"\b(4\d{2}|5\d{2})\b", top_block)
-            and (
-                "client error" in top_block
-                or "server error" in top_block
-                or "bad request" in top_block
-                or "unauthorized" in top_block
-                or "forbidden" in top_block
-                or "not found" in top_block
-                or "too many requests" in top_block
-                or "internal server error" in top_block
-                or "bad gateway" in top_block
-                or "service unavailable" in top_block
-                or "gateway timeout" in top_block
-                or "status code:" in top_block
-                or "error code:" in top_block
-                or "http/1.1" in top_block
-            )
+        if re.search(r"\b(4\d{2}|5\d{2})\b", top_block) and (
+            "client error" in top_block
+            or "server error" in top_block
+            or "bad request" in top_block
+            or "unauthorized" in top_block
+            or "forbidden" in top_block
+            or "not found" in top_block
+            or "too many requests" in top_block
+            or "internal server error" in top_block
+            or "bad gateway" in top_block
+            or "service unavailable" in top_block
+            or "gateway timeout" in top_block
+            or "status code:" in top_block
+            or "error code:" in top_block
+            or "http/1.1" in top_block
         ):
             return True
         if (
@@ -2317,7 +2372,9 @@ def _format_tool_result_output_for_langfuse(content: Any) -> dict:
             payload["warning"] = _sanitize_error_text_for_langfuse(warning)
         if isinstance(warnings, list):
             payload["warnings"] = [
-                _sanitize_error_text_for_langfuse(item) if isinstance(item, str) else item
+                _sanitize_error_text_for_langfuse(item)
+                if isinstance(item, str)
+                else item
                 for item in warnings
             ]
 
@@ -2402,17 +2459,13 @@ def _format_tool_result_output_for_langfuse(content: Any) -> dict:
                 if isinstance(first_warning, str):
                     status_message = first_warning
             if status_message is None:
-                status_message = (
-                    f"{tool if isinstance(tool, str) else 'tool'} returned warning status"
-                )
+                status_message = f"{tool if isinstance(tool, str) else 'tool'} returned warning status"
         elif level == "POLICY_VIOLATION":
             policy_reason = payload.get("policy_protected")
             if isinstance(policy_reason, str) and policy_reason.strip():
                 status_message = _sanitize_error_text_for_langfuse(policy_reason)
             else:
-                status_message = (
-                    f"{tool if isinstance(tool, str) else 'tool'} action was blocked by policy"
-                )
+                status_message = f"{tool if isinstance(tool, str) else 'tool'} action was blocked by policy"
 
         if isinstance(status_message, str):
             status_message = re.sub(r"\s+", " ", status_message).strip()
@@ -2549,7 +2602,9 @@ def _emit_tool_result_nodes_if_needed(request_data: dict, state: _TraceState) ->
                         arguments=tool_arguments or {},
                         result=parsed_result,
                     )
-                    instruction_for_metadata = instr if isinstance(instr, dict) else None
+                    instruction_for_metadata = (
+                        instr if isinstance(instr, dict) else None
+                    )
                     # tool call 第二次记录（含 result）：若该 tool_call_id 曾被 policy 保护，加 policy_protected
                     if (
                         isinstance(policy_protected_reason, str)
@@ -2569,10 +2624,7 @@ def _emit_tool_result_nodes_if_needed(request_data: dict, state: _TraceState) ->
         formatted_result = _format_tool_result_output_for_langfuse(content)
         emitted_level = formatted_result.get("level")
         emitted_status_message = formatted_result.get("status_message")
-        if (
-            isinstance(policy_protected_reason, str)
-            and policy_protected_reason.strip()
-        ):
+        if isinstance(policy_protected_reason, str) and policy_protected_reason.strip():
             normalized_policy_reason = _normalize_policy_violation_reason(
                 policy_protected_reason
             )
@@ -2675,7 +2727,9 @@ def _ensure_turn_node_if_needed(context: _DeviceContext, state: _TraceState) -> 
     next_turn_index = 0
     preview = _short_text_preview(context.latest_user_text)
     with _trace_state_lock:
-        fingerprint_changed = state.last_user_fingerprint != context.latest_user_fingerprint
+        fingerprint_changed = (
+            state.last_user_fingerprint != context.latest_user_fingerprint
+        )
         message_count_advanced = (
             context.latest_user_message_count > 0
             and context.latest_user_message_count > state.last_user_message_count
@@ -2803,10 +2857,9 @@ def _emit_response_nodes(
             n: policy_descriptions.get(n, "") for n in policy_names_list
         }
     policy_confirmation_metadata: dict[str, Any] = {}
-    if (
-        isinstance(policy_confirmation_state, str)
-        and policy_confirmation_state.strip() in {"ask", "accepted", "rejected"}
-    ):
+    if isinstance(
+        policy_confirmation_state, str
+    ) and policy_confirmation_state.strip() in {"ask", "accepted", "rejected"}:
         normalized_confirmation_state = policy_confirmation_state.strip()
         policy_confirmation_metadata["policy_confirmation_state"] = (
             normalized_confirmation_state
@@ -2875,9 +2928,9 @@ def _emit_response_nodes(
         )
         blocked_policy_reasons: list[str] = []
         policy_reason_by_call_id = _policy_protected_tool_call_ids.get(state.trace_id)
-        has_targeted_policy_tool_calls = (
-            isinstance(policy_reason_by_call_id, dict) and bool(policy_reason_by_call_id)
-        )
+        has_targeted_policy_tool_calls = isinstance(
+            policy_reason_by_call_id, dict
+        ) and bool(policy_reason_by_call_id)
         for tc_position, tc_detail in enumerate(parsed_tool_calls):
             tool_call_id = tc_detail.get("tool_call_id")
             tool_name = tc_detail.get("tool_name")
@@ -2910,7 +2963,10 @@ def _emit_response_nodes(
                         maybe_reason = policy_reason_by_call_id.pop(tool_call_id, None)
                     if isinstance(maybe_reason, str) and maybe_reason.strip():
                         raw_policy_reason = maybe_reason
-                if raw_policy_reason is None and tool_call_id not in post_policy_tool_call_ids:
+                if (
+                    raw_policy_reason is None
+                    and tool_call_id not in post_policy_tool_call_ids
+                ):
                     raw_policy_reason = f"tool={tool_name} action was blocked by policy"
             if (
                 raw_policy_reason is None
@@ -2963,12 +3019,9 @@ def _emit_response_nodes(
             _policy_protected_tool_call_ids.pop(state.trace_id, None)
         deduped_policy_reasons = list(dict.fromkeys(blocked_policy_reasons))
         all_tool_calls_blocked = len(post_policy_tool_call_ids) == 0
-        should_emit_policy_block_output = (
-            all_tool_calls_blocked
-            and (
-                bool(deduped_policy_reasons)
-                or isinstance(normalized_policy_violation_reason, str)
-            )
+        should_emit_policy_block_output = all_tool_calls_blocked and (
+            bool(deduped_policy_reasons)
+            or isinstance(normalized_policy_violation_reason, str)
         )
         if should_emit_policy_block_output:
             policy_reason_for_output = (
@@ -2976,7 +3029,10 @@ def _emit_response_nodes(
                 if deduped_policy_reasons
                 else normalized_policy_violation_reason
             )
-            if not isinstance(policy_reason_for_output, str) or not policy_reason_for_output:
+            if (
+                not isinstance(policy_reason_for_output, str)
+                or not policy_reason_for_output
+            ):
                 policy_reason_for_output = "tool_call action was blocked by policy"
             output_content = (
                 response_after_transform.get("content")
@@ -2984,9 +3040,7 @@ def _emit_response_nodes(
                 else None
             )
             if not isinstance(output_content, str) or not output_content.strip():
-                output_content = (
-                    f"Tool call blocked by policy before execution: {policy_reason_for_output}"
-                )
+                output_content = f"Tool call blocked by policy before execution: {policy_reason_for_output}"
             turn_idx = max(state.turn_index, 1)
             output_name = f"{_NODE_NAMESPACE_PREFIX}.output.turn_{turn_idx:03d}"
             output_category = "EXECUTION_CORE__TOOL_CALL"
@@ -3132,7 +3186,9 @@ def _emit_response_nodes(
         or _extract_policy_violation_reason_from_text(output_content)
     )
     if isinstance(policy_block_reason, str) and policy_block_reason.strip():
-        normalized_policy_reason = _normalize_policy_violation_reason(policy_block_reason)
+        normalized_policy_reason = _normalize_policy_violation_reason(
+            policy_block_reason
+        )
         output_policy_metadata = {
             "policy_protected": normalized_policy_reason,
             "policy_violation": True,
@@ -3164,8 +3220,12 @@ def _emit_response_nodes(
             max_total_chars=max_topic_chars,
         )
         if not llm_topic_clean:
-            llm_topic_preview = _short_text_preview(llm_topic_raw, max_chars=max_topic_chars)
-            llm_topic_clean = _clean_topic_point(llm_topic_preview) if llm_topic_preview else None
+            llm_topic_preview = _short_text_preview(
+                llm_topic_raw, max_chars=max_topic_chars
+            )
+            llm_topic_clean = (
+                _clean_topic_point(llm_topic_preview) if llm_topic_preview else None
+            )
     llm_topic_candidate = _sanitize_topic_preview(
         llm_topic_clean,
         max_chars=max_topic_chars,
@@ -3206,7 +3266,9 @@ def _emit_response_nodes(
             **policy_confirmation_extra_metadata,
             **output_policy_metadata,
             **_build_policy_metadata(
-                instruction_type=_normalize_category_to_instruction_type(effective_category),
+                instruction_type=_normalize_category_to_instruction_type(
+                    effective_category
+                ),
                 instruction_category=effective_category,
             ),
         },
@@ -3251,7 +3313,9 @@ def _emit_response_nodes(
             **policy_confirmation_extra_metadata,
             **kernel_policy_metadata,
             **_build_policy_metadata(
-                instruction_type=_normalize_category_to_instruction_type(effective_category),
+                instruction_type=_normalize_category_to_instruction_type(
+                    effective_category
+                ),
                 instruction_category=effective_category,
             ),
         },
@@ -3330,7 +3394,9 @@ def _ensure_non_empty_assistant_message(
     return {**message_dict, "content": fallback_text}
 
 
-def _emit_failure_node(request_data: Optional[dict], original_exception: Exception) -> None:
+def _emit_failure_node(
+    request_data: Optional[dict], original_exception: Exception
+) -> None:
     incoming = request_data if isinstance(request_data, dict) else {}
     context = _build_device_context(incoming)
     state = _resolve_trace_state_from_metadata(incoming, context=context)
@@ -3384,7 +3450,11 @@ def _resolve_category_cache_trace_id(data: dict) -> Optional[str]:
 
 def _get_instruction_builder_for_trace(trace_id: str) -> Optional[Any]:
     """Get or create InstructionBuilder for a trace_id. Returns None if instruction_parsing unavailable."""
-    if InstructionBuilder is None or not isinstance(trace_id, str) or not trace_id.strip():
+    if (
+        InstructionBuilder is None
+        or not isinstance(trace_id, str)
+        or not trace_id.strip()
+    ):
         return None
     with _instruction_builders_lock:
         builder = _instruction_builders_by_trace.get(trace_id)
@@ -3420,7 +3490,9 @@ def _peek_instruction_builder_for_trace(trace_id: str) -> Optional[Any]:
         return _instruction_builders_by_trace.get(trace_id)
 
 
-def _build_instruction_parser_snapshot(trace_id: str, builder: Optional[Any]) -> dict[str, Any]:
+def _build_instruction_parser_snapshot(
+    trace_id: str, builder: Optional[Any]
+) -> dict[str, Any]:
     trace_file = _INSTRUCTION_LOG_DIR / f"{trace_id}.json"
     snapshot: dict[str, Any] = {
         "instruction_file": str(trace_file),
@@ -3486,7 +3558,9 @@ def _build_policy_metadata(
     This is intentionally small/stable so UIs can render high-level policy nodes.
     """
     out: dict[str, Any] = {}
-    itype = instruction_type.strip().upper() if isinstance(instruction_type, str) else None
+    itype = (
+        instruction_type.strip().upper() if isinstance(instruction_type, str) else None
+    )
     if itype:
         out["instruction_type"] = itype
     if isinstance(instruction_category, str) and instruction_category.strip():
@@ -3511,13 +3585,11 @@ def _build_policy_metadata(
         out["policy_security_type"] = security_type
         # Also mirror the most-used fields at top-level for easier querying.
         for k in (
-            "authority_label",
+            "authority",
             "confidentiality",
-            "integrity",
             "trustworthiness",
             "confidence",
             "reversible",
-            "confidentiality_label",
         ):
             if k in security_type:
                 out[f"policy_{k}"] = security_type.get(k)
@@ -3542,7 +3614,9 @@ def _emit_instruction_parser_node(
     parent_observation_id: Optional[str] = None,
 ) -> Optional[str]:
     turn_idx = max(state.turn_index, 1)
-    parser_node_name = f"{_NODE_NAMESPACE_PREFIX}.parser.turn_{turn_idx:03d}.{parser_stage}"
+    parser_node_name = (
+        f"{_NODE_NAMESPACE_PREFIX}.parser.turn_{turn_idx:03d}.{parser_stage}"
+    )
     return _emit_langfuse_node(
         state=state,
         node_type="parser",
@@ -3559,7 +3633,8 @@ def _emit_instruction_parser_node(
         },
         level=level,
         status_message=status_message,
-        parent_observation_id=parent_observation_id or _current_parent_observation_id(state),
+        parent_observation_id=parent_observation_id
+        or _current_parent_observation_id(state),
         trace_name=_build_trace_display_name(state),
     )
 
@@ -3588,9 +3663,7 @@ def _record_stripped_category(
     if not trace_id:
         return
     normalized_category = category if isinstance(category, str) else ""
-    normalized_topic = (
-        topic if isinstance(topic, str) and topic.strip() else None
-    )
+    normalized_topic = topic if isinstance(topic, str) and topic.strip() else None
     with _stripped_categories_lock:
         categories = _stripped_categories_by_trace.setdefault(trace_id, [])
         categories.append(normalized_category)
@@ -3756,7 +3829,9 @@ def _detect_policy_confirmation_reply(messages: list) -> Optional[bool]:
     return True
 
 
-def _msg_dict_to_model_response(msg_dict: dict, model: str = "arbiteros-policy") -> ModelResponse:
+def _msg_dict_to_model_response(
+    msg_dict: dict, model: str = "arbiteros-policy"
+) -> ModelResponse:
     """Build ModelResponse from message dict for mock_response."""
     msg = dict(msg_dict)
     if "role" not in msg:
@@ -3771,11 +3846,13 @@ def _add_instruction_for_non_strict(data: dict, content: str) -> None:
         return
     metadata = data.get("metadata") if isinstance(data, dict) else {}
     trace_id = (
-        metadata.get("arbiteros_trace_id")
-        if isinstance(metadata, dict)
-        else None
+        metadata.get("arbiteros_trace_id") if isinstance(metadata, dict) else None
     )
-    if not isinstance(trace_id, str) or not trace_id.strip() or InstructionBuilder is None:
+    if (
+        not isinstance(trace_id, str)
+        or not trace_id.strip()
+        or InstructionBuilder is None
+    ):
         return
     builder = _get_instruction_builder_for_trace(trace_id)
     if builder is None:
@@ -3827,13 +3904,20 @@ def _response_transform_content_only(data: dict, message_dict: dict) -> Optional
                 if isinstance(metadata, dict)
                 else None
             )
-            if isinstance(trace_id, str) and trace_id.strip() and InstructionBuilder is not None:
+            if (
+                isinstance(trace_id, str)
+                and trace_id.strip()
+                and InstructionBuilder is not None
+            ):
                 builder = _get_instruction_builder_for_trace(trace_id)
                 if builder is not None:
                     instruction_type = _normalize_category_to_instruction_type(category)
                     try:
                         builder.add_from_structured_output(
-                            structured={"intent": instruction_type, "content": inner_content}
+                            structured={
+                                "intent": instruction_type,
+                                "content": inner_content,
+                            }
                         )
                         _save_instructions_to_trace_file(trace_id, builder)
                     except Exception:
@@ -3864,7 +3948,9 @@ def _response_transform_content_only(data: dict, message_dict: dict) -> Optional
     return message_dict
 
 
-def _extract_text_to_wrap(msg: dict) -> tuple[Optional[str], Optional[Any], Optional[int]]:
+def _extract_text_to_wrap(
+    msg: dict,
+) -> tuple[Optional[str], Optional[Any], Optional[int]]:
     """
     从一条 assistant 消息里取出需要包结构的纯文本。
     是否包由 category list 严格回溯：剥了才记录，没剥不记录。包时严格按 list 来，无需额外判断。
@@ -3897,7 +3983,11 @@ def _inject_topic_summary_hint(
 ) -> dict:
     messages = data.get("messages")
 
-    previous_topic_raw = state.latest_topic_summary if isinstance(state.latest_topic_summary, str) else None
+    previous_topic_raw = (
+        state.latest_topic_summary
+        if isinstance(state.latest_topic_summary, str)
+        else None
+    )
     previous_topic = (
         _normalize_topic_summary(
             previous_topic_raw,
@@ -3932,8 +4022,8 @@ def _inject_topic_summary_hint(
         "- Do NOT include control/reset words: new session, /new, /reset, reset session, 重置会话, 重制对话, greet user, next, please wait, kernel.*, execution_core.\n"
         "- If latest user turn is only reset/new-session control text, return an empty topic unless this is turn.001 with no other topic context.\n"
         "- If latest user turn is generic/greeting, keep the current summarized topic.\n"
-        "- If the best topic is the same as current summarized topic, return an empty string \"\" to reuse previous topic.\n"
-        "- If latest turn is follow-up that changes time/scope (example: from 今日天气 to 明天呢), generate a new topic instead of \"\".\n"
+        '- If the best topic is the same as current summarized topic, return an empty string "" to reuse previous topic.\n'
+        '- If latest turn is follow-up that changes time/scope (example: from 今日天气 to 明天呢), generate a new topic instead of "".\n'
         "Fallback order for `topic`: current summarized topic -> latest user turn.\n"
         f"Current summarized topic: {previous_topic}\n"
         f"Latest user turn: {latest_user_turn}"
@@ -4036,7 +4126,9 @@ def _merge_agent_response_format_into_content(data: dict) -> None:
     }
 
 
-def _wrap_messages_with_categories(data: dict, *, trace_id: Optional[str] = None) -> dict:
+def _wrap_messages_with_categories(
+    data: dict, *, trace_id: Optional[str] = None
+) -> dict:
     """在 pre_call 前把 incoming 里 role=assistant 且 content 有文本的 history 从后往前包回结构。
     包的时候从 category/topic 列表末尾往前按位置取，与 history 一一对应。
     遇到 NO_WRAP label 则不包，保持原样。
@@ -4125,12 +4217,14 @@ class MyCustomHandler(CustomLogger):
         metadata = data.get("metadata") if isinstance(data, dict) else None
         bound_trace_id = (
             metadata.get("arbiteros_trace_id")
-            if isinstance(metadata, dict) and isinstance(metadata.get("arbiteros_trace_id"), str)
+            if isinstance(metadata, dict)
+            and isinstance(metadata.get("arbiteros_trace_id"), str)
             else None
         )
         bound_device_key = (
             metadata.get("arbiteros_device_key")
-            if isinstance(metadata, dict) and isinstance(metadata.get("arbiteros_device_key"), str)
+            if isinstance(metadata, dict)
+            and isinstance(metadata.get("arbiteros_device_key"), str)
             else None
         )
         created_new_trace = False
@@ -4193,7 +4287,11 @@ class MyCustomHandler(CustomLogger):
                     "reason": (
                         "reset_requested"
                         if context.reset_requested
-                        else ("external_trace_binding" if bound_trace_id else "new_device_or_session")
+                        else (
+                            "external_trace_binding"
+                            if bound_trace_id
+                            else "new_device_or_session"
+                        )
                     )
                 },
                 metadata={
@@ -4220,12 +4318,17 @@ class MyCustomHandler(CustomLogger):
                 )
                 # 第一次保护时：客户端可能未带 trace_id，导致 trace_id_for_cache 与存储时不一致，fallback 用唯一 pending
                 if pending is None and len(_policy_confirmation_pending) == 1:
-                    actual_tid, pending = next(iter(_policy_confirmation_pending.items()))
+                    actual_tid, pending = next(
+                        iter(_policy_confirmation_pending.items())
+                    )
                     _policy_confirmation_pending.pop(actual_tid, None)
                     trace_id_for_cache = actual_tid
                     # 确保 response 带正确 trace_id，供客户端下次请求使用
                     meta = data.get("metadata") or {}
-                    data = {**data, "metadata": {**meta, "arbiteros_trace_id": actual_tid}}
+                    data = {
+                        **data,
+                        "metadata": {**meta, "arbiteros_trace_id": actual_tid},
+                    }
                     # 同步 state，使后续请求用正确 trace_id
                     if state is not None and state.device_key:
                         with _trace_state_lock:
@@ -4235,7 +4338,11 @@ class MyCustomHandler(CustomLogger):
                         _persist_trace_state_to_disk()
             if pending is not None and trace_id_for_cache:
                 apply = _policy_confirm_apply
-                cached = pending["protected_response"] if apply else pending["original_response"]
+                cached = (
+                    pending["protected_response"]
+                    if apply
+                    else pending["original_response"]
+                )
                 if isinstance(cached, dict):
                     data["mock_response"] = _msg_dict_to_model_response(
                         cached, model=str(data.get("model") or "arbiteros-policy")
@@ -4249,8 +4356,7 @@ class MyCustomHandler(CustomLogger):
                     )
                     popped_ct = pending.get("popped_category_topic")
                     use_popped = (
-                        popped_ct is not None
-                        and popped_ct[0] != _NO_WRAP_SENTINEL
+                        popped_ct is not None and popped_ct[0] != _NO_WRAP_SENTINEL
                     )
                     if apply:
                         # 选 Yes：原始有改完还有→用剥壳时记录的；原始有改完没了→不包；原始没改完有→默认；原始没改完也没→不包
@@ -4280,16 +4386,28 @@ class MyCustomHandler(CustomLogger):
                             # mock_response 时 post_call 可能不执行，在 pre_call 立即追加 protected instruction
                             # 确认消息已单独记过，此处只追加 protected response（不替换）
                             if InstructionBuilder is not None and trace_id_for_cache:
-                                builder = _get_instruction_builder_for_trace(trace_id_for_cache)
+                                builder = _get_instruction_builder_for_trace(
+                                    trace_id_for_cache
+                                )
                                 if builder is not None:
                                     protected = pending.get("protected_response")
                                     if isinstance(protected, dict):
-                                        count_before = len(getattr(builder, "instructions", []) or [])
-                                        _add_instructions_from_modified_response(builder, protected)
-                                        policy_reason = pending.get("policy_reason") or ""
-                                        for instr in builder.instructions[count_before:]:
+                                        count_before = len(
+                                            getattr(builder, "instructions", []) or []
+                                        )
+                                        _add_instructions_from_modified_response(
+                                            builder, protected
+                                        )
+                                        policy_reason = (
+                                            pending.get("policy_reason") or ""
+                                        )
+                                        for instr in builder.instructions[
+                                            count_before:
+                                        ]:
                                             instr["policy_protected"] = policy_reason
-                                        _save_instructions_to_trace_file(trace_id_for_cache, builder)
+                                        _save_instructions_to_trace_file(
+                                            trace_id_for_cache, builder
+                                        )
                                         instruction_applied_in_pre_call = True
                             # 仍写入 apply_info，供 post_call/streaming 消费（若执行了则做 Langfuse 等）
                             slot_appended = bool(
@@ -4421,7 +4539,9 @@ class MyCustomHandler(CustomLogger):
             )
         # 提前解析 trace_id，用于判断是否为 mock_response 路径（避免重复 log）
         _metadata = data.get("metadata") if isinstance(data, dict) else None
-        _trace_id = _metadata.get("arbiteros_trace_id") if isinstance(_metadata, dict) else None
+        _trace_id = (
+            _metadata.get("arbiteros_trace_id") if isinstance(_metadata, dict) else None
+        )
         if not isinstance(_trace_id, str) or not _trace_id.strip():
             _context = _build_device_context(data)
             _state, _ = _ensure_trace_state(_context)
@@ -4454,10 +4574,16 @@ class MyCustomHandler(CustomLogger):
             metadata = data.get("metadata") if isinstance(data, dict) else {}
             _policy_trace_id_for_block = (
                 metadata.get("arbiteros_trace_id")
-                if isinstance(metadata, dict) else None
+                if isinstance(metadata, dict)
+                else None
             )
-            if isinstance(_policy_trace_id_for_block, str) and _policy_trace_id_for_block.strip():
-                builder_pre = _get_instruction_builder_for_trace(_policy_trace_id_for_block)
+            if (
+                isinstance(_policy_trace_id_for_block, str)
+                and _policy_trace_id_for_block.strip()
+            ):
+                builder_pre = _get_instruction_builder_for_trace(
+                    _policy_trace_id_for_block
+                )
                 _policy_instruction_count_before = (
                     len(getattr(builder_pre, "instructions", [])) if builder_pre else 0
                 )
@@ -4487,14 +4613,24 @@ class MyCustomHandler(CustomLogger):
 
         # 提前解析 trace_id 和 apply_info，供 response_transform 是否跳过判断
         metadata = data.get("metadata") if isinstance(data, dict) else None
-        trace_id = metadata.get("arbiteros_trace_id") if isinstance(metadata, dict) else None
+        trace_id = (
+            metadata.get("arbiteros_trace_id") if isinstance(metadata, dict) else None
+        )
         if not isinstance(trace_id, str) or not trace_id.strip():
             context = _build_device_context(data)
             _state, _ = _ensure_trace_state(context)
             trace_id = _state.trace_id if _state is not None else None
         with _policy_confirmation_lock:
-            apply_info = _policy_confirmation_apply_info.pop(trace_id.strip(), None) if isinstance(trace_id, str) and trace_id.strip() else None
-            skip_policy_check = (trace_id.strip() in _policy_confirmation_no_apply) if isinstance(trace_id, str) and trace_id.strip() else False
+            apply_info = (
+                _policy_confirmation_apply_info.pop(trace_id.strip(), None)
+                if isinstance(trace_id, str) and trace_id.strip()
+                else None
+            )
+            skip_policy_check = (
+                (trace_id.strip() in _policy_confirmation_no_apply)
+                if isinstance(trace_id, str) and trace_id.strip()
+                else False
+            )
             if skip_policy_check:
                 _policy_confirmation_no_apply.discard(trace_id.strip())
 
@@ -4502,9 +4638,13 @@ class MyCustomHandler(CustomLogger):
         # （pre_call 仅在 had_content_before+has_content_after+use_popped 时追加，否则依赖 response_transform）
         # 仅当 mock 返回的 response 有 content 时才追加；tool_calls-only 不包、不消耗槽位，追加会导致多一个 policy protected 错位
         if apply_info is not None and not apply_info.get("slot_appended_in_pre_call"):
-            mock_content = raw_msg_dict.get("content") if isinstance(raw_msg_dict, dict) else None
+            mock_content = (
+                raw_msg_dict.get("content") if isinstance(raw_msg_dict, dict) else None
+            )
             if _extract_text_from_message_content(mock_content).strip():
-                _record_stripped_category(data, "COGNITIVE_CORE__RESPOND", topic="policy protected")
+                _record_stripped_category(
+                    data, "COGNITIVE_CORE__RESPOND", topic="policy protected"
+                )
 
         # 若配置了 response_transform，用其返回值改写返回给调用方的内容（剥壳必须执行，否则回复带壳）
         # mock 路径下仅跳过 category/topic 的 _record_stripped_category，避免重复 slot
@@ -4516,7 +4656,9 @@ class MyCustomHandler(CustomLogger):
                     data_for_transform = dict(data) if isinstance(data, dict) else {}
                     data_for_transform["_skip_category_topic_recording"] = True
                 if asyncio.iscoroutinefunction(response_transform):
-                    modified_dict = await response_transform(data_for_transform, msg_dict)
+                    modified_dict = await response_transform(
+                        data_for_transform, msg_dict
+                    )
                 else:
                     modified_dict = response_transform(data_for_transform, msg_dict)
                 if modified_dict is not None and isinstance(modified_dict, dict):
@@ -4527,7 +4669,9 @@ class MyCustomHandler(CustomLogger):
                         else:
                             # Best-effort for Responses API objects: update `output_text` when present.
                             new_content = modified_dict.get("content")
-                            if isinstance(new_content, str) and hasattr(response, "output_text"):
+                            if isinstance(new_content, str) and hasattr(
+                                response, "output_text"
+                            ):
                                 setattr(response, "output_text", new_content)
                     except Exception:
                         pass
@@ -4541,8 +4685,13 @@ class MyCustomHandler(CustomLogger):
         policy_confirmation_rejected_for_langfuse: Optional[bool] = None
         if apply_info is not None:
             policy_confirmation_state = apply_info.get("policy_confirmation_state")
-            if isinstance(policy_confirmation_state, str) and policy_confirmation_state.strip():
-                policy_confirmation_state_for_langfuse = policy_confirmation_state.strip()
+            if (
+                isinstance(policy_confirmation_state, str)
+                and policy_confirmation_state.strip()
+            ):
+                policy_confirmation_state_for_langfuse = (
+                    policy_confirmation_state.strip()
+                )
             elif apply_info.get("policy_reason"):
                 policy_confirmation_state_for_langfuse = "accepted"
             if isinstance(apply_info.get("policy_confirmation_accepted"), bool):
@@ -4586,7 +4735,9 @@ class MyCustomHandler(CustomLogger):
         elif not skip_policy_check and isinstance(final_msg_dict, dict):
             if isinstance(trace_id, str) and trace_id.strip():
                 builder = _get_instruction_builder_for_trace(trace_id)
-                instructions = list(getattr(builder, "instructions", [])) if builder else []
+                instructions = (
+                    list(getattr(builder, "instructions", [])) if builder else []
+                )
                 latest_instructions = instructions[_policy_instruction_count_before:]
                 policy_result = check_response_policy(
                     trace_id=trace_id,
@@ -4598,9 +4749,18 @@ class MyCustomHandler(CustomLogger):
                     error_type_str = (policy_result.error_type or "").strip()
                     # Defer: store state, return confirmation message, don't emit Langfuse violation
                     with _policy_confirmation_lock:
-                        if len(_policy_confirmation_pending) >= _MAX_POLICY_CONFIRMATION_PENDING:
-                            _policy_confirmation_pending.pop(next(iter(_policy_confirmation_pending)), None)
-                        raw_content = raw_msg_dict.get("content") if isinstance(raw_msg_dict, dict) else None
+                        if (
+                            len(_policy_confirmation_pending)
+                            >= _MAX_POLICY_CONFIRMATION_PENDING
+                        ):
+                            _policy_confirmation_pending.pop(
+                                next(iter(_policy_confirmation_pending)), None
+                            )
+                        raw_content = (
+                            raw_msg_dict.get("content")
+                            if isinstance(raw_msg_dict, dict)
+                            else None
+                        )
                         had_content_before_replace = bool(
                             _extract_text_from_message_content(raw_content).strip()
                         )
@@ -4611,7 +4771,9 @@ class MyCustomHandler(CustomLogger):
                             else None
                         )
                         _policy_confirmation_pending[trace_id] = {
-                            "original_response": dict(raw_msg_dict) if isinstance(raw_msg_dict, dict) else {},
+                            "original_response": dict(raw_msg_dict)
+                            if isinstance(raw_msg_dict, dict)
+                            else {},
                             "protected_response": dict(policy_result.response),
                             "policy_reason": error_type_str,
                             "policy_names": list(policy_result.policy_names),
@@ -4620,13 +4782,13 @@ class MyCustomHandler(CustomLogger):
                             "popped_category_topic": popped_ct,
                             "instruction_count_before": _policy_instruction_count_before,
                         }
-                    confirm_content = (
-                        f"policy violation {error_type_str} are detected, {_POLICY_CONFIRMATION_SUFFIX}"
-                    )
+                    confirm_content = f"policy violation {error_type_str} are detected, {_POLICY_CONFIRMATION_SUFFIX}"
                     final_msg_dict = {"content": confirm_content, "role": "assistant"}
                     # 确认消息按普通信息包：默认 category + topic "protection confirmation"
                     _append_category_topic_for_trace(
-                        trace_id, category="COGNITIVE_CORE__RESPOND", topic="protection confirmation"
+                        trace_id,
+                        category="COGNITIVE_CORE__RESPOND",
+                        topic="protection confirmation",
                     )
                     policy_confirmation_state_for_langfuse = "ask"
                     policy_confirmation_accepted_for_langfuse = False
@@ -4635,10 +4797,15 @@ class MyCustomHandler(CustomLogger):
                     policy_names_for_langfuse = list(policy_result.policy_names)
                     policy_sources_for_langfuse = dict(policy_result.policy_sources)
                     if builder is not None:
-                        builder.instructions = list(builder.instructions[:_policy_instruction_count_before])
+                        builder.instructions = list(
+                            builder.instructions[:_policy_instruction_count_before]
+                        )
                         try:
                             instr = builder.add_from_structured_output(
-                                structured={"intent": "RESPOND", "content": confirm_content}
+                                structured={
+                                    "intent": "RESPOND",
+                                    "content": confirm_content,
+                                }
                             )
                             instr["policy_confirmation_ask"] = True
                         except Exception:
@@ -4664,7 +4831,9 @@ class MyCustomHandler(CustomLogger):
         if (
             isinstance(final_msg_dict, dict)
             and isinstance(final_msg_dict.get("content"), str)
-            and not (final_msg_dict.get("tool_calls") or final_msg_dict.get("function_call"))
+            and not (
+                final_msg_dict.get("tool_calls") or final_msg_dict.get("function_call")
+            )
         ):
             try:
                 if is_chat_completion:
@@ -4710,7 +4879,9 @@ class MyCustomHandler(CustomLogger):
         collected: list = []
         is_responses_input_request = _is_responses_api_request(request_data)
         # Transform logic is chat-completions oriented; Responses API streaming should pass through.
-        apply_transform = response_transform is not None and not is_responses_input_request
+        apply_transform = (
+            response_transform is not None and not is_responses_input_request
+        )
         completed_response_obj: Optional[dict] = None
         responses_text_parts: list[str] = []
 
@@ -4735,7 +4906,9 @@ class MyCustomHandler(CustomLogger):
                 chunk_dump = chunk
 
             if event_type in {"response.completed", "response.failed"}:
-                response_obj = chunk_dump.get("response") if isinstance(chunk_dump, dict) else None
+                response_obj = (
+                    chunk_dump.get("response") if isinstance(chunk_dump, dict) else None
+                )
                 if isinstance(response_obj, dict):
                     completed_response_obj = response_obj
 
@@ -4743,7 +4916,10 @@ class MyCustomHandler(CustomLogger):
                 part = _extract_stream_text_from_responses_chunk(chunk, chunk_dump)
                 if part:
                     responses_text_parts.append(part)
-            if isinstance(chunk, (ModelResponseStream, ModelResponse)) and not is_responses_input_request:
+            if (
+                isinstance(chunk, (ModelResponseStream, ModelResponse))
+                and not is_responses_input_request
+            ):
                 collected.append(chunk)
             if not apply_transform:
                 out = chunk
@@ -4815,6 +4991,7 @@ class MyCustomHandler(CustomLogger):
 
         try:
             from litellm.main import stream_chunk_builder
+
             complete = stream_chunk_builder(chunks=collected)
         except Exception:
             complete = None
@@ -4829,37 +5006,77 @@ class MyCustomHandler(CustomLogger):
                         if part:
                             full_content_parts.append(part)
                 if full_content_parts:
-                    _save_json("post_call_success", {"response": {"content": "".join(full_content_parts), "role": "assistant", "tool_calls": None, "function_call": None, "provider_specific_fields": {}, "annotations": []}})
+                    _save_json(
+                        "post_call_success",
+                        {
+                            "response": {
+                                "content": "".join(full_content_parts),
+                                "role": "assistant",
+                                "tool_calls": None,
+                                "function_call": None,
+                                "provider_specific_fields": {},
+                                "annotations": [],
+                            }
+                        },
+                    )
             return
 
         msg = complete.choices[0].message
-        msg_dict = _to_json(msg) if isinstance(msg, dict) else (msg.model_dump() if hasattr(msg, "model_dump") else (msg.dict() if hasattr(msg, "dict") else None))
+        msg_dict = (
+            _to_json(msg)
+            if isinstance(msg, dict)
+            else (
+                msg.model_dump()
+                if hasattr(msg, "model_dump")
+                else (msg.dict() if hasattr(msg, "dict") else None)
+            )
+        )
         raw_msg_dict = msg_dict
 
         # 记录 instruction 数量，供 policy 保护时标记本次添加的 instructions
         _policy_instruction_count_before_stream = 0
         if InstructionBuilder is not None:
-            metadata_pre = request_data.get("metadata") if isinstance(request_data, dict) else {}
+            metadata_pre = (
+                request_data.get("metadata") if isinstance(request_data, dict) else {}
+            )
             _policy_trace_id_stream = (
                 metadata_pre.get("arbiteros_trace_id")
-                if isinstance(metadata_pre, dict) else None
+                if isinstance(metadata_pre, dict)
+                else None
             )
-            if isinstance(_policy_trace_id_stream, str) and _policy_trace_id_stream.strip():
-                builder_pre = _get_instruction_builder_for_trace(_policy_trace_id_stream)
+            if (
+                isinstance(_policy_trace_id_stream, str)
+                and _policy_trace_id_stream.strip()
+            ):
+                builder_pre = _get_instruction_builder_for_trace(
+                    _policy_trace_id_stream
+                )
                 _policy_instruction_count_before_stream = (
                     len(getattr(builder_pre, "instructions", [])) if builder_pre else 0
                 )
 
         # 提前解析 trace_id 和 apply_info_stream，供 mock 路径判断（避免重复 log）及 response_transform 是否跳过
-        metadata = request_data.get("metadata") if isinstance(request_data, dict) else None
-        trace_id_stream = metadata.get("arbiteros_trace_id") if isinstance(metadata, dict) else None
+        metadata = (
+            request_data.get("metadata") if isinstance(request_data, dict) else None
+        )
+        trace_id_stream = (
+            metadata.get("arbiteros_trace_id") if isinstance(metadata, dict) else None
+        )
         if not isinstance(trace_id_stream, str) or not trace_id_stream.strip():
             context = _build_device_context(request_data)
             _state, _ = _ensure_trace_state(context)
             trace_id_stream = _state.trace_id if _state is not None else None
         with _policy_confirmation_lock:
-            apply_info_stream = _policy_confirmation_apply_info.pop(trace_id_stream.strip(), None) if isinstance(trace_id_stream, str) and trace_id_stream.strip() else None
-            skip_policy_check_stream = (trace_id_stream.strip() in _policy_confirmation_no_apply) if isinstance(trace_id_stream, str) and trace_id_stream.strip() else False
+            apply_info_stream = (
+                _policy_confirmation_apply_info.pop(trace_id_stream.strip(), None)
+                if isinstance(trace_id_stream, str) and trace_id_stream.strip()
+                else None
+            )
+            skip_policy_check_stream = (
+                (trace_id_stream.strip() in _policy_confirmation_no_apply)
+                if isinstance(trace_id_stream, str) and trace_id_stream.strip()
+                else False
+            )
             if skip_policy_check_stream:
                 _policy_confirmation_no_apply.discard(trace_id_stream.strip())
 
@@ -4869,8 +5086,12 @@ class MyCustomHandler(CustomLogger):
 
         # 有 apply_info 时跳过 response_transform 的 instruction 添加（避免重复），但需补上 category/topic slot
         # 仅当 mock 返回的 response 有 content 时才追加；tool_calls-only 不包、不消耗槽位，追加会导致多一个 policy protected 错位
-        if apply_info_stream is not None and not apply_info_stream.get("slot_appended_in_pre_call"):
-            mock_content = msg_dict.get("content") if isinstance(msg_dict, dict) else None
+        if apply_info_stream is not None and not apply_info_stream.get(
+            "slot_appended_in_pre_call"
+        ):
+            mock_content = (
+                msg_dict.get("content") if isinstance(msg_dict, dict) else None
+            )
             if _extract_text_from_message_content(mock_content).strip():
                 _record_stripped_category(
                     request_data, "COGNITIVE_CORE__RESPOND", topic="policy protected"
@@ -4897,7 +5118,9 @@ class MyCustomHandler(CustomLogger):
         if apply_transform and msg_dict is not None:
             req_for_transform = request_data
             if apply_info_stream is not None or skip_policy_check_stream:
-                req_for_transform = dict(request_data) if isinstance(request_data, dict) else {}
+                req_for_transform = (
+                    dict(request_data) if isinstance(request_data, dict) else {}
+                )
                 req_for_transform["_skip_category_topic_recording"] = True
             if asyncio.iscoroutinefunction(response_transform):
                 modified_dict = await response_transform(req_for_transform, msg_dict)
@@ -4915,9 +5138,16 @@ class MyCustomHandler(CustomLogger):
         policy_confirmation_rejected_for_langfuse: Optional[bool] = None
         trace_id = trace_id_stream
         if apply_info_stream is not None:
-            policy_confirmation_state = apply_info_stream.get("policy_confirmation_state")
-            if isinstance(policy_confirmation_state, str) and policy_confirmation_state.strip():
-                policy_confirmation_state_for_langfuse = policy_confirmation_state.strip()
+            policy_confirmation_state = apply_info_stream.get(
+                "policy_confirmation_state"
+            )
+            if (
+                isinstance(policy_confirmation_state, str)
+                and policy_confirmation_state.strip()
+            ):
+                policy_confirmation_state_for_langfuse = (
+                    policy_confirmation_state.strip()
+                )
             elif apply_info_stream.get("policy_reason"):
                 policy_confirmation_state_for_langfuse = "accepted"
             if isinstance(apply_info_stream.get("policy_confirmation_accepted"), bool):
@@ -4932,8 +5162,12 @@ class MyCustomHandler(CustomLogger):
                 policy_violation_reason_for_langfuse = (
                     apply_info_stream.get("policy_reason") or None
                 )
-            policy_names_for_langfuse = list(apply_info_stream.get("policy_names") or [])
-            policy_sources_for_langfuse = dict(apply_info_stream.get("policy_sources") or {})
+            policy_names_for_langfuse = list(
+                apply_info_stream.get("policy_names") or []
+            )
+            policy_sources_for_langfuse = dict(
+                apply_info_stream.get("policy_sources") or {}
+            )
             if policy_violation_reason_for_langfuse:
                 _record_policy_protected_tool_calls(
                     trace_id=trace_id,
@@ -4961,8 +5195,12 @@ class MyCustomHandler(CustomLogger):
         elif not skip_policy_check_stream and isinstance(msg_dict, dict):
             if isinstance(trace_id, str) and trace_id.strip():
                 builder = _get_instruction_builder_for_trace(trace_id)
-                instructions = list(getattr(builder, "instructions", [])) if builder else []
-                latest_instructions = instructions[_policy_instruction_count_before_stream:]
+                instructions = (
+                    list(getattr(builder, "instructions", [])) if builder else []
+                )
+                latest_instructions = instructions[
+                    _policy_instruction_count_before_stream:
+                ]
                 policy_result = check_response_policy(
                     trace_id=trace_id,
                     instructions=instructions,
@@ -4973,9 +5211,18 @@ class MyCustomHandler(CustomLogger):
                     error_type_str = (policy_result.error_type or "").strip()
                     # Defer: store state, return confirmation message, don't emit Langfuse violation
                     with _policy_confirmation_lock:
-                        if len(_policy_confirmation_pending) >= _MAX_POLICY_CONFIRMATION_PENDING:
-                            _policy_confirmation_pending.pop(next(iter(_policy_confirmation_pending)), None)
-                        raw_content = raw_msg_dict.get("content") if isinstance(raw_msg_dict, dict) else None
+                        if (
+                            len(_policy_confirmation_pending)
+                            >= _MAX_POLICY_CONFIRMATION_PENDING
+                        ):
+                            _policy_confirmation_pending.pop(
+                                next(iter(_policy_confirmation_pending)), None
+                            )
+                        raw_content = (
+                            raw_msg_dict.get("content")
+                            if isinstance(raw_msg_dict, dict)
+                            else None
+                        )
                         had_content_before_replace = bool(
                             _extract_text_from_message_content(raw_content).strip()
                         )
@@ -4985,7 +5232,9 @@ class MyCustomHandler(CustomLogger):
                             else None
                         )
                         _policy_confirmation_pending[trace_id] = {
-                            "original_response": dict(raw_msg_dict) if isinstance(raw_msg_dict, dict) else {},
+                            "original_response": dict(raw_msg_dict)
+                            if isinstance(raw_msg_dict, dict)
+                            else {},
                             "protected_response": dict(policy_result.response),
                             "policy_reason": error_type_str,
                             "policy_names": list(policy_result.policy_names),
@@ -4994,13 +5243,13 @@ class MyCustomHandler(CustomLogger):
                             "popped_category_topic": popped_ct,
                             "instruction_count_before": _policy_instruction_count_before_stream,
                         }
-                    confirm_content = (
-                        f"policy violation {error_type_str} are detected, {_POLICY_CONFIRMATION_SUFFIX}"
-                    )
+                    confirm_content = f"policy violation {error_type_str} are detected, {_POLICY_CONFIRMATION_SUFFIX}"
                     msg_dict = {"content": confirm_content, "role": "assistant"}
                     # 确认消息按普通信息包：默认 category + topic "protection confirmation"
                     _append_category_topic_for_trace(
-                        trace_id, category="COGNITIVE_CORE__RESPOND", topic="protection confirmation"
+                        trace_id,
+                        category="COGNITIVE_CORE__RESPOND",
+                        topic="protection confirmation",
                     )
                     policy_confirmation_state_for_langfuse = "ask"
                     policy_confirmation_accepted_for_langfuse = False
@@ -5009,10 +5258,17 @@ class MyCustomHandler(CustomLogger):
                     policy_names_for_langfuse = list(policy_result.policy_names)
                     policy_sources_for_langfuse = dict(policy_result.policy_sources)
                     if builder is not None:
-                        builder.instructions = list(builder.instructions[:_policy_instruction_count_before_stream])
+                        builder.instructions = list(
+                            builder.instructions[
+                                :_policy_instruction_count_before_stream
+                            ]
+                        )
                         try:
                             instr = builder.add_from_structured_output(
-                                structured={"intent": "RESPOND", "content": confirm_content}
+                                structured={
+                                    "intent": "RESPOND",
+                                    "content": confirm_content,
+                                }
                             )
                             instr["policy_confirmation_ask"] = True
                         except Exception:
@@ -5023,7 +5279,9 @@ class MyCustomHandler(CustomLogger):
             "ARBITEROS_EMPTY_ASSISTANT_FALLBACK",
             "抱歉，我这次没有生成有效回复，请重试。",
         )
-        msg_dict = _ensure_non_empty_assistant_message(msg_dict, fallback_text=fallback_text)
+        msg_dict = _ensure_non_empty_assistant_message(
+            msg_dict, fallback_text=fallback_text
+        )
 
         _emit_response_nodes(
             request_data=request_data,
@@ -5039,19 +5297,39 @@ class MyCustomHandler(CustomLogger):
 
         if apply_transform and msg_dict is not None:
             # 用修改后的内容重放为流式：拆成多个小 chunk 逐个 yield，避免下游按字符拆导致显示异常
-            content = msg_dict.get("content") if isinstance(msg_dict.get("content"), str) else ""
+            content = (
+                msg_dict.get("content")
+                if isinstance(msg_dict.get("content"), str)
+                else ""
+            )
             tool_calls = msg_dict.get("tool_calls")
             first = collected[0]
             stream_id = getattr(first, "id", None) or ""
             stream_created = getattr(first, "created", None) or 0
             stream_model = getattr(first, "model", None)
             _chunk_size = 64
-            pieces = [content[i : i + _chunk_size] for i in range(0, len(content), _chunk_size)] if content else [""]
+            pieces = (
+                [
+                    content[i : i + _chunk_size]
+                    for i in range(0, len(content), _chunk_size)
+                ]
+                if content
+                else [""]
+            )
             for i, piece in enumerate(pieces):
                 is_last = i == len(pieces) - 1
-                delta = Delta(content=piece or None, tool_calls=tool_calls if is_last else None)
-                choice = StreamingChoices(delta=delta, finish_reason="stop" if is_last else None, index=0)
-                out_chunk = ModelResponseStream(choices=[choice], id=stream_id, created=stream_created, model=stream_model)
+                delta = Delta(
+                    content=piece or None, tool_calls=tool_calls if is_last else None
+                )
+                choice = StreamingChoices(
+                    delta=delta, finish_reason="stop" if is_last else None, index=0
+                )
+                out_chunk = ModelResponseStream(
+                    choices=[choice],
+                    id=stream_id,
+                    created=stream_created,
+                    model=stream_model,
+                )
                 yield out_chunk
 
 

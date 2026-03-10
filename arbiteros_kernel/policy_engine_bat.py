@@ -9,7 +9,7 @@ import time
 import uuid
 from collections import defaultdict, deque
 from dataclasses import dataclass
-from typing import Any, Deque, Dict, List, Optional, Tuple, Callable, Iterable
+from typing import Any, Callable, Deque, Dict, Iterable, List, Optional, Tuple
 
 try:
     import jsonschema  # type: ignore
@@ -20,6 +20,7 @@ except Exception:
 # -----------------------------
 # Data structures
 # -----------------------------
+
 
 @dataclass
 class PolicyDecision:
@@ -33,6 +34,7 @@ class PolicyDecision:
       - matched_transition: transition id (debug/audit)
       - meta: extra info for debugging / UI
     """
+
     allow: bool
     reason: str = ""
     trace_id: str = ""  # stable id (op_id) for user-facing correlation / approvals
@@ -54,6 +56,7 @@ class PolicyState:
     - EFSM runtime state + vars
     - event dedupe (for retries)
     """
+
     def __init__(self) -> None:
         self.lock = threading.Lock()
 
@@ -75,8 +78,10 @@ class PolicyState:
         self.instr_hist: Dict[str, Deque[Dict[str, Any]]] = defaultdict(deque)
 
         # EFSM runtime
-        self.efsm_state: Dict[str, str] = {}                 # session -> state
-        self.efsm_vars: Dict[str, Dict[str, Any]] = {}       # session -> vars (extended memory)
+        self.efsm_state: Dict[str, str] = {}  # session -> state
+        self.efsm_vars: Dict[
+            str, Dict[str, Any]
+        ] = {}  # session -> vars (extended memory)
 
         # Event dedupe per session (to survive retries)
         self.event_keys: Dict[str, Deque[str]] = defaultdict(deque)
@@ -86,6 +91,7 @@ class PolicyState:
 # -----------------------------
 # Helpers
 # -----------------------------
+
 
 def _now() -> float:
     return time.time()
@@ -130,7 +136,14 @@ def canonicalize_args(args: Any) -> Any:
         for k in sorted(args.keys(), key=lambda x: str(x)):
             v = args[k]
             if isinstance(v, str) and str(k).lower() in (
-                "path", "file_path", "file", "filename", "src", "dst", "directory", "dir"
+                "path",
+                "file_path",
+                "file",
+                "filename",
+                "src",
+                "dst",
+                "directory",
+                "dir",
             ):
                 out[k] = normalize_path(v)
             else:
@@ -141,7 +154,9 @@ def canonicalize_args(args: Any) -> Any:
     return args
 
 
-def redact_args(args: Any, redact_keys: Tuple[str, ...] = ("api_key", "token", "password", "secret")) -> Any:
+def redact_args(
+    args: Any, redact_keys: Tuple[str, ...] = ("api_key", "token", "password", "secret")
+) -> Any:
     if isinstance(args, dict):
         out: Dict[str, Any] = {}
         for k, v in args.items():
@@ -221,7 +236,14 @@ def _collect_paths_from_args(args: Dict[str, Any]) -> List[str]:
         return paths
     for k, v in args.items():
         if isinstance(v, str) and str(k).lower() in (
-            "path", "file_path", "file", "filename", "src", "dst", "directory", "dir"
+            "path",
+            "file_path",
+            "file",
+            "filename",
+            "src",
+            "dst",
+            "directory",
+            "dir",
         ):
             if v.strip():
                 paths.append(normalize_path(v))
@@ -278,6 +300,7 @@ def _as_list(x: Any) -> List[Any]:
 # -----------------------------
 # Policy Engine + EFSM
 # -----------------------------
+
 
 class PolicyEngine:
     def __init__(self, config: Dict[str, Any], audit_path: str = "") -> None:
@@ -353,13 +376,62 @@ class PolicyEngine:
             return cleaned
 
         return [
-            {"id": "idle_plan", "from": "IDLE", "event": "PLAN", "to": "PLANNED", "actions": ["cache_plan"], "effect": "ALLOW"},
-            {"id": "any_user_msg", "from": "*", "event": "USER_MESSAGE", "to": "*", "actions": ["mark_last_user"], "effect": "ALLOW"},
-            {"id": "planned_write_ok", "from": "PLANNED", "event": ["WRITE", "EXEC"], "to": "EXECUTING", "guard": "path_in_recent_plan", "effect": "ALLOW"},
-            {"id": "planned_tool_ok", "from": "PLANNED", "event": ["WRITE", "EXEC"], "to": "EXECUTING", "guard": "tool_in_recent_plan", "effect": "ALLOW"},
-            {"id": "planned_write_need_approval", "from": "PLANNED", "event": ["WRITE", "EXEC"], "to": "WAIT_APPROVAL", "effect": "REQUIRE_APPROVAL", "actions": ["set_pending"]},
-            {"id": "idle_write_need_approval", "from": "IDLE", "event": ["WRITE", "EXEC"], "to": "WAIT_APPROVAL", "effect": "REQUIRE_APPROVAL", "actions": ["set_pending"]},
-            {"id": "tainted_respond_block", "from": "*", "event": "RESPOND", "to": "*", "guard": "tainted_recently", "effect": "BLOCK"},
+            {
+                "id": "idle_plan",
+                "from": "IDLE",
+                "event": "PLAN",
+                "to": "PLANNED",
+                "actions": ["cache_plan"],
+                "effect": "ALLOW",
+            },
+            {
+                "id": "any_user_msg",
+                "from": "*",
+                "event": "USER_MESSAGE",
+                "to": "*",
+                "actions": ["mark_last_user"],
+                "effect": "ALLOW",
+            },
+            {
+                "id": "planned_write_ok",
+                "from": "PLANNED",
+                "event": ["WRITE", "EXEC"],
+                "to": "EXECUTING",
+                "guard": "path_in_recent_plan",
+                "effect": "ALLOW",
+            },
+            {
+                "id": "planned_tool_ok",
+                "from": "PLANNED",
+                "event": ["WRITE", "EXEC"],
+                "to": "EXECUTING",
+                "guard": "tool_in_recent_plan",
+                "effect": "ALLOW",
+            },
+            {
+                "id": "planned_write_need_approval",
+                "from": "PLANNED",
+                "event": ["WRITE", "EXEC"],
+                "to": "WAIT_APPROVAL",
+                "effect": "REQUIRE_APPROVAL",
+                "actions": ["set_pending"],
+            },
+            {
+                "id": "idle_write_need_approval",
+                "from": "IDLE",
+                "event": ["WRITE", "EXEC"],
+                "to": "WAIT_APPROVAL",
+                "effect": "REQUIRE_APPROVAL",
+                "actions": ["set_pending"],
+            },
+            {
+                "id": "tainted_respond_block",
+                "from": "*",
+                "event": "RESPOND",
+                "to": "*",
+                "guard": "tainted_recently",
+                "effect": "BLOCK",
+            },
         ]
 
     # -------------------------
@@ -382,7 +454,9 @@ class PolicyEngine:
             return "EXEC"
         return "EXEC"
 
-    def _infer_category_for_instruction(self, instruction_type: Optional[str]) -> Optional[str]:
+    def _infer_category_for_instruction(
+        self, instruction_type: Optional[str]
+    ) -> Optional[str]:
         it = (instruction_type or "").strip().upper()
         if not it:
             return None
@@ -402,12 +476,24 @@ class PolicyEngine:
             return False
         if not isinstance(content, dict):
             return False
-        return isinstance(content.get("tool_name"), str) and isinstance(content.get("arguments"), dict)
+        return isinstance(content.get("tool_name"), str) and isinstance(
+            content.get("arguments"), dict
+        )
 
     @staticmethod
-    def _tool_and_args_from_content(content: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
-        tool = (content.get("tool_name") if isinstance(content.get("tool_name"), str) else "") or "unknown_tool"
-        args = content.get("arguments") if isinstance(content.get("arguments"), dict) else {}
+    def _tool_and_args_from_content(
+        content: Dict[str, Any],
+    ) -> Tuple[str, Dict[str, Any]]:
+        tool = (
+            content.get("tool_name")
+            if isinstance(content.get("tool_name"), str)
+            else ""
+        ) or "unknown_tool"
+        args = (
+            content.get("arguments")
+            if isinstance(content.get("arguments"), dict)
+            else {}
+        )
         return tool.strip() or "unknown_tool", canonicalize_args(args)
 
     # -------------------------
@@ -437,7 +523,9 @@ class PolicyEngine:
         ta = self.cfg.get("taint", {}) or {}
         v = ta.get("instruction_sinks")
         if isinstance(v, list):
-            return [str(x).strip().upper() for x in v if isinstance(x, str) and x.strip()]
+            return [
+                str(x).strip().upper() for x in v if isinstance(x, str) and x.strip()
+            ]
         return []
 
     def _taint_patterns(self) -> List[str]:
@@ -631,7 +719,9 @@ class PolicyEngine:
     # Instruction observation (bridge to InstructionBuilder)
     # -------------------------
 
-    def observe_instruction(self, *, session_id: str, instruction: Dict[str, Any]) -> None:
+    def observe_instruction(
+        self, *, session_id: str, instruction: Dict[str, Any]
+    ) -> None:
         """
         Call this when your InstructionBuilder emits an instruction.
         Bridge: instruction -> engine (history + EFSM events).
@@ -677,7 +767,9 @@ class PolicyEngine:
 
         self.on_event(session_id=s, event=itype, payload=payload)
 
-    def observe_user_message(self, *, session_id: str, text: str, fingerprint: Optional[str] = None) -> None:
+    def observe_user_message(
+        self, *, session_id: str, text: str, fingerprint: Optional[str] = None
+    ) -> None:
         s = (session_id or "").strip() or "unknown_session"
         payload = {"text": text, "fingerprint": fingerprint}
         self.on_event(session_id=s, event="USER_MESSAGE", payload=payload)
@@ -701,15 +793,27 @@ class PolicyEngine:
         Convert tool-call into an instruction and evaluate via pre_instruction().
         """
         tool_norm = (tool.strip() if isinstance(tool, str) else "") or "unknown_tool"
-        session_norm = (session_id.strip() if isinstance(session_id, str) else "") or "unknown_session"
+        session_norm = (
+            session_id.strip() if isinstance(session_id, str) else ""
+        ) or "unknown_session"
 
         canon_args = canonicalize_args(args if isinstance(args, dict) else {})
         canon_json = _safe_json_dumps(canon_args)
 
         inferred_type = self._infer_instruction_type_for_tool(tool_norm)
         inferred_cat = self._infer_category_for_instruction(inferred_type)
-        prefer_inferred = bool(self.cfg.get("prefer_inferred_instruction_type_for_tools", True))
-        eff_type = inferred_type if (prefer_inferred and inferred_type and inferred_type != (instruction_type or "").strip().upper()) else (instruction_type or inferred_type)
+        prefer_inferred = bool(
+            self.cfg.get("prefer_inferred_instruction_type_for_tools", True)
+        )
+        eff_type = (
+            inferred_type
+            if (
+                prefer_inferred
+                and inferred_type
+                and inferred_type != (instruction_type or "").strip().upper()
+            )
+            else (instruction_type or inferred_type)
+        )
         eff_type = (eff_type or inferred_type or "EXEC").strip().upper()
         eff_cat = category or inferred_cat or "EXECUTION.Env"
 
@@ -769,7 +873,11 @@ class PolicyEngine:
 
         # Stable trace_id: prefer instruction.trace_id, else compute.
         trace_id: str = ""
-        if isinstance(instruction, dict) and isinstance(instruction.get("trace_id"), str) and instruction.get("trace_id"):
+        if (
+            isinstance(instruction, dict)
+            and isinstance(instruction.get("trace_id"), str)
+            and instruction.get("trace_id")
+        ):
             trace_id = str(instruction["trace_id"])
         else:
             # tool instruction uses stable hash(session|tool|canon_args); non-tool uses (session|@instr|canon_payload)
@@ -778,7 +886,9 @@ class PolicyEngine:
                 canon_json0 = _safe_json_dumps(args0)
                 trace_id = _sha256(f"{session_norm}|{tool0}|{canon_json0}")[:24]
             else:
-                canon_payload = _safe_json_dumps({"it": it, "cat": cat, "content": content})
+                canon_payload = _safe_json_dumps(
+                    {"it": it, "cat": cat, "content": content}
+                )
                 trace_id = _sha256(f"{session_norm}|@instr|{canon_payload}")[:24]
 
         audit_id = uuid.uuid4().hex
@@ -790,14 +900,18 @@ class PolicyEngine:
             tool_name, tool_args = self._tool_and_args_from_content(content)
 
         # 1) static allow/deny
-        ok, reason = self._check_static_allowdeny(tool_name if is_tool_instr else "@instruction", it, cat)
+        ok, reason = self._check_static_allowdeny(
+            tool_name if is_tool_instr else "@instruction", it, cat
+        )
         if not ok:
             self._audit(
                 "pre" if is_tool_instr else "instr",
                 trace_id,
                 session_norm,
                 tool_name if is_tool_instr else "@instruction",
-                tool_args if is_tool_instr else {"instruction_type": it, "category": cat},
+                tool_args
+                if is_tool_instr
+                else {"instruction_type": it, "category": cat},
                 "BLOCK",
                 reason,
                 extra={"audit_id": audit_id, "instruction_type": it, "category": cat},
@@ -817,7 +931,11 @@ class PolicyEngine:
                 trace_id,
                 session_norm,
                 tool_name if is_tool_instr else "@instruction",
-                {"instruction_type": it, "category": cat, "security_type": redact_args(sec or {})},
+                {
+                    "instruction_type": it,
+                    "category": cat,
+                    "security_type": redact_args(sec or {}),
+                },
                 "BLOCK",
                 reason,
                 extra={"audit_id": audit_id},
@@ -840,9 +958,16 @@ class PolicyEngine:
                         src = self.state.last_untrusted_source.get(session_norm)
                     if last_ts is not None and (_now() - last_ts) <= window_sec:
                         if self._approval_granted(trace_id, it):
-                            return PolicyDecision(True, "taint override approved", trace_id, effect="ALLOW")
+                            return PolicyDecision(
+                                True,
+                                "taint override approved",
+                                trace_id,
+                                effect="ALLOW",
+                            )
                         msg = f"taint: instruction sink '{it}' blocked within {window_sec}s after untrusted source '{src or 'unknown'}'"
-                        msg = self._format_approval_hint(trace_id=trace_id, scope=it, base=msg)
+                        msg = self._format_approval_hint(
+                            trace_id=trace_id, scope=it, base=msg
+                        )
                         self._audit(
                             "instr",
                             trace_id,
@@ -857,7 +982,9 @@ class PolicyEngine:
 
             # tool sinks (only for tool instructions)
             if is_tool_instr:
-                ok, reason = self._check_taint_sinks(trace_id, session_norm, tool_name, tool_args)
+                ok, reason = self._check_taint_sinks(
+                    trace_id, session_norm, tool_name, tool_args
+                )
                 if not ok:
                     self._audit(
                         "pre",
@@ -867,7 +994,11 @@ class PolicyEngine:
                         tool_args,
                         "BLOCK",
                         reason,
-                        extra={"audit_id": audit_id, "instruction_type": it, "category": cat},
+                        extra={
+                            "audit_id": audit_id,
+                            "instruction_type": it,
+                            "category": cat,
+                        },
                     )
                     return PolicyDecision(False, reason, trace_id, effect="BLOCK")
 
@@ -890,7 +1021,9 @@ class PolicyEngine:
                     trace_id,
                     session_norm,
                     tool_name if is_tool_instr else "@instruction",
-                    tool_args if is_tool_instr else {"instruction_type": it, "category": cat},
+                    tool_args
+                    if is_tool_instr
+                    else {"instruction_type": it, "category": cat},
                     "BLOCK",
                     gate.reason,
                     extra={
@@ -916,27 +1049,77 @@ class PolicyEngine:
         if is_tool_instr:
             ok, reason = self._check_schema(tool_name, tool_args)
             if not ok:
-                self._audit("pre", trace_id, session_norm, tool_name, tool_args, "BLOCK", reason,
-                            extra={"audit_id": audit_id, "instruction_type": it, "category": cat})
+                self._audit(
+                    "pre",
+                    trace_id,
+                    session_norm,
+                    tool_name,
+                    tool_args,
+                    "BLOCK",
+                    reason,
+                    extra={
+                        "audit_id": audit_id,
+                        "instruction_type": it,
+                        "category": cat,
+                    },
+                )
                 return PolicyDecision(False, reason, trace_id, effect="BLOCK")
 
             ok, reason = self._check_path_and_budget(tool_name, tool_args)
             if not ok:
-                self._audit("pre", trace_id, session_norm, tool_name, tool_args, "BLOCK", reason,
-                            extra={"audit_id": audit_id, "instruction_type": it, "category": cat})
+                self._audit(
+                    "pre",
+                    trace_id,
+                    session_norm,
+                    tool_name,
+                    tool_args,
+                    "BLOCK",
+                    reason,
+                    extra={
+                        "audit_id": audit_id,
+                        "instruction_type": it,
+                        "category": cat,
+                    },
+                )
                 return PolicyDecision(False, reason, trace_id, effect="BLOCK")
 
             ok, reason = self._check_rate_limits(session_norm, tool_name)
             if not ok:
-                self._audit("pre", trace_id, session_norm, tool_name, tool_args, "BLOCK", reason,
-                            extra={"audit_id": audit_id, "instruction_type": it, "category": cat})
+                self._audit(
+                    "pre",
+                    trace_id,
+                    session_norm,
+                    tool_name,
+                    tool_args,
+                    "BLOCK",
+                    reason,
+                    extra={
+                        "audit_id": audit_id,
+                        "instruction_type": it,
+                        "category": cat,
+                    },
+                )
                 return PolicyDecision(False, reason, trace_id, effect="BLOCK")
 
-            agg_key = (user_key.strip() if isinstance(user_key, str) else "") or session_norm
+            agg_key = (
+                user_key.strip() if isinstance(user_key, str) else ""
+            ) or session_norm
             ok, reason = self._check_user_aggregate(agg_key, tool_name)
             if not ok:
-                self._audit("pre", trace_id, session_norm, tool_name, tool_args, "BLOCK", reason,
-                            extra={"audit_id": audit_id, "instruction_type": it, "category": cat})
+                self._audit(
+                    "pre",
+                    trace_id,
+                    session_norm,
+                    tool_name,
+                    tool_args,
+                    "BLOCK",
+                    reason,
+                    extra={
+                        "audit_id": audit_id,
+                        "instruction_type": it,
+                        "category": cat,
+                    },
+                )
                 return PolicyDecision(False, reason, trace_id, effect="BLOCK")
 
             if bool(self.cfg.get("audit", {}).get("log_allow", True)):
@@ -974,7 +1157,9 @@ class PolicyEngine:
     # EFSM entrypoint
     # -------------------------
 
-    def on_event(self, *, session_id: str, event: str, payload: Dict[str, Any]) -> PolicyDecision:
+    def on_event(
+        self, *, session_id: str, event: str, payload: Dict[str, Any]
+    ) -> PolicyDecision:
         """
         Main EFSM hook:
           - Dedup events per session (prefer trace_id)
@@ -1000,7 +1185,9 @@ class PolicyEngine:
         if isinstance(trace_id, str) and trace_id.strip():
             event_key = _sha256(f"{s}|{ev}|{trace_id.strip()}")  # stable
         else:
-            event_key = _sha256(_safe_json_dumps({"s": s, "ev": ev, "p": payload})[:4096])
+            event_key = _sha256(
+                _safe_json_dumps({"s": s, "ev": ev, "p": payload})[:4096]
+            )
 
         dedupe_max = self._efsm_event_dedupe_max()
         with self.state.lock:
@@ -1015,7 +1202,9 @@ class PolicyEngine:
 
         return self._efsm_step(session_id=s, event=ev, payload=payload)
 
-    def _efsm_step(self, *, session_id: str, event: str, payload: Dict[str, Any]) -> PolicyDecision:
+    def _efsm_step(
+        self, *, session_id: str, event: str, payload: Dict[str, Any]
+    ) -> PolicyDecision:
         with self.state.lock:
             cur = self.state.efsm_state.get(session_id, self._efsm_initial())
             vars_ = self.state.efsm_vars.get(session_id, {})
@@ -1023,7 +1212,9 @@ class PolicyEngine:
 
         trace_id = payload.get("trace_id")
         if not isinstance(trace_id, str) or not trace_id.strip():
-            trace_id = _sha256(f"{session_id}|@event|{event}|{_safe_json_dumps(payload)[:4096]}")[:24]
+            trace_id = _sha256(
+                f"{session_id}|@event|{event}|{_safe_json_dumps(payload)[:4096]}"
+            )[:24]
 
         ctx: Dict[str, Any] = {
             "session_id": session_id,
@@ -1041,12 +1232,18 @@ class PolicyEngine:
             ev = tr.get("event", "*")
             to = tr.get("to", "*")
 
-            from_ok = (fr == "*") or (isinstance(fr, str) and fr == cur) or (isinstance(fr, list) and cur in fr)
+            from_ok = (
+                (fr == "*")
+                or (isinstance(fr, str) and fr == cur)
+                or (isinstance(fr, list) and cur in fr)
+            )
             if not from_ok:
                 continue
 
             ev_list = _as_list(ev) if ev != "*" else ["*"]
-            ev_ok = ("*" in ev_list) or (event in [str(x).strip().upper() for x in ev_list if str(x).strip()])
+            ev_ok = ("*" in ev_list) or (
+                event in [str(x).strip().upper() for x in ev_list if str(x).strip()]
+            )
             if not ev_ok:
                 continue
 
@@ -1065,10 +1262,14 @@ class PolicyEngine:
             break
 
         if matched is None:
-            return PolicyDecision(True, "efsm: no transition", trace_id, effect="ALLOW", next_state=cur)
+            return PolicyDecision(
+                True, "efsm: no transition", trace_id, effect="ALLOW", next_state=cur
+            )
 
         to_raw = matched.get("to", "*")
-        next_state = cur if (to_raw == "*" or to_raw is None) else (str(to_raw).strip() or cur)
+        next_state = (
+            cur if (to_raw == "*" or to_raw is None) else (str(to_raw).strip() or cur)
+        )
 
         actions = matched.get("actions", [])
         if isinstance(actions, str):
@@ -1087,25 +1288,46 @@ class PolicyEngine:
 
         effect = matched.get("effect", "ALLOW")
         effect = str(effect).strip().upper() if isinstance(effect, str) else "ALLOW"
-        if effect not in {"ALLOW", "BLOCK", "WARN", "LOG_ONLY", "REQUIRE_APPROVAL", "TRANSFORM"}:
+        if effect not in {
+            "ALLOW",
+            "BLOCK",
+            "WARN",
+            "LOG_ONLY",
+            "REQUIRE_APPROVAL",
+            "TRANSFORM",
+        }:
             effect = "ALLOW"
 
         with self.state.lock:
             self.state.efsm_state[session_id] = next_state
 
         if effect == "REQUIRE_APPROVAL":
-            scope = (payload.get("tool") if isinstance(payload.get("tool"), str) else event) or event
+            scope = (
+                payload.get("tool") if isinstance(payload.get("tool"), str) else event
+            ) or event
             scope = str(scope).strip() or event
             if self._approval_granted(trace_id, scope):
-                return PolicyDecision(True, "efsm: approved", trace_id, effect="ALLOW",
-                                      next_state=next_state, matched_transition=matched.get("id"),
-                                      meta={"approved_scope": scope})
+                return PolicyDecision(
+                    True,
+                    "efsm: approved",
+                    trace_id,
+                    effect="ALLOW",
+                    next_state=next_state,
+                    matched_transition=matched.get("id"),
+                    meta={"approved_scope": scope},
+                )
 
             msg = f"efsm: action requires approval (event={event}, scope={scope})"
             msg = self._format_approval_hint(trace_id=trace_id, scope=scope, base=msg)
-            return PolicyDecision(False, msg, trace_id, effect="REQUIRE_APPROVAL",
-                                  next_state=next_state, matched_transition=matched.get("id"),
-                                  meta={"scope": scope})
+            return PolicyDecision(
+                False,
+                msg,
+                trace_id,
+                effect="REQUIRE_APPROVAL",
+                next_state=next_state,
+                matched_transition=matched.get("id"),
+                meta={"scope": scope},
+            )
 
         allow = effect in {"ALLOW", "WARN", "LOG_ONLY", "TRANSFORM"}
         reason = f"efsm: {effect.lower()} via {matched.get('id') or 'transition'}"
@@ -1164,7 +1386,11 @@ class PolicyEngine:
     def _g_approved_file_present(self, ctx: Dict[str, Any]) -> bool:
         trace_id = ctx.get("trace_id")
         payload = ctx.get("payload", {}) or {}
-        scope = payload.get("tool") if isinstance(payload.get("tool"), str) else ctx.get("event")
+        scope = (
+            payload.get("tool")
+            if isinstance(payload.get("tool"), str)
+            else ctx.get("event")
+        )
         if not isinstance(trace_id, str) or not trace_id.strip():
             return False
         if not isinstance(scope, str) or not scope.strip():
@@ -1284,7 +1510,11 @@ class PolicyEngine:
         deny = self.cfg.get("deny", {}) or {}
         allow = self.cfg.get("allow", {}) or {}
 
-        it = instruction_type.strip().upper() if isinstance(instruction_type, str) else None
+        it = (
+            instruction_type.strip().upper()
+            if isinstance(instruction_type, str)
+            else None
+        )
         cat = category.strip() if isinstance(category, str) else None
 
         # Tool allow/deny ONLY applies to real tools (avoid allow.tools blocking all instructions)
@@ -1313,7 +1543,9 @@ class PolicyEngine:
 
         return True, "static allow/deny ok"
 
-    def _check_security_policy(self, security_type: Optional[Dict[str, Any]]) -> Tuple[bool, str]:
+    def _check_security_policy(
+        self, security_type: Optional[Dict[str, Any]]
+    ) -> Tuple[bool, str]:
         sec_cfg = self.cfg.get("security", {}) or {}
         if not isinstance(sec_cfg, dict) or not sec_cfg:
             return True, "no security policy"
@@ -1333,21 +1565,23 @@ class PolicyEngine:
         except Exception:
             pass
 
-        deny_auth = sec_cfg.get("deny_authority_labels")
+        deny_auth = sec_cfg.get("deny_authoritys")
         if isinstance(deny_auth, list) and deny_auth:
-            al = security_type.get("authority_label")
+            al = security_type.get("authority")
             if isinstance(al, str) and al in set(str(x) for x in deny_auth):
-                return False, f"security.authority_label denied: {al}"
+                return False, f"security.authority denied: {al}"
 
-        allow_auth = sec_cfg.get("allow_authority_labels")
+        allow_auth = sec_cfg.get("allow_authoritys")
         if isinstance(allow_auth, list) and allow_auth:
-            al = security_type.get("authority_label")
+            al = security_type.get("authority")
             if isinstance(al, str) and al not in set(str(x) for x in allow_auth):
-                return False, f"security.authority_label not allowed: {al}"
+                return False, f"security.authority not allowed: {al}"
 
         return True, "security ok"
 
-    def _check_taint_sinks(self, trace_id: str, session_id: str, tool: str, args: Dict[str, Any]) -> Tuple[bool, str]:
+    def _check_taint_sinks(
+        self, trace_id: str, session_id: str, tool: str, args: Dict[str, Any]
+    ) -> Tuple[bool, str]:
         ta = self.cfg.get("taint", {}) or {}
         if not bool(ta.get("enabled", False)):
             return True, "taint disabled"
@@ -1367,7 +1601,9 @@ class PolicyEngine:
                 if self._approval_granted(trace_id, tool):
                     return True, "taint override approved"
                 msg = f"taint: sink '{tool}' blocked within {window_sec}s after untrusted source '{src or 'unknown'}'"
-                return False, self._format_approval_hint(trace_id=trace_id, scope=tool, base=msg)
+                return False, self._format_approval_hint(
+                    trace_id=trace_id, scope=tool, base=msg
+                )
 
         def _collect_strings(x: Any, out: List[str]) -> None:
             if isinstance(x, str):
@@ -1401,14 +1637,22 @@ class PolicyEngine:
                     if self._approval_granted(trace_id, tool):
                         return True, "taint override approved"
                     msg = "taint: sink args contain untrusted snippet from prior source"
-                    return False, self._format_approval_hint(trace_id=trace_id, scope=tool, base=msg)
+                    return False, self._format_approval_hint(
+                        trace_id=trace_id, scope=tool, base=msg
+                    )
 
         return True, "taint ok"
 
-    def _check_path_and_budget(self, tool: str, args: Dict[str, Any]) -> Tuple[bool, str]:
+    def _check_path_and_budget(
+        self, tool: str, args: Dict[str, Any]
+    ) -> Tuple[bool, str]:
         path_cfg = self.cfg.get("paths", {}) or {}
-        deny_prefixes = [normalize_path(p) for p in (path_cfg.get("deny_prefixes", []) or [])]
-        allow_prefixes = [normalize_path(p) for p in (path_cfg.get("allow_prefixes", []) or [])]
+        deny_prefixes = [
+            normalize_path(p) for p in (path_cfg.get("deny_prefixes", []) or [])
+        ]
+        allow_prefixes = [
+            normalize_path(p) for p in (path_cfg.get("allow_prefixes", []) or [])
+        ]
 
         paths = _collect_paths_from_args(args)
 
@@ -1445,7 +1689,10 @@ class PolicyEngine:
                 self.state.repeat_count[session_id] = 1
 
             if max_repeat > 0 and self.state.repeat_count[session_id] > max_repeat:
-                return False, f"too many consecutive repeated tool calls: {self.state.repeat_count[session_id]}>{max_repeat}"
+                return (
+                    False,
+                    f"too many consecutive repeated tool calls: {self.state.repeat_count[session_id]}>{max_repeat}",
+                )
 
             if window_sec > 0 and max_in_window > 0:
                 dq = self.state.calls_window[(session_id, tool)]
@@ -1454,7 +1701,10 @@ class PolicyEngine:
                 while dq and dq[0] < cutoff:
                     dq.popleft()
                 if len(dq) > max_in_window:
-                    return False, f"rate limit exceeded: {len(dq)}>{max_in_window} in {window_sec}s for tool={tool}"
+                    return (
+                        False,
+                        f"rate limit exceeded: {len(dq)}>{max_in_window} in {window_sec}s for tool={tool}",
+                    )
 
         return True, "rate ok"
 
@@ -1478,7 +1728,10 @@ class PolicyEngine:
             while dq and dq[0] < cutoff:
                 dq.popleft()
             if len(dq) > max_events:
-                return False, f"user aggregate exceeded: {len(dq)}>{max_events} in {window_sec}s"
+                return (
+                    False,
+                    f"user aggregate exceeded: {len(dq)}>{max_events} in {window_sec}s",
+                )
 
         return True, "user agg ok"
 

@@ -29,12 +29,76 @@ This layer captures the **extrinsic** attributes of the message flow. These are 
 
 This layer captures the **intrinsic** characteristics of the action. These are defined by the agent's internal state and safety guardrails.
 
-* **Safety & Trust**
-* `TRUSTWORTHINESS`: **External Reliability.** Rating if the source of information is trusted. Used for prompt injection defense.
-* `CONFIDENCE`: **Internal Certainty.** Rating the agent's own confidence in a plan or memory.
-* `REVERSIBLE`: **Undo Capability.** Indicating actions that can be undone if necessary.
+The full schema is produced by `make_security_type()` in `arbiteros_kernel/instruction_parsing/types.py` and attached to every instruction as `security_type`.
 
+---
 
-* **Access Control**
-* `CONFIDENTIAL`: **Sensitive Information.** Marking data that should not be stored or shared (e.g., API keys, personal data).
-* `AUTHORITY`: **Permission Level.** Whether the action is approved by human or external policies.
+### 2.1 Safety & Trust
+
+#### `TRUSTWORTHINESS` — External Reliability
+
+Rating whether the **source** of information can be trusted. The primary defence against prompt-injection attacks: untrusted content must never be allowed to influence privileged actions without explicit human approval.
+
+| Value     | Meaning                                                                                                                                                                                 |
+| --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `HIGH`    | Source is system-controlled or package-manager-verified (e.g. local filesystem under `/usr/`, agent's own memory files). Content can be used directly.                                  |
+| `MID`     | Source is user-controlled or partially trusted (e.g. general home directory, remote devices, other agent sessions). Content should be treated with caution.                             |
+| `LOW`     | Source is external and unverified (e.g. web pages, downloaded files, camera/screen captures from third-party nodes, external URLs). Content must be treated as potentially adversarial. |
+| `UNKNOWN` | Trust level has not yet been determined (default before runtime evaluation).                                                                                                            |
+
+> **Resolution rule (worst-case):** When multiple paths or sources are involved, the *lowest* trustworthiness value among them is used.
+
+---
+
+#### `CONFIDENCE` — Internal Certainty
+
+Rating the agent's own certainty in the plan, memory recall, or decision that produced this instruction. Distinct from trustworthiness: an agent can be highly confident in information from an untrusted source (and still be wrong or manipulated).
+
+| Value     | Meaning                                                                                                         |
+| --------- | --------------------------------------------------------------------------------------------------------------- |
+| `HIGH`    | Agent has strong evidence or direct recall supporting this action.                                              |
+| `MID`     | Agent has partial evidence; some inference or assumption was required.                                          |
+| `LOW`     | Agent is uncertain; the action is speculative or based on weak signals.                                         |
+| `UNKNOWN` | Confidence has not been evaluated (typical for tool-call parse time, before the agent's reasoning is assessed). |
+
+---
+
+#### `REVERSIBLE` — Undo Capability
+
+Boolean flag indicating whether the effects of this instruction can be undone after execution.
+
+| Value   | Meaning                                                                                                                                                                                             |
+| ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `true`  | Action is reversible: state can be restored (e.g. file edits via `git revert`, cron entry removal, read-only observations).                                                                         |
+| `false` | Action is **irreversible**: effects persist permanently (e.g. sent messages, shell side-effects, spawned sub-agents, audio playback). Irreversible actions should receive stricter policy scrutiny. |
+
+---
+
+### 2.2 Access Control
+
+#### `CONFIDENTIALITY` — Sensitive Information
+
+Rating the sensitivity of the data **produced or accessed** by this instruction. Used to decide whether output may be logged, stored, or forwarded to other agents.
+
+| Value     | Meaning                                                                                                                                                                                   |
+| --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `HIGH`    | Data is highly sensitive and must not be stored or transmitted without explicit approval (e.g. private keys, credentials, `/etc/shadow`, conversation history, camera/location captures). |
+| `MID`     | Data is moderately sensitive; treat with care and limit exposure (e.g. general config files, system logs, user home directories, message content).                                        |
+| `LOW`     | Data carries no significant sensitivity; safe to log and forward (e.g. public documentation, write-operation acknowledgements, cron schedules).                                           |
+| `UNKNOWN` | Sensitivity has not yet been classified.                                                                                                                                                  |
+
+> **Resolution rule (highest-wins):** When multiple paths or sources are involved, the *highest* confidentiality value among them is used.
+
+---
+
+#### `AUTHORITY` — Permission Level
+
+Records the approval state of this instruction relative to human oversight and policy enforcement. Set by the policy engine after evaluation; tool parsers emit `UNKNOWN` as the initial value.
+
+| Value             | Meaning                                                                                          |
+| ----------------- | ------------------------------------------------------------------------------------------------ |
+| `HUMAN_APPROVED`  | A human operator has explicitly authorised this action (e.g. via an `ASK` confirmation loop).    |
+| `POLICY_APPROVED` | The action passed all automated policy checks and is approved without requiring human review.    |
+| `HUMAN_BLOCKED`   | A human operator has explicitly rejected this action.                                            |
+| `POLICY_BLOCKED`  | The action was blocked by automated policy (e.g. rate limit, path-protection, schema violation). |
+| `UNKNOWN`         | Authority has not yet been evaluated (default at parse time, before the policy engine runs).     |

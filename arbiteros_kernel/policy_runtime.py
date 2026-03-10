@@ -5,10 +5,11 @@ import hashlib
 import json
 import os
 import re
+import threading
 import time
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional, Tuple
-import threading
+
 try:
     import jsonschema  # type: ignore
 except Exception:
@@ -58,7 +59,14 @@ def canonicalize_args(args: Any) -> Any:
         for k in sorted(args.keys(), key=lambda x: str(x)):
             v = args[k]
             if isinstance(v, str) and str(k).lower() in (
-                "path", "file_path", "file", "filename", "src", "dst", "directory", "dir"
+                "path",
+                "file_path",
+                "file",
+                "filename",
+                "src",
+                "dst",
+                "directory",
+                "dir",
             ):
                 out[k] = normalize_path(v)
             else:
@@ -69,7 +77,9 @@ def canonicalize_args(args: Any) -> Any:
     return args
 
 
-def redact_args(args: Any, redact_keys: Tuple[str, ...] = ("api_key", "token", "password", "secret")) -> Any:
+def redact_args(
+    args: Any, redact_keys: Tuple[str, ...] = ("api_key", "token", "password", "secret")
+) -> Any:
     if isinstance(args, dict):
         out: Dict[str, Any] = {}
         for k, v in args.items():
@@ -90,7 +100,14 @@ def _collect_paths_from_args(args: Dict[str, Any]) -> List[str]:
         return paths
     for k, v in args.items():
         if isinstance(v, str) and str(k).lower() in (
-            "path", "file_path", "file", "filename", "src", "dst", "directory", "dir"
+            "path",
+            "file_path",
+            "file",
+            "filename",
+            "src",
+            "dst",
+            "directory",
+            "dir",
         ):
             if v.strip():
                 paths.append(normalize_path(v))
@@ -228,7 +245,9 @@ class KernelPolicyRuntime:
             except Exception:
                 cfg = {}
             audit_path = os.getenv("ARBITEROS_POLICY_AUDIT_PATH", "").strip()
-            return KernelPolicyRuntime(cfg if isinstance(cfg, dict) else {}, audit_path=audit_path)
+            return KernelPolicyRuntime(
+                cfg if isinstance(cfg, dict) else {}, audit_path=audit_path
+            )
 
         # 2) ARBITEROS_POLICY_CONFIG: path to JSON
         path = os.getenv("ARBITEROS_POLICY_CONFIG", "").strip()
@@ -296,7 +315,9 @@ class KernelPolicyRuntime:
             return [tc for tc in tcs if isinstance(tc, dict)]
         return []
 
-    def parse_tool_call(self, tc: Dict[str, Any]) -> Tuple[str, Optional[str], Dict[str, Any], bool]:
+    def parse_tool_call(
+        self, tc: Dict[str, Any]
+    ) -> Tuple[str, Optional[str], Dict[str, Any], bool]:
         """
         return: (tool_name, tool_call_id, args_dict, args_was_json_string)
         """
@@ -305,7 +326,11 @@ class KernelPolicyRuntime:
         if not isinstance(fn, dict):
             return ("unknown_tool", tool_call_id, {}, False)
         tool_name = fn.get("name")
-        tool_name = tool_name.strip() if isinstance(tool_name, str) and tool_name.strip() else "unknown_tool"
+        tool_name = (
+            tool_name.strip()
+            if isinstance(tool_name, str) and tool_name.strip()
+            else "unknown_tool"
+        )
 
         raw_args = fn.get("arguments")
         if isinstance(raw_args, str):
@@ -316,7 +341,9 @@ class KernelPolicyRuntime:
             return (tool_name, tool_call_id, dict(raw_args), False)
         return (tool_name, tool_call_id, {}, False)
 
-    def write_back_tool_args(self, tc: Dict[str, Any], args: Dict[str, Any], was_json_str: bool) -> Dict[str, Any]:
+    def write_back_tool_args(
+        self, tc: Dict[str, Any], args: Dict[str, Any], was_json_str: bool
+    ) -> Dict[str, Any]:
         out = dict(tc)
         fn = out.get("function")
         if not isinstance(fn, dict):
@@ -463,7 +490,9 @@ class KernelPolicyRuntime:
         if isinstance(rb, str) and rb.strip():
             return normalize_path(_expand_home(rb.strip()))
 
-        allow_prefixes = [normalize_path(p) for p in (pc.get("allow_prefixes", []) or [])]
+        allow_prefixes = [
+            normalize_path(p) for p in (pc.get("allow_prefixes", []) or [])
+        ]
         # prefer workspace-like prefix
         for ap in allow_prefixes:
             if ap.startswith("/") and "/.openclaw/workspace" in ap:
@@ -519,7 +548,16 @@ class KernelPolicyRuntime:
             for k in sorted(a.keys(), key=lambda x: str(x)):
                 v = a[k]
                 kl = str(k).lower()
-                if isinstance(v, str) and kl in ("path", "file_path", "file", "filename", "src", "dst", "directory", "dir"):
+                if isinstance(v, str) and kl in (
+                    "path",
+                    "file_path",
+                    "file",
+                    "filename",
+                    "src",
+                    "dst",
+                    "directory",
+                    "dir",
+                ):
                     out[k] = self.resolve_path_for_policy(v)
                 else:
                     out[k] = self.canonicalize_tool_args(v)
@@ -529,11 +567,17 @@ class KernelPolicyRuntime:
             return [self.canonicalize_tool_args(x) for x in args]
 
         return args
-    
-    def check_allow_deny(self, *, tool: str, instruction_type: Optional[str], category: Optional[str]) -> Tuple[bool, str]:
+
+    def check_allow_deny(
+        self, *, tool: str, instruction_type: Optional[str], category: Optional[str]
+    ) -> Tuple[bool, str]:
         deny = self.cfg.get("deny", {}) or {}
         allow = self.cfg.get("allow", {}) or {}
-        it = instruction_type.strip().upper() if isinstance(instruction_type, str) else None
+        it = (
+            instruction_type.strip().upper()
+            if isinstance(instruction_type, str)
+            else None
+        )
         cat = category.strip() if isinstance(category, str) else None
 
         # tool allow/deny only for real tools
@@ -561,7 +605,9 @@ class KernelPolicyRuntime:
 
         return True, "allow/deny ok"
 
-    def check_security(self, security_type: Optional[Dict[str, Any]]) -> Tuple[bool, str]:
+    def check_security(
+        self, security_type: Optional[Dict[str, Any]]
+    ) -> Tuple[bool, str]:
         sec_cfg = self.cfg.get("security", {}) or {}
         if not isinstance(sec_cfg, dict) or not sec_cfg:
             return True, "no security policy"
@@ -581,17 +627,17 @@ class KernelPolicyRuntime:
         except Exception:
             pass
 
-        deny_auth = sec_cfg.get("deny_authority_labels")
+        deny_auth = sec_cfg.get("deny_authoritys")
         if isinstance(deny_auth, list) and deny_auth:
-            al = security_type.get("authority_label")
+            al = security_type.get("authority")
             if isinstance(al, str) and al in set(str(x) for x in deny_auth):
-                return False, f"security.authority_label denied: {al}"
+                return False, f"security.authority denied: {al}"
 
-        allow_auth = sec_cfg.get("allow_authority_labels")
+        allow_auth = sec_cfg.get("allow_authoritys")
         if isinstance(allow_auth, list) and allow_auth:
-            al = security_type.get("authority_label")
+            al = security_type.get("authority")
             if isinstance(al, str) and al not in set(str(x) for x in allow_auth):
-                return False, f"security.authority_label not allowed: {al}"
+                return False, f"security.authority not allowed: {al}"
 
         return True, "security ok"
 
@@ -615,7 +661,9 @@ class KernelPolicyRuntime:
         except Exception as e:
             return False, f"args schema invalid: {e!r}"
 
-    def check_path_and_budget(self, *, tool: str, args: Dict[str, Any]) -> Tuple[bool, str]:
+    def check_path_and_budget(
+        self, *, tool: str, args: Dict[str, Any]
+    ) -> Tuple[bool, str]:
         path_cfg = self.cfg.get("paths", {}) or {}
 
         def _norm_prefixes(xs: Any) -> List[str]:
@@ -671,7 +719,7 @@ class KernelPolicyRuntime:
                     return False, f"arg too long: {k} len={len(v)}>{max_str}"
 
         return True, "path/budget ok"
-    
+
     # -------------------------
     # Deterministic taint derived from instructions
     # -------------------------
@@ -679,7 +727,9 @@ class KernelPolicyRuntime:
     def build_taint_state(self, instructions: List[Dict[str, Any]]) -> TaintState:
         ta = self.cfg.get("taint", {}) or {}
         if not bool(ta.get("enabled", False)):
-            return TaintState(last_untrusted_ts=None, last_untrusted_source=None, snippets=[])
+            return TaintState(
+                last_untrusted_ts=None, last_untrusted_source=None, snippets=[]
+            )
 
         sources = set((ta.get("untrusted_sources", {}) or {}).get("tools", []) or [])
         sources = {str(x).strip() for x in sources if str(x).strip()}
@@ -747,9 +797,13 @@ class KernelPolicyRuntime:
             if len(snippets) > snippet_cache_max:
                 snippets = snippets[-snippet_cache_max:]
 
-        return TaintState(last_untrusted_ts=last_ts, last_untrusted_source=last_src, snippets=snippets)
+        return TaintState(
+            last_untrusted_ts=last_ts, last_untrusted_source=last_src, snippets=snippets
+        )
 
-    def check_taint_sink_for_tool(self, *, tool: str, args: Dict[str, Any], taint: TaintState, op_id: str) -> Tuple[bool, str]:
+    def check_taint_sink_for_tool(
+        self, *, tool: str, args: Dict[str, Any], taint: TaintState, op_id: str
+    ) -> Tuple[bool, str]:
         ta = self.cfg.get("taint", {}) or {}
         if not bool(ta.get("enabled", False)):
             return True, "taint disabled"
@@ -814,7 +868,9 @@ class KernelPolicyRuntime:
     # -------------------------
 
     def build_plan_state(self, instructions: List[Dict[str, Any]]) -> PlanState:
-        ttl = float((self.cfg.get("efsm", {}) or {}).get("plan_ttl_seconds", 600) or 600.0)
+        ttl = float(
+            (self.cfg.get("efsm", {}) or {}).get("plan_ttl_seconds", 600) or 600.0
+        )
 
         plan_text = ""
         plan_ts: Optional[float] = None
@@ -876,13 +932,47 @@ class KernelPolicyRuntime:
 
         # fallback safe default
         return [
-            {"id": "idle_plan", "from": "IDLE", "event": "PLAN", "to": "PLANNED", "actions": ["cache_plan"], "effect": "ALLOW", "priority": 100},
-            {"id": "planned_exec_ok_path", "from": "PLANNED", "event": "EXEC", "to": "EXECUTING", "guard": "path_in_recent_plan", "effect": "ALLOW", "priority": 70},
-            {"id": "planned_exec_need_approval", "from": "PLANNED", "event": "EXEC", "to": "WAIT_APPROVAL", "actions": ["set_pending"], "effect": "REQUIRE_APPROVAL", "priority": 60},
-            {"id": "idle_exec_need_approval", "from": "IDLE", "event": "EXEC", "to": "WAIT_APPROVAL", "actions": ["set_pending"], "effect": "REQUIRE_APPROVAL", "priority": 50},
+            {
+                "id": "idle_plan",
+                "from": "IDLE",
+                "event": "PLAN",
+                "to": "PLANNED",
+                "actions": ["cache_plan"],
+                "effect": "ALLOW",
+                "priority": 100,
+            },
+            {
+                "id": "planned_exec_ok_path",
+                "from": "PLANNED",
+                "event": "EXEC",
+                "to": "EXECUTING",
+                "guard": "path_in_recent_plan",
+                "effect": "ALLOW",
+                "priority": 70,
+            },
+            {
+                "id": "planned_exec_need_approval",
+                "from": "PLANNED",
+                "event": "EXEC",
+                "to": "WAIT_APPROVAL",
+                "actions": ["set_pending"],
+                "effect": "REQUIRE_APPROVAL",
+                "priority": 60,
+            },
+            {
+                "id": "idle_exec_need_approval",
+                "from": "IDLE",
+                "event": "EXEC",
+                "to": "WAIT_APPROVAL",
+                "actions": ["set_pending"],
+                "effect": "REQUIRE_APPROVAL",
+                "priority": 50,
+            },
         ]
 
-    def _efsm_guard(self, name: str, *, plan: PlanState, payload: Dict[str, Any]) -> bool:
+    def _efsm_guard(
+        self, name: str, *, plan: PlanState, payload: Dict[str, Any]
+    ) -> bool:
         name = (name or "").strip()
         if not name:
             return True
@@ -905,7 +995,14 @@ class KernelPolicyRuntime:
             return bool(plan.plan_text)
         return False  # unknown guard => fail-closed
 
-    def _efsm_apply_actions(self, actions: Any, *, vars_: Dict[str, Any], plan: PlanState, payload: Dict[str, Any]) -> None:
+    def _efsm_apply_actions(
+        self,
+        actions: Any,
+        *,
+        vars_: Dict[str, Any],
+        plan: PlanState,
+        payload: Dict[str, Any],
+    ) -> None:
         if isinstance(actions, str):
             actions = [actions]
         if not isinstance(actions, list):
@@ -927,7 +1024,9 @@ class KernelPolicyRuntime:
             elif a == "clear_pending":
                 vars_.pop("pending", None)
 
-    def efsm_replay_history(self, instructions: List[Dict[str, Any]]) -> Tuple[str, Dict[str, Any], PlanState]:
+    def efsm_replay_history(
+        self, instructions: List[Dict[str, Any]]
+    ) -> Tuple[str, Dict[str, Any], PlanState]:
         """
         用历史指令“确定性回放”得到 (state, vars, plan_state)
         """
@@ -962,14 +1061,22 @@ class KernelPolicyRuntime:
                 if isinstance(args, dict):
                     payload["args"] = canonicalize_args(args)
 
-            step = self.efsm_step(current_state=state, vars_=vars_, plan=plan, event=event, payload=payload)
+            step = self.efsm_step(
+                current_state=state,
+                vars_=vars_,
+                plan=plan,
+                event=event,
+                payload=payload,
+            )
             state = step.next_state
             # vars_ mutated inside step (actions)
 
             # if this event is PLAN, rebuild plan deterministically from full history so far
             if event == "PLAN":
                 # recompute from suffix including this PLAN
-                plan = self.build_plan_state(instructions[: instructions.index(ins) + 1])
+                plan = self.build_plan_state(
+                    instructions[: instructions.index(ins) + 1]
+                )
 
         return state, vars_, plan
 
@@ -996,11 +1103,17 @@ class KernelPolicyRuntime:
             fr = tr.get("from", "*")
             ev = tr.get("event", "*")
 
-            from_ok = (fr == "*") or (isinstance(fr, str) and fr == state) or (isinstance(fr, list) and state in fr)
+            from_ok = (
+                (fr == "*")
+                or (isinstance(fr, str) and fr == state)
+                or (isinstance(fr, list) and state in fr)
+            )
             if not from_ok:
                 continue
 
-            ev_list = [ev] if isinstance(ev, str) else (ev if isinstance(ev, list) else ["*"])
+            ev_list = (
+                [ev] if isinstance(ev, str) else (ev if isinstance(ev, list) else ["*"])
+            )
             ev_norm = [str(x).strip().upper() for x in ev_list if str(x).strip()]
             if "*" not in ev_norm and event not in ev_norm:
                 continue
@@ -1017,14 +1130,27 @@ class KernelPolicyRuntime:
             return EfsmStepResult(True, "ALLOW", "efsm: no transition", state)
 
         to_raw = matched.get("to", "*")
-        next_state = state if (to_raw == "*" or to_raw is None) else (str(to_raw).strip() or state)
+        next_state = (
+            state
+            if (to_raw == "*" or to_raw is None)
+            else (str(to_raw).strip() or state)
+        )
 
         effect = matched.get("effect", "ALLOW")
         effect = str(effect).strip().upper() if isinstance(effect, str) else "ALLOW"
-        if effect not in {"ALLOW", "BLOCK", "WARN", "LOG_ONLY", "REQUIRE_APPROVAL", "TRANSFORM"}:
+        if effect not in {
+            "ALLOW",
+            "BLOCK",
+            "WARN",
+            "LOG_ONLY",
+            "REQUIRE_APPROVAL",
+            "TRANSFORM",
+        }:
             effect = "ALLOW"
 
-        self._efsm_apply_actions(matched.get("actions"), vars_=vars_, plan=plan, payload=payload)
+        self._efsm_apply_actions(
+            matched.get("actions"), vars_=vars_, plan=plan, payload=payload
+        )
 
         allow = effect in {"ALLOW", "WARN", "LOG_ONLY", "TRANSFORM"}
         reason = f"efsm: {effect.lower()} via {matched.get('id') or 'transition'}"
@@ -1036,7 +1162,9 @@ class KernelPolicyRuntime:
             effect=effect,
             reason=reason,
             next_state=next_state,
-            matched_transition=matched.get("id") if isinstance(matched.get("id"), str) else None,
+            matched_transition=matched.get("id")
+            if isinstance(matched.get("id"), str)
+            else None,
             meta={"from": state, "to": next_state, "event": event},
         )
 
@@ -1044,7 +1172,9 @@ class KernelPolicyRuntime:
     # Deterministic rate limit from instructions (no wallclock dependency)
     # -------------------------
 
-    def iter_tool_events(self, instructions: List[Dict[str, Any]]) -> Iterable[Tuple[str, str]]:
+    def iter_tool_events(
+        self, instructions: List[Dict[str, Any]]
+    ) -> Iterable[Tuple[str, str]]:
         """
         yield (instruction_type, tool_name) for tool-like instructions.
         """
@@ -1097,7 +1227,10 @@ class KernelPolicyRuntime:
                 break
 
         if streak + 1 > max_repeat:
-            return False, f"too many consecutive repeated tool calls: {streak + 1}>{max_repeat}"
+            return (
+                False,
+                f"too many consecutive repeated tool calls: {streak + 1}>{max_repeat}",
+            )
         return True, "rate ok"
 
 

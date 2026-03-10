@@ -1,5 +1,5 @@
-"""Instruction parsing for ArbiterOS Kernel - parse and register LLM outputs."""
+"""Instruction parsing for ArbiterOS Kernel."""
 
-from .instruction_parser import InstructionBuilder
+from .builder import InstructionBuilder
 
 __all__ = ["InstructionBuilder"]
