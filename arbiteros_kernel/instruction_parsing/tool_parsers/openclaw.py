@@ -14,103 +14,14 @@ To add a new tool:
 import os
 import re
 import shlex
-from pathlib import PurePosixPath
 from typing import Any, Dict, List, Optional
 
+from .linux_registry import classify_confidentiality, classify_exe, classify_trustworthiness
 from ..types import (
-    SecurityLevel,
     ToolParser,
     ToolParseResult,
     make_security_type,
 )
-
-# ---------------------------------------------------------------------------
-# Linux registry helpers — loaded lazily on first exec call
-# ---------------------------------------------------------------------------
-
-_LINUX_REGISTRY_DIR = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "linux_registry")
-)
-
-_EXE_REGISTRY: Optional[Dict[str, List[str]]] = None
-_FILE_CONF_REGISTRY: Optional[Dict[str, List[str]]] = None
-_FILE_TRUST_REGISTRY: Optional[Dict[str, List[str]]] = None
-
-
-def _load_yaml_registry(filename: str) -> Dict[str, List[str]]:
-    """Load a linux_registry YAML file, returning {} on failure."""
-    try:
-        import yaml
-
-        path = os.path.join(_LINUX_REGISTRY_DIR, filename)
-        with open(path, "r", encoding="utf-8") as fh:
-            data = yaml.safe_load(fh)
-        return {k: [str(v) for v in vs] for k, vs in (data or {}).items()}
-    except Exception:
-        return {}
-
-
-def _get_exe_registry() -> Dict[str, List[str]]:
-    global _EXE_REGISTRY
-    if _EXE_REGISTRY is None:
-        _EXE_REGISTRY = _load_yaml_registry("exe_registry.yaml")
-    return _EXE_REGISTRY
-
-
-def _get_conf_registry() -> Dict[str, List[str]]:
-    global _FILE_CONF_REGISTRY
-    if _FILE_CONF_REGISTRY is None:
-        _FILE_CONF_REGISTRY = _load_yaml_registry("file_confidentiality.yaml")
-    return _FILE_CONF_REGISTRY
-
-
-def _get_trust_registry() -> Dict[str, List[str]]:
-    global _FILE_TRUST_REGISTRY
-    if _FILE_TRUST_REGISTRY is None:
-        _FILE_TRUST_REGISTRY = _load_yaml_registry("file_trustworthiness.yaml")
-    return _FILE_TRUST_REGISTRY
-
-
-def _path_matches(path: str, pattern: str) -> bool:
-    """Return True if *path* matches *pattern* (glob, PurePosixPath-aware)."""
-    import fnmatch
-
-    # Full-string match first — handles URLs (http://*) and absolute globs
-    if fnmatch.fnmatch(path, pattern):
-        return True
-    # Expand leading ~ so patterns like ~/.ssh/* work
-    expanded = os.path.expanduser(path)
-    if fnmatch.fnmatch(expanded, pattern):
-        return True
-    try:
-        if PurePosixPath(expanded).match(pattern):
-            return True
-    except Exception:
-        pass
-    # Basename match for extension patterns (e.g. *.pem)
-    return fnmatch.fnmatch(os.path.basename(path), pattern)
-
-
-def _classify_exe(exe: str, subcommand: Optional[str]) -> str:
-    """
-    Return the instruction type (EXEC / WRITE / READ) for *exe*.
-
-    Checks in priority order EXEC → WRITE → READ; the first match wins.
-    Within each category the compound pattern "exe subcommand" is tried
-    before the bare executable name.  Default when nothing matches: EXEC.
-    """
-    reg = _get_exe_registry()
-    candidates: List[str] = []
-    if subcommand:
-        candidates.append(f"{exe} {subcommand}")
-    candidates.append(exe)
-
-    for category in ("EXEC", "WRITE", "READ"):
-        patterns = reg.get(category, [])
-        for candidate in candidates:
-            if candidate in patterns:
-                return category
-    return "EXEC"
 
 
 def _is_path_like(token: str) -> bool:
@@ -127,36 +38,6 @@ def _is_path_like(token: str) -> bool:
         or "\\" in token  # Windows path
         or ("/" in token and not token.startswith("-"))
     )
-
-
-def _classify_confidentiality(paths: List[str]) -> SecurityLevel:
-    """
-    Return the highest confidentiality level that matches any of *paths*.
-    Priority: HIGH > MID > LOW; default UNKNOWN.
-    """
-    if not paths:
-        return "UNKNOWN"
-    reg = _get_conf_registry()
-    for level in ("HIGH", "MID", "LOW"):
-        for path in paths:
-            if any(_path_matches(path, pat) for pat in reg.get(level, [])):
-                return level
-    return "UNKNOWN"
-
-
-def _classify_trustworthiness(paths: List[str]) -> SecurityLevel:
-    """
-    Return the lowest (most conservative) trustworthiness level that matches
-    any of *paths*.  Priority: LOW > MID > HIGH (worst-case wins); default UNKNOWN.
-    """
-    if not paths:
-        return "UNKNOWN"
-    reg = _get_trust_registry()
-    for level in ("LOW", "MID", "HIGH"):
-        for path in paths:
-            if any(_path_matches(path, pat) for pat in reg.get(level, [])):
-                return level
-    return "UNKNOWN"
 
 
 # ---------------------------------------------------------------------------
@@ -221,8 +102,8 @@ def _parse_read(args: Dict[str, Any]) -> ToolParseResult:
         )
     raw = str(args.get("path") or args.get("file_path") or "")
     paths = [raw] if raw else []
-    confidentiality = _classify_confidentiality(paths) if paths else "MID"
-    trustworthiness = _classify_trustworthiness(paths) if paths else "HIGH"
+    confidentiality = classify_confidentiality(paths) if paths else "MID"
+    trustworthiness = classify_trustworthiness(paths) if paths else "HIGH"
     return ToolParseResult(
         "READ",
         make_security_type(
@@ -255,8 +136,8 @@ def _parse_edit(args: Dict[str, Any]) -> ToolParseResult:
         )
     raw = str(args.get("path") or args.get("file_path") or "")
     paths = [raw] if raw else []
-    confidentiality = _classify_confidentiality(paths) if paths else "LOW"
-    trustworthiness = _classify_trustworthiness(paths) if paths else "HIGH"
+    confidentiality = classify_confidentiality(paths) if paths else "LOW"
+    trustworthiness = classify_trustworthiness(paths) if paths else "HIGH"
     return ToolParseResult(
         "WRITE",
         make_security_type(
@@ -289,8 +170,8 @@ def _parse_write(args: Dict[str, Any]) -> ToolParseResult:
         )
     raw = str(args.get("path") or args.get("file_path") or "")
     paths = [raw] if raw else []
-    confidentiality = _classify_confidentiality(paths) if paths else "LOW"
-    trustworthiness = _classify_trustworthiness(paths) if paths else "HIGH"
+    confidentiality = classify_confidentiality(paths) if paths else "LOW"
+    trustworthiness = classify_trustworthiness(paths) if paths else "HIGH"
     return ToolParseResult(
         "WRITE",
         make_security_type(
@@ -338,7 +219,7 @@ def _classify_segment(seg_str: str) -> str:
     subcommand: Optional[str] = None
     if len(tokens) > 1 and not tokens[1].startswith("-"):
         subcommand = tokens[1]
-    return _classify_exe(exe, subcommand)
+    return classify_exe(exe, subcommand)
 
 
 def _parse_exec(args: Dict[str, Any]) -> ToolParseResult:
@@ -388,8 +269,8 @@ def _parse_exec(args: Dict[str, Any]) -> ToolParseResult:
         path_tokens.extend(t for t in tokens[1:] if _is_path_like(t))
 
     if path_tokens:
-        confidentiality = _classify_confidentiality(path_tokens)
-        trustworthiness = _classify_trustworthiness(path_tokens)
+        confidentiality = classify_confidentiality(path_tokens)
+        trustworthiness = classify_trustworthiness(path_tokens)
     else:
         # No explicit paths — conservative defaults based on instruction type
         confidentiality = "MID" if itype == "EXEC" else "LOW"
@@ -847,7 +728,7 @@ def _parse_image(args: Dict[str, Any]) -> ToolParseResult:
     URLs (http://, https://, …) are classified LOW there, local paths MID.
     """
     image_src = str(args.get("image", ""))
-    trustworthiness = _classify_trustworthiness([image_src]) if image_src else "MID"
+    trustworthiness = classify_trustworthiness([image_src]) if image_src else "MID"
     return ToolParseResult(
         "READ",
         make_security_type(
