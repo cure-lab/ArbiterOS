@@ -4,8 +4,14 @@ import pytest
 
 from arbiteros_kernel.instruction_parsing.tool_parsers.linux_registry import (
     _path_matches,
+)
+from arbiteros_kernel.instruction_parsing.tool_parsers.linux_registry import (
     classify_confidentiality as _classify_confidentiality,
+)
+from arbiteros_kernel.instruction_parsing.tool_parsers.linux_registry import (
     classify_exe as _classify_exe,
+)
+from arbiteros_kernel.instruction_parsing.tool_parsers.linux_registry import (
     classify_trustworthiness as _classify_trustworthiness,
 )
 from arbiteros_kernel.instruction_parsing.tool_parsers.openclaw import (
@@ -328,11 +334,11 @@ class TestParseRead:
         assert r.security_type is not None
         assert r.security_type["reversible"] is True
 
-    def test_no_path_uses_mid_defaults(self):
+    def test_no_path_uses_unknown_defaults(self):
         r = parse_tool_instruction("read", {})
         assert r.instruction_type == "READ"
         assert r.security_type is not None
-        assert r.security_type["confidentiality"] == "MID"
+        assert r.security_type["confidentiality"] == "UNKNOWN"
 
 
 class TestParseEdit:

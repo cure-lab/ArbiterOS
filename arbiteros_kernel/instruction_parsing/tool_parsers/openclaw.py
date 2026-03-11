@@ -16,11 +16,17 @@ import re
 import shlex
 from typing import Any, Dict, List, Optional
 
-from .linux_registry import classify_confidentiality, classify_exe, classify_trustworthiness
+from ..moke import get_current_taint_status
 from ..types import (
     ToolParser,
     ToolParseResult,
     make_security_type,
+)
+from .linux_registry import (
+    classify_confidentiality,
+    classify_exe,
+    classify_trustworthiness,
+    register_file_taint,
 )
 
 
@@ -102,8 +108,8 @@ def _parse_read(args: Dict[str, Any]) -> ToolParseResult:
         )
     raw = str(args.get("path") or args.get("file_path") or "")
     paths = [raw] if raw else []
-    confidentiality = classify_confidentiality(paths) if paths else "MID"
-    trustworthiness = classify_trustworthiness(paths) if paths else "HIGH"
+    confidentiality = classify_confidentiality(paths) if paths else "UNKNOWN"
+    trustworthiness = classify_trustworthiness(paths) if paths else "UNKNOWN"
     return ToolParseResult(
         "READ",
         make_security_type(
@@ -136,8 +142,11 @@ def _parse_edit(args: Dict[str, Any]) -> ToolParseResult:
         )
     raw = str(args.get("path") or args.get("file_path") or "")
     paths = [raw] if raw else []
-    confidentiality = classify_confidentiality(paths) if paths else "LOW"
-    trustworthiness = classify_trustworthiness(paths) if paths else "HIGH"
+    if raw:
+        taint = get_current_taint_status()
+        register_file_taint(raw, taint.trustworthiness, taint.confidentiality)
+    confidentiality = classify_confidentiality(paths) if paths else "UNKNOWN"
+    trustworthiness = classify_trustworthiness(paths) if paths else "UNKNOWN"
     return ToolParseResult(
         "WRITE",
         make_security_type(
@@ -170,8 +179,11 @@ def _parse_write(args: Dict[str, Any]) -> ToolParseResult:
         )
     raw = str(args.get("path") or args.get("file_path") or "")
     paths = [raw] if raw else []
-    confidentiality = classify_confidentiality(paths) if paths else "LOW"
-    trustworthiness = classify_trustworthiness(paths) if paths else "HIGH"
+    if raw:
+        taint = get_current_taint_status()
+        register_file_taint(raw, taint.trustworthiness, taint.confidentiality)
+    confidentiality = classify_confidentiality(paths) if paths else "UNKNOWN"
+    trustworthiness = classify_trustworthiness(paths) if paths else "UNKNOWN"
     return ToolParseResult(
         "WRITE",
         make_security_type(
@@ -242,8 +254,8 @@ def _parse_exec(args: Dict[str, Any]) -> ToolParseResult:
         return ToolParseResult(
             "EXEC",
             make_security_type(
-                confidentiality="MID",
-                trustworthiness="MID",
+                confidentiality="UNKNOWN",
+                trustworthiness="UNKNOWN",
                 confidence="UNKNOWN",
                 reversible=False,
                 authority="UNKNOWN",

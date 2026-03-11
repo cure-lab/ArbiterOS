@@ -1,14 +1,19 @@
 """
-Linux-registry helpers: load, cache, classify, and persist the YAML
-rule-sets that drive execution and path security classification.
+Linux-registry helpers: two-layer YAML rule-sets for execution and path
+security classification.
 
-Three registries are managed here:
-  exe_registry.yaml          — maps executable names to instruction types
-  file_confidentiality.yaml  — maps path patterns to confidentiality levels
-  file_trustworthiness.yaml  — maps path patterns to trustworthiness levels
+Layer 1 — source (read-only):
+    <package>/linux_registry/*.yaml   (shipped with the code; never written)
 
-All registries are loaded lazily on first access, held in memory, and
-flushed back to disk only when dirty (on exit or via save_registries()).
+Layer 2 — user (read-write):
+    ~/.arbiteros/instruction_parsing/linux_registry/*.yaml
+    (empty on first run; all writes go here; overrides source on match)
+
+Classification strategy:
+    The user layer is checked first.  On a match the result is returned
+    immediately.  Only when no match is found in the user layer is the
+    source layer consulted.  This lets users extend or override built-in
+    rules without touching the shipped files.
 """
 
 import atexit
@@ -20,34 +25,56 @@ from typing import Dict, List, Optional
 from ..types import SecurityLevel
 
 # ---------------------------------------------------------------------------
-# Storage
+# Directory paths
 # ---------------------------------------------------------------------------
 
-_LINUX_REGISTRY_DIR = os.path.abspath(
+# Source layer — read-only, ships with the package
+_SOURCE_REGISTRY_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "linux_registry")
 )
 
-_EXE_REGISTRY: Optional[Dict[str, List[str]]] = None
-_FILE_CONF_REGISTRY: Optional[Dict[str, List[str]]] = None
-_FILE_TRUST_REGISTRY: Optional[Dict[str, List[str]]] = None
+# User layer — read-write, lives in ~/.arbiteros/
+# Override with ARBITEROS_USER_REGISTRY_DIR for testing or alternative deployments.
+_USER_REGISTRY_DIR = os.environ.get(
+    "ARBITEROS_USER_REGISTRY_DIR",
+    os.path.join(
+        os.path.expanduser("~"),
+        ".arbiteros",
+        "instruction_parsing",
+        "linux_registry",
+    ),
+)
 
-# Dirty flags — set to True whenever an in-memory registry is modified.
-# The atexit handler only writes back registries that were actually changed.
+# ---------------------------------------------------------------------------
+# In-memory state — source layer (never written back)
+# ---------------------------------------------------------------------------
+
+_EXE_SOURCE: Optional[Dict[str, List[str]]] = None
+_FILE_CONF_SOURCE: Optional[Dict[str, List[str]]] = None
+_FILE_TRUST_SOURCE: Optional[Dict[str, List[str]]] = None
+
+# ---------------------------------------------------------------------------
+# In-memory state — user layer (persisted on exit / explicit save)
+# ---------------------------------------------------------------------------
+
+_EXE_USER: Optional[Dict[str, List[str]]] = None
+_FILE_CONF_USER: Optional[Dict[str, List[str]]] = None
+_FILE_TRUST_USER: Optional[Dict[str, List[str]]] = None
+
 _EXE_DIRTY: bool = False
 _FILE_CONF_DIRTY: bool = False
 _FILE_TRUST_DIRTY: bool = False
 
 # ---------------------------------------------------------------------------
-# I/O
+# I/O helpers
 # ---------------------------------------------------------------------------
 
 
-def _load_yaml_registry(filename: str) -> Dict[str, List[str]]:
-    """Load a linux_registry YAML file, returning {} on failure."""
+def _load_yaml_registry(path: str) -> Dict[str, List[str]]:
+    """Load a YAML registry file from *path*, returning {} on any failure."""
     try:
         import yaml
 
-        path = os.path.join(_LINUX_REGISTRY_DIR, filename)
         with open(path, "r", encoding="utf-8") as fh:
             data = yaml.safe_load(fh)
         return {k: [str(v) for v in vs] for k, vs in (data or {}).items()}
@@ -55,16 +82,16 @@ def _load_yaml_registry(filename: str) -> Dict[str, List[str]]:
         return {}
 
 
-def _save_yaml_registry(filename: str, data: Dict[str, List[str]]) -> bool:
-    """Persist *data* back to the linux_registry YAML file.
+def _save_yaml_registry(path: str, data: Dict[str, List[str]]) -> bool:
+    """Persist *data* to *path*, creating parent directories as needed.
 
-    Returns True on success, False on failure (errors are silently swallowed
-    so a save failure never crashes the policy-check hot path).
+    Returns True on success; errors are silently swallowed so a save
+    failure never crashes the policy-check hot path.
     """
     try:
         import yaml
 
-        path = os.path.join(_LINUX_REGISTRY_DIR, filename)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8") as fh:
             yaml.safe_dump(data, fh, allow_unicode=True, sort_keys=True)
         return True
@@ -72,80 +99,174 @@ def _save_yaml_registry(filename: str, data: Dict[str, List[str]]) -> bool:
         return False
 
 
+def _source_path(filename: str) -> str:
+    return os.path.join(_SOURCE_REGISTRY_DIR, filename)
+
+
+def _user_path(filename: str) -> str:
+    return os.path.join(_USER_REGISTRY_DIR, filename)
+
+
+# ---------------------------------------------------------------------------
+# atexit flush — writes only to user layer
+# ---------------------------------------------------------------------------
+
+
 def _atexit_save() -> None:
-    """Flush dirty registries to disk when the interpreter exits."""
+    """Flush dirty user registries to ~/.arbiteros/... on interpreter exit."""
     global _EXE_DIRTY, _FILE_CONF_DIRTY, _FILE_TRUST_DIRTY
-    if _EXE_DIRTY and _EXE_REGISTRY is not None:
-        _save_yaml_registry("exe_registry.yaml", _EXE_REGISTRY)
+    if _EXE_DIRTY and _EXE_USER is not None:
+        _save_yaml_registry(_user_path("exe_registry.yaml"), _EXE_USER)
         _EXE_DIRTY = False
-    if _FILE_CONF_DIRTY and _FILE_CONF_REGISTRY is not None:
-        _save_yaml_registry("file_confidentiality.yaml", _FILE_CONF_REGISTRY)
+    if _FILE_CONF_DIRTY and _FILE_CONF_USER is not None:
+        _save_yaml_registry(_user_path("file_confidentiality.yaml"), _FILE_CONF_USER)
         _FILE_CONF_DIRTY = False
-    if _FILE_TRUST_DIRTY and _FILE_TRUST_REGISTRY is not None:
-        _save_yaml_registry("file_trustworthiness.yaml", _FILE_TRUST_REGISTRY)
+    if _FILE_TRUST_DIRTY and _FILE_TRUST_USER is not None:
+        _save_yaml_registry(_user_path("file_trustworthiness.yaml"), _FILE_TRUST_USER)
         _FILE_TRUST_DIRTY = False
 
 
 atexit.register(_atexit_save)
 
 # ---------------------------------------------------------------------------
-# Getters (lazy load)
+# Lazy getters — source layer
 # ---------------------------------------------------------------------------
 
 
-def _get_exe_registry() -> Dict[str, List[str]]:
-    global _EXE_REGISTRY
-    if _EXE_REGISTRY is None:
-        _EXE_REGISTRY = _load_yaml_registry("exe_registry.yaml")
-    return _EXE_REGISTRY
+def _get_exe_source() -> Dict[str, List[str]]:
+    global _EXE_SOURCE
+    if _EXE_SOURCE is None:
+        _EXE_SOURCE = _load_yaml_registry(_source_path("exe_registry.yaml"))
+    return _EXE_SOURCE
 
 
-def _get_conf_registry() -> Dict[str, List[str]]:
-    global _FILE_CONF_REGISTRY
-    if _FILE_CONF_REGISTRY is None:
-        _FILE_CONF_REGISTRY = _load_yaml_registry("file_confidentiality.yaml")
-    return _FILE_CONF_REGISTRY
+def _get_conf_source() -> Dict[str, List[str]]:
+    global _FILE_CONF_SOURCE
+    if _FILE_CONF_SOURCE is None:
+        _FILE_CONF_SOURCE = _load_yaml_registry(
+            _source_path("file_confidentiality.yaml")
+        )
+    return _FILE_CONF_SOURCE
 
 
-def _get_trust_registry() -> Dict[str, List[str]]:
-    global _FILE_TRUST_REGISTRY
-    if _FILE_TRUST_REGISTRY is None:
-        _FILE_TRUST_REGISTRY = _load_yaml_registry("file_trustworthiness.yaml")
-    return _FILE_TRUST_REGISTRY
+def _get_trust_source() -> Dict[str, List[str]]:
+    global _FILE_TRUST_SOURCE
+    if _FILE_TRUST_SOURCE is None:
+        _FILE_TRUST_SOURCE = _load_yaml_registry(
+            _source_path("file_trustworthiness.yaml")
+        )
+    return _FILE_TRUST_SOURCE
+
 
 # ---------------------------------------------------------------------------
-# Mutators
+# Lazy getters — user layer
 # ---------------------------------------------------------------------------
 
 
-def update_exe_registry(data: Dict[str, List[str]]) -> None:
-    """Replace the in-memory exe registry and mark it dirty."""
-    global _EXE_REGISTRY, _EXE_DIRTY
-    _EXE_REGISTRY = data
-    _EXE_DIRTY = True
+def _get_exe_user() -> Dict[str, List[str]]:
+    global _EXE_USER
+    if _EXE_USER is None:
+        _EXE_USER = _load_yaml_registry(_user_path("exe_registry.yaml"))
+    return _EXE_USER
 
 
-def update_conf_registry(data: Dict[str, List[str]]) -> None:
-    """Replace the in-memory file-confidentiality registry and mark it dirty."""
-    global _FILE_CONF_REGISTRY, _FILE_CONF_DIRTY
-    _FILE_CONF_REGISTRY = data
-    _FILE_CONF_DIRTY = True
+def _get_conf_user() -> Dict[str, List[str]]:
+    global _FILE_CONF_USER
+    if _FILE_CONF_USER is None:
+        _FILE_CONF_USER = _load_yaml_registry(_user_path("file_confidentiality.yaml"))
+    return _FILE_CONF_USER
 
 
-def update_trust_registry(data: Dict[str, List[str]]) -> None:
-    """Replace the in-memory file-trustworthiness registry and mark it dirty."""
-    global _FILE_TRUST_REGISTRY, _FILE_TRUST_DIRTY
-    _FILE_TRUST_REGISTRY = data
-    _FILE_TRUST_DIRTY = True
+def _get_trust_user() -> Dict[str, List[str]]:
+    global _FILE_TRUST_USER
+    if _FILE_TRUST_USER is None:
+        _FILE_TRUST_USER = _load_yaml_registry(_user_path("file_trustworthiness.yaml"))
+    return _FILE_TRUST_USER
+
+
+# ---------------------------------------------------------------------------
+# Mutators — write only to user layer
+# ---------------------------------------------------------------------------
 
 
 def save_registries() -> None:
-    """Explicitly flush all dirty registries to disk immediately.
+    """Explicitly flush all dirty user registries to disk immediately.
 
-    Call this whenever you need changes to be persisted right away rather than
-    waiting for the interpreter to exit (e.g. after a batch admin update).
+    Call this whenever you need changes to be persisted right away rather
+    than waiting for the interpreter to exit (e.g. after a batch update).
     """
     _atexit_save()
+
+
+def register_file_taint(
+    path: str,
+    trustworthiness: SecurityLevel,
+    confidentiality: SecurityLevel,
+) -> None:
+    """Record the security labels of a written file in the user registry.
+
+    The effective label stored is the worst-case of the supplied taint and the
+    source-layer classification for the path:
+      • confidentiality: higher level wins  (HIGH > MID > LOW > UNKNOWN)
+      • trustworthiness: lower  level wins  (LOW  < MID < HIGH < UNKNOWN)
+
+    This ensures that a file's inherent sensitivity (e.g. .env → HIGH conf in
+    the source registry) is never downgraded by a low-taint write.
+
+    The path is moved to the effective level in the user registry (removed from
+    any other level first) and both registries are marked dirty.
+    """
+    global _FILE_CONF_DIRTY, _FILE_TRUST_DIRTY
+
+    _CONF_ORDER = {"UNKNOWN": 0, "LOW": 1, "MID": 2, "HIGH": 3}
+    _TRUST_ORDER = {"UNKNOWN": 0, "HIGH": 3, "MID": 2, "LOW": 1}
+
+    # Source-layer classification for the path
+    source_conf: SecurityLevel = next(
+        (
+            lvl
+            for lvl in ("HIGH", "MID", "LOW")
+            if any(_path_matches(path, pat) for pat in _get_conf_source().get(lvl, []))
+        ),
+        "UNKNOWN",
+    )
+    source_trust: SecurityLevel = next(
+        (
+            lvl
+            for lvl in ("LOW", "MID", "HIGH")
+            if any(_path_matches(path, pat) for pat in _get_trust_source().get(lvl, []))
+        ),
+        "UNKNOWN",
+    )
+
+    # Worst-case: more restrictive of source and taint
+    effective_conf: SecurityLevel = (
+        confidentiality
+        if _CONF_ORDER.get(confidentiality, 0) >= _CONF_ORDER.get(source_conf, 0)
+        else source_conf
+    )
+    effective_trust: SecurityLevel = (
+        trustworthiness
+        if _TRUST_ORDER.get(trustworthiness, 0) <= _TRUST_ORDER.get(source_trust, 0)
+        else source_trust
+    )
+
+    conf = _get_conf_user()
+    for lvl in ("HIGH", "MID", "LOW"):
+        entries = conf.setdefault(lvl, [])
+        if path in entries:
+            entries.remove(path)
+    conf.setdefault(effective_conf, []).append(path)
+    _FILE_CONF_DIRTY = True
+
+    trust = _get_trust_user()
+    for lvl in ("HIGH", "MID", "LOW"):
+        entries = trust.setdefault(lvl, [])
+        if path in entries:
+            entries.remove(path)
+    trust.setdefault(effective_trust, []).append(path)
+    _FILE_TRUST_DIRTY = True
+
 
 # ---------------------------------------------------------------------------
 # Classification helpers
@@ -171,52 +292,52 @@ def _path_matches(path: str, pattern: str) -> bool:
 
 
 def classify_exe(exe: str, subcommand: Optional[str]) -> str:
-    """
-    Return the instruction type (EXEC / WRITE / READ) for *exe*.
+    """Return instruction type (EXEC/WRITE/READ) for *exe*.
 
-    Checks in priority order EXEC → WRITE → READ; the first match wins.
-    Within each category the compound pattern "exe subcommand" is tried
-    before the bare executable name.  Default when nothing matches: EXEC.
+    User registry is checked first; source registry is the fallback.
+    Priority within each registry: EXEC > WRITE > READ.
+    Default when nothing matches: EXEC.
     """
-    reg = _get_exe_registry()
     candidates: List[str] = []
     if subcommand:
         candidates.append(f"{exe} {subcommand}")
     candidates.append(exe)
 
-    for category in ("EXEC", "WRITE", "READ"):
-        patterns = reg.get(category, [])
-        for candidate in candidates:
-            if candidate in patterns:
-                return category
+    for reg in (_get_exe_user(), _get_exe_source()):
+        for category in ("EXEC", "WRITE", "READ"):
+            for candidate in candidates:
+                if candidate in reg.get(category, []):
+                    return category
     return "EXEC"
 
 
 def classify_confidentiality(paths: List[str]) -> SecurityLevel:
-    """
-    Return the highest confidentiality level that matches any of *paths*.
+    """Return highest confidentiality level matching any of *paths*.
+
+    User registry is checked first; source registry is the fallback.
     Priority: HIGH > MID > LOW; default UNKNOWN.
     """
     if not paths:
         return "UNKNOWN"
-    reg = _get_conf_registry()
-    for level in ("HIGH", "MID", "LOW"):
-        for path in paths:
-            if any(_path_matches(path, pat) for pat in reg.get(level, [])):
-                return level
+    for reg in (_get_conf_user(), _get_conf_source()):
+        for level in ("HIGH", "MID", "LOW"):
+            for path in paths:
+                if any(_path_matches(path, pat) for pat in reg.get(level, [])):
+                    return level
     return "UNKNOWN"
 
 
 def classify_trustworthiness(paths: List[str]) -> SecurityLevel:
-    """
-    Return the lowest (most conservative) trustworthiness level that matches
-    any of *paths*.  Priority: LOW > MID > HIGH (worst-case wins); default UNKNOWN.
+    """Return lowest trustworthiness level matching any of *paths*.
+
+    User registry is checked first; source registry is the fallback.
+    Priority: LOW > MID > HIGH (worst-case wins); default UNKNOWN.
     """
     if not paths:
         return "UNKNOWN"
-    reg = _get_trust_registry()
-    for level in ("LOW", "MID", "HIGH"):
-        for path in paths:
-            if any(_path_matches(path, pat) for pat in reg.get(level, [])):
-                return level
+    for reg in (_get_trust_user(), _get_trust_source()):
+        for level in ("LOW", "MID", "HIGH"):
+            for path in paths:
+                if any(_path_matches(path, pat) for pat in reg.get(level, [])):
+                    return level
     return "UNKNOWN"
