@@ -3848,6 +3848,10 @@ def _add_instruction_for_non_strict(data: dict, content: str) -> None:
     trace_id = (
         metadata.get("arbiteros_trace_id") if isinstance(metadata, dict) else None
     )
+    if not isinstance(trace_id, str) or not trace_id.strip():
+        context = _build_device_context(data)
+        _state, _ = _ensure_trace_state(context)
+        trace_id = _state.trace_id if _state is not None else None
     if (
         not isinstance(trace_id, str)
         or not trace_id.strip()
@@ -3881,16 +3885,22 @@ def _response_transform_content_only(data: dict, message_dict: dict) -> Optional
     支持 content 为字符串或列表 [{"type":"text","text":"..."}]。"""
     raw_content = message_dict.get("content")
     content: str
+    inner: Optional[dict] = None
     if isinstance(raw_content, str):
         content = raw_content
     elif isinstance(raw_content, list):
         content = _extract_text_from_message_content(raw_content)
+    elif isinstance(raw_content, dict) and _is_strict_topic_category_content(raw_content):
+        # API 可能直接返回解析后的 dict（如 response_format strict 时）
+        inner = raw_content
+        content = json.dumps(raw_content, ensure_ascii=False)
     else:
         return message_dict
     if not content or not content.strip():
         return message_dict
     try:
-        inner = json.loads(content)
+        if inner is None:
+            inner = json.loads(content)
         if isinstance(inner, dict) and _is_strict_topic_category_content(inner):
             category = inner.get("category", "")
             topic = inner.get("topic") if isinstance(inner.get("topic"), str) else None
@@ -3904,6 +3914,10 @@ def _response_transform_content_only(data: dict, message_dict: dict) -> Optional
                 if isinstance(metadata, dict)
                 else None
             )
+            if not isinstance(trace_id, str) or not trace_id.strip():
+                context = _build_device_context(data)
+                _state, _ = _ensure_trace_state(context)
+                trace_id = _state.trace_id if _state is not None else None
             if (
                 isinstance(trace_id, str)
                 and trace_id.strip()
@@ -4591,15 +4605,19 @@ class MyCustomHandler(CustomLogger):
         # instruction_parsing: 在 post_call_success 时立即截获 tool_calls（name+arguments），单独存一条
         if raw_msg_dict is not None and InstructionBuilder is not None:
             metadata = data.get("metadata") if isinstance(data, dict) else {}
-            trace_id = (
+            trace_id_tc = (
                 metadata.get("arbiteros_trace_id")
                 if isinstance(metadata, dict)
                 else None
             )
-            if isinstance(trace_id, str) and trace_id.strip():
+            if not isinstance(trace_id_tc, str) or not trace_id_tc.strip():
+                context = _build_device_context(data)
+                _state, _ = _ensure_trace_state(context)
+                trace_id_tc = _state.trace_id if _state is not None else None
+            if isinstance(trace_id_tc, str) and trace_id_tc.strip():
                 for tc_detail in _extract_tool_call_details_from_response(raw_msg_dict):
                     try:
-                        builder = _get_instruction_builder_for_trace(trace_id)
+                        builder = _get_instruction_builder_for_trace(trace_id_tc)
                         if builder is not None:
                             builder.add_from_tool_call(
                                 tool_name=tc_detail["tool_name"],
@@ -4607,7 +4625,7 @@ class MyCustomHandler(CustomLogger):
                                 arguments=tc_detail.get("arguments") or {},
                                 result=None,
                             )
-                            _save_instructions_to_trace_file(trace_id, builder)
+                            _save_instructions_to_trace_file(trace_id_tc, builder)
                     except Exception:
                         pass
 
