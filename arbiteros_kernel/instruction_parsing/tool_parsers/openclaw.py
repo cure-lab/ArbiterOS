@@ -16,7 +16,7 @@ import re
 import shlex
 from typing import Any, Dict, List, Optional
 
-from ..moke import get_current_taint_status
+from ..mock import get_current_taint_status
 from ..types import (
     ToolParser,
     ToolParseResult,
