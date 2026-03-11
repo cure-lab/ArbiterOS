@@ -95,6 +95,18 @@ how users respond to policy confirmation prompts.
   - Rows at or above the configured reject-rate threshold are highlighted
   - You can adjust this threshold in Settings via
     **Policy reject-rate highlight threshold (%)**
+- **Policy refinement suggestion**:
+  - Highlighted rows are clickable and open a **Policy refinement suggestion**
+    dialog for that policy
+  - The dialog uses rejected-turn evidence from the current filters and time
+    range to generate an LLM-assisted refinement suggestion
+  - The generated result includes a suggested policy update, the reason behind
+    it, and supporting signals from the observed traces
+  - Use **Regenerate with latest context** to rerun the suggestion with the
+    latest filtered evidence
+
+![Policy refinement suggestion](./images/langfuse/policy-suggestion.png)
+
 - **Clickable counts**:
   - Clicking the accepted/rejected count opens a detail panel for that policy
     and confirmation state
