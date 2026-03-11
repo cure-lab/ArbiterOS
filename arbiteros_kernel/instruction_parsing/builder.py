@@ -13,6 +13,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+from .mock import set_current_instruction_history
 from .tool_parsers import parse_tool_instruction
 from .types import (
     INSTRUCTION_TYPE_TO_CATEGORY,
@@ -143,7 +144,11 @@ class InstructionBuilder:
         if result is not None:
             content["result"] = result
 
-        parsed = parse_tool_instruction(tool_name, arguments)
+        try:
+            set_current_instruction_history(self.instructions)
+            parsed = parse_tool_instruction(tool_name, arguments)
+        finally:
+            set_current_instruction_history(None)
         return self._commit(
             self._build(
                 content=content,
