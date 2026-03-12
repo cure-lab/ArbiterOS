@@ -8,12 +8,14 @@ dependencies = [
     "langfuse>=3.14.1",
     "litellm[proxy]>=1.81.5",
     "mlflow[genai]>=3.9.0",
+    "pyyaml>=6.0.3",
 ]
 
 [dependency-groups]
 dev = [
     "pre-commit>=4.3.0",
     "poethepoet>=0.40.0",
+    "pytest>=9.0.2",
 ]
 
 [tool.poe.tasks]
@@ -24,3 +26,6 @@ run.parallel = ["mlflow", "litellm"]
 [tool.poe.tasks.langfuse_replay]
 cmd = "uv run python -m arbiteros_kernel.langfuse_replay --input log/api_calls.jsonl ${replay_args}"
 args = [{ name = "replay_args", positional = true, multiple = true }]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,533 @@
+# Instruction-type classification for executables and shell commands.
+#
+# Keys   : EXEC | WRITE | READ
+# Values : list of command patterns — either a bare executable basename
+#          (e.g. "cat") or an "executable subcommand" two-token prefix
+#          (e.g. "git log").  Matching is done on basename(tokens[0]), then
+#          on "basename(tokens[0]) tokens[1]" when a non-flag second token
+#          exists.
+#
+# Priority: EXEC > WRITE > READ.
+#   The resolver checks EXEC first; the first match wins.
+#   If nothing matches, the default is EXEC.
+
+EXEC:
+  # ---------------------------------------------------------------------------
+  # Shell / script interpreters  (run arbitrary code)
+  # ---------------------------------------------------------------------------
+  - bash
+  - sh
+  - zsh
+  - fish
+  - dash
+  - ksh
+  - csh
+  - tcsh
+  - ash
+  - busybox
+  - xargs
+  - parallel
+  - env # when used as "env CMD …" to launch a command
+
+  # ---------------------------------------------------------------------------
+  # Language runtimes
+  # ---------------------------------------------------------------------------
+  - python
+  - python2
+  - python3
+  - python3.10
+  - python3.11
+  - python3.12
+  - python3.13
+  - node
+  - nodejs
+  - deno
+  - bun
+  - ruby
+  - lua
+  - php
+  - java
+  - javac
+  - kotlin
+  - kotlinc
+  - scala
+  - groovy
+  - julia
+  - R
+  - Rscript
+  - octave
+
+  # ---------------------------------------------------------------------------
+  # Build systems / task runners
+  # ---------------------------------------------------------------------------
+  - make
+  - cmake
+  - ninja
+  - gradle
+  - gradlew
+  - mvn
+  - mvnw
+  - ant
+  - sbt
+  - lein
+  - mix
+  - rake
+  - cabal
+  - stack
+  - cargo # build / run / test
+  - go # run / test / build
+  - meson
+  - bazel
+  - buck
+  - tox
+  - nox
+  - invoke
+  - just
+  - task
+
+  # ---------------------------------------------------------------------------
+  # Process management with side effects
+  # ---------------------------------------------------------------------------
+  - kill
+  - pkill
+  - killall
+  - skill
+  - timeout # launches a command with a timer
+  - nice # launches a command with modified priority
+  - renice
+  - ionice
+  - chrt
+  - taskset
+  - nohup
+  - disown
+  - flock
+
+  # ---------------------------------------------------------------------------
+  # System / service management
+  # ---------------------------------------------------------------------------
+  - systemctl
+  - service
+  - rc-service
+  - sv
+  - supervisorctl
+  - journalctl # primarily read but commonly follow/stream
+  - launchctl
+  - initctl
+  - shutdown
+  - reboot
+  - halt
+  - poweroff
+  - wall
+
+  # ---------------------------------------------------------------------------
+  # Privilege escalation
+  # ---------------------------------------------------------------------------
+  - sudo
+  - su
+  - doas
+  - pkexec
+  - runuser
+  - newgrp
+  - sg
+
+  # ---------------------------------------------------------------------------
+  # Remote execution / file transfer
+  # ---------------------------------------------------------------------------
+  - ssh
+  - scp
+  - sftp
+  - rsh
+  - rcp
+  - rlogin
+  - telnet
+  - ftp
+  - lftp
+  - mosh
+  - screen
+  - tmux
+
+  # ---------------------------------------------------------------------------
+  # Network services with write-to-remote side effects
+  # ---------------------------------------------------------------------------
+  - curl # default: may POST / PUT / DELETE
+  - wget # downloads to disk
+  - nc
+  - netcat
+  - ncat
+  - socat
+  - openssl # connect / s_client / etc.
+
+  # ---------------------------------------------------------------------------
+  # Container / orchestration / VM
+  # ---------------------------------------------------------------------------
+  - docker
+  - podman
+  - buildah
+  - kubectl
+  - helm
+  - kind
+  - minikube
+  - docker-compose
+  - vagrant
+  - virsh
+  - vboxmanage
+  - qemu-system-x86_64
+  - qemu-system-aarch64
+
+  # ---------------------------------------------------------------------------
+  # Git — remote / destructive subcommands
+  # ---------------------------------------------------------------------------
+  - git push
+  - git pull
+  - git fetch
+  - git clone
+  - git submodule update
+  - git remote add
+  - git remote set-url
+  - git bisect start
+
+  # ---------------------------------------------------------------------------
+  # Dangerous disk / filesystem operations
+  # ---------------------------------------------------------------------------
+  - fdisk
+  - parted
+  - gdisk
+  - sgdisk
+  - mkfs
+  - mke2fs
+  - mkswap
+  - mount
+  - umount
+  - swapon
+  - swapoff
+  - fsck
+  - e2fsck
+
+  # ---------------------------------------------------------------------------
+  # Communication / alerting
+  # ---------------------------------------------------------------------------
+  - sendmail
+  - mail
+  - mutt
+  - neomutt
+  - notify-send
+  - write # write to another user's terminal
+  - mesg
+
+WRITE:
+  # ---------------------------------------------------------------------------
+  # File creation / copy / move / deletion
+  # ---------------------------------------------------------------------------
+  - cp
+  - mv
+  - rename
+  - touch
+  - mkdir
+  - mkfifo
+  - mknod
+  - rmdir
+  - rm
+  - shred
+  - wipe
+  - ln
+  - tee
+  - install # install files
+  - truncate
+  - split
+  - csplit
+  - dd # raw disk/file copy
+  - fallocate
+  - mktemp
+
+  # ---------------------------------------------------------------------------
+  # Permission / ownership / ACL
+  # ---------------------------------------------------------------------------
+  - chmod
+  - chown
+  - chgrp
+  - chattr
+  - setfacl
+  - setcap
+  - umask
+
+  # ---------------------------------------------------------------------------
+  # Archive / compression (output to disk)
+  # ---------------------------------------------------------------------------
+  - tar
+  - gzip
+  - gunzip
+  - bzip2
+  - bunzip2
+  - xz
+  - unxz
+  - zstd
+  - zip
+  - unzip
+  - 7z
+  - ar
+  - cpio
+  - pax
+
+  # ---------------------------------------------------------------------------
+  # Package management (modifies local system state)
+  # ---------------------------------------------------------------------------
+  - pip
+  - pip3
+  - pip3.10
+  - pip3.11
+  - pip3.12
+  - uv
+  - pipx
+  - conda
+  - mamba
+  - npm
+  - npx
+  - yarn
+  - pnpm
+  - gem
+  - bundle
+  - composer
+  - apt
+  - apt-get
+  - apt-cache
+  - dpkg
+  - dpkg-reconfigure
+  - yum
+  - dnf
+  - pacman
+  - yay
+  - paru
+  - zypper
+  - apk
+  - brew
+  - port
+  - snap
+  - flatpak
+  - nix
+
+  # ---------------------------------------------------------------------------
+  # In-place text editing
+  # ---------------------------------------------------------------------------
+  - sed
+  - awk
+  - perl # -i flag for in-place edit
+  - ex
+  - ed
+  - patch
+
+  # ---------------------------------------------------------------------------
+  # Git — local write subcommands
+  # ---------------------------------------------------------------------------
+  - git add
+  - git commit
+  - git reset
+  - git restore
+  - git checkout
+  - git switch
+  - git merge
+  - git rebase
+  - git cherry-pick
+  - git stash
+  - git stash pop
+  - git stash drop
+  - git tag
+  - git tag -a
+  - git rm
+  - git mv
+  - git init
+  - git config
+  - git worktree add
+  - git worktree remove
+  - git clean
+
+  # ---------------------------------------------------------------------------
+  # Cron / scheduler (modifying schedules)
+  # ---------------------------------------------------------------------------
+  - crontab # -e / -r variants
+  - at
+  - batch
+
+READ:
+  # ---------------------------------------------------------------------------
+  # File content inspection
+  # ---------------------------------------------------------------------------
+  - cat
+  - tac
+  - less
+  - more
+  - most
+  - bat
+  - head
+  - tail
+  - strings
+  - xxd
+  - hexdump
+  - od
+
+  # ---------------------------------------------------------------------------
+  # Directory / filesystem metadata
+  # ---------------------------------------------------------------------------
+  - ls
+  - ll
+  - la
+  - dir
+  - vdir
+  - pwd
+  - realpath
+  - readlink
+  - find
+  - locate
+  - mlocate
+  - plocate
+  - which
+  - type
+  - command
+  - file
+  - stat
+  - du
+  - df
+  - lsblk
+  - lscpu
+  - lsusb
+  - lspci
+  - lsmod
+  - lshw
+  - lsipc
+  - lsfd
+
+  # ---------------------------------------------------------------------------
+  # Text processing (non-in-place)
+  # ---------------------------------------------------------------------------
+  - grep
+  - egrep
+  - fgrep
+  - rg
+  - ag
+  - ack
+  - wc
+  - sort
+  - uniq
+  - cut
+  - paste
+  - join
+  - tr
+  - col
+  - column
+  - fold
+  - fmt
+  - expand
+  - unexpand
+  - diff
+  - diff3
+  - comm
+  - md5sum
+  - sha1sum
+  - sha224sum
+  - sha256sum
+  - sha384sum
+  - sha512sum
+  - b2sum
+  - cksum
+  - cmp
+
+  # ---------------------------------------------------------------------------
+  # Output / formatting
+  # ---------------------------------------------------------------------------
+  - echo
+  - printf
+  - tput
+
+  # ---------------------------------------------------------------------------
+  # Environment / system info
+  # ---------------------------------------------------------------------------
+  - printenv
+  - uname
+  - hostname
+  - hostnamectl
+  - date
+  - cal
+  - uptime
+  - id
+  - whoami
+  - logname
+  - groups
+  - w
+  - who
+  - users
+  - last
+  - lastlog
+  - lastb
+  - ac
+  - history
+  - fc
+  - times
+
+  # ---------------------------------------------------------------------------
+  # Process / system info (read-only)
+  # ---------------------------------------------------------------------------
+  - ps
+  - pstree
+  - pidof
+  - pgrep
+  - lsof
+  - fuser
+  - strace # tracing — reads system calls
+  - ltrace
+  - iostat
+  - mpstat
+  - vmstat
+  - sar
+  - free
+  - top
+  - htop
+  - atop
+  - nmon
+  - glances
+
+  # ---------------------------------------------------------------------------
+  # Network diagnostics (read-only / passive)
+  # ---------------------------------------------------------------------------
+  - ss
+  - netstat
+  - ip
+  - ifconfig
+  - ping
+  - ping6
+  - traceroute
+  - tracepath
+  - mtr
+  - nslookup
+  - dig
+  - host
+  - whois
+  - nmap # port scanning — read intent
+  - tcpdump # traffic capture — read intent
+
+  # ---------------------------------------------------------------------------
+  # Documentation
+  # ---------------------------------------------------------------------------
+  - man
+  - info
+  - help
+
+  # ---------------------------------------------------------------------------
+  # Git — read-only subcommands
+  # ---------------------------------------------------------------------------
+  - git log
+  - git status
+  - git diff
+  - git show
+  - git branch
+  - git describe
+  - git ls-files
+  - git ls-tree
+  - git ls-remote
+  - git rev-parse
+  - git rev-list
+  - git cat-file
+  - git shortlog
+  - git stash list
+  - git remote -v
+  - git remote show
+  - git blame
+  - git grep
