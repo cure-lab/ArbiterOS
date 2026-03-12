@@ -14,12 +14,12 @@ from arbiteros_kernel.instruction_parsing.tool_parsers.linux_registry import (
 from arbiteros_kernel.instruction_parsing.tool_parsers.linux_registry import (
     classify_trustworthiness as _classify_trustworthiness,
 )
+from arbiteros_kernel.instruction_parsing.tool_parsers import parse_tool_instruction
 from arbiteros_kernel.instruction_parsing.tool_parsers.openclaw import (
     TOOL_PARSER_REGISTRY,
     _classify_segment,
     _is_path_like,
     _split_pipeline_str,
-    parse_tool_instruction,
 )
 
 # ---------------------------------------------------------------------------
@@ -731,7 +731,10 @@ class TestToolParserRegistry:
     def test_unknown_tool_returns_exec_fallback(self):
         r = parse_tool_instruction("no_such_tool", {})
         assert r.instruction_type == "EXEC"
-        assert r.security_type is None
+        assert r.security_type["confidentiality"] == "UNKNOWN"
+        assert r.security_type["trustworthiness"] == "UNKNOWN"
+        assert r.security_type["authority"] == "UNKNOWN"
+        assert r.security_type["reversible"] is False
 
     def test_unknown_tool_none_args(self):
         r = parse_tool_instruction("not_registered", None)

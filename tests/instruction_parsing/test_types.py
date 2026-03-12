@@ -74,7 +74,7 @@ class TestMakeSecurityType:
 
 class TestToolParseResult:
     def test_instruction_type_only(self):
-        r = ToolParseResult("READ")
+        r = ToolParseResult("READ", None)
         assert r.instruction_type == "READ"
         assert r.security_type is None
 

@@ -67,7 +67,7 @@ class ToolParseResult(NamedTuple):
     """Result returned by a tool parser."""
 
     instruction_type: str
-    security_type: Optional[SecurityType] = None
+    security_type: SecurityType
 
 
 ToolParser = Callable[[Dict[str, Any], Optional[TaintStatus]], ToolParseResult]
