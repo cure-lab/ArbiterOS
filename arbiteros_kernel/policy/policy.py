@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
-    from arbiteros_kernel.instruction_parsing.mock import TaintStatus
+    from arbiteros_kernel.instruction_parsing.types import TaintStatus
     from arbiteros_kernel.policy_check import PolicyCheckResult
 
 

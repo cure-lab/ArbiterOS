@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
-    from arbiteros_kernel.instruction_parsing.mock import TaintStatus
+    from arbiteros_kernel.instruction_parsing.types import TaintStatus
     from arbiteros_kernel.policy import Policy
 
 __all__ = ["PolicyCheckResult", "check_response_policy"]
@@ -112,12 +112,14 @@ def check_response_policy(
 
         policy_classes = list(get_default_policy_classes())
 
-    from arbiteros_kernel.instruction_parsing.mock import (
+    from arbiteros_kernel.instruction_parsing.types import (
         TaintStatus,
         compute_taint_status_from_instructions,
     )
 
-    current_taint_status: TaintStatus = compute_taint_status_from_instructions(instructions)
+    current_taint_status: TaintStatus = compute_taint_status_from_instructions(
+        instructions
+    )
 
     response = current_response
     errors: list[str] = []

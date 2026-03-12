@@ -13,13 +13,14 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from .mock import set_current_instruction_history
 from .tool_parsers import parse_tool_instruction
 from .types import (
     INSTRUCTION_TYPE_TO_CATEGORY,
     Instruction,
     RuleType,
     SecurityType,
+    TaintStatus,
+    compute_taint_status_from_instructions,
 )
 
 
@@ -85,6 +86,10 @@ class InstructionBuilder:
         self.instructions.append(instr)
         return instr
 
+    def get_taint_status(self) -> TaintStatus:
+        """Return the taint status (min trustworthiness/confidentiality) across all accumulated instructions."""
+        return compute_taint_status_from_instructions(self.instructions)
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -144,11 +149,8 @@ class InstructionBuilder:
         if result is not None:
             content["result"] = result
 
-        try:
-            set_current_instruction_history(self.instructions)
-            parsed = parse_tool_instruction(tool_name, arguments)
-        finally:
-            set_current_instruction_history(None)
+        taint = self.get_taint_status()
+        parsed = parse_tool_instruction(tool_name, arguments, taint_status=taint)
         return self._commit(
             self._build(
                 content=content,

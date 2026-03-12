@@ -16,8 +16,8 @@ import re
 import shlex
 from typing import Any, Dict, List, Optional
 
-from ..mock import get_current_taint_status
 from ..types import (
+    TaintStatus,
     ToolParser,
     ToolParseResult,
     make_security_type,
@@ -122,7 +122,9 @@ def _parse_read(args: Dict[str, Any]) -> ToolParseResult:
     )
 
 
-def _parse_edit(args: Dict[str, Any]) -> ToolParseResult:
+def _parse_edit(
+    args: Dict[str, Any], taint_status: Optional[TaintStatus] = None
+) -> ToolParseResult:
     """edit: workspace identity/memory files → STORE; others → WRITE.
 
     Confidentiality is resolved via linux_registry (what sensitive region
@@ -143,7 +145,9 @@ def _parse_edit(args: Dict[str, Any]) -> ToolParseResult:
     raw = str(args.get("path") or args.get("file_path") or "")
     paths = [raw] if raw else []
     if raw:
-        taint = get_current_taint_status()
+        taint = taint_status or TaintStatus(
+            trustworthiness="MID", confidentiality="MID"
+        )
         register_file_taint(raw, taint.trustworthiness, taint.confidentiality)
     confidentiality = classify_confidentiality(paths) if paths else "UNKNOWN"
     trustworthiness = classify_trustworthiness(paths) if paths else "UNKNOWN"
@@ -159,7 +163,9 @@ def _parse_edit(args: Dict[str, Any]) -> ToolParseResult:
     )
 
 
-def _parse_write(args: Dict[str, Any]) -> ToolParseResult:
+def _parse_write(
+    args: Dict[str, Any], taint_status: Optional[TaintStatus] = None
+) -> ToolParseResult:
     """write: workspace identity/memory files → STORE; others → WRITE.
 
     Same registry-based resolution as _parse_edit; write is a full
@@ -180,7 +186,9 @@ def _parse_write(args: Dict[str, Any]) -> ToolParseResult:
     raw = str(args.get("path") or args.get("file_path") or "")
     paths = [raw] if raw else []
     if raw:
-        taint = get_current_taint_status()
+        taint = taint_status or TaintStatus(
+            trustworthiness="MID", confidentiality="MID"
+        )
         register_file_taint(raw, taint.trustworthiness, taint.confidentiality)
     confidentiality = classify_confidentiality(paths) if paths else "UNKNOWN"
     trustworthiness = classify_trustworthiness(paths) if paths else "UNKNOWN"
@@ -820,6 +828,8 @@ TOOL_PARSER_REGISTRY: Dict[str, ToolParser] = {
 def parse_tool_instruction(
     tool_name: str,
     arguments: Optional[Dict[str, Any]] = None,
+    *,
+    taint_status: Optional[TaintStatus] = None,
 ) -> ToolParseResult:
     """
     Look up the parser for tool_name and invoke it with arguments.
@@ -827,7 +837,12 @@ def parse_tool_instruction(
     Returns a ToolParseResult with all attributes set by the parser.
     Unregistered tools fall back to ("EXEC", None).
     """
+    args = arguments or {}
+    if tool_name == "edit":
+        return _parse_edit(args, taint_status)
+    if tool_name == "write":
+        return _parse_write(args, taint_status)
     parser = TOOL_PARSER_REGISTRY.get(tool_name)
     if not parser:
         return ToolParseResult("EXEC")
-    return parser(arguments or {})
+    return parser(args)
