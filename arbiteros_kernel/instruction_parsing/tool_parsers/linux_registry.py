@@ -23,6 +23,8 @@ import os
 from pathlib import PurePosixPath
 from typing import Dict, List, Optional
 
+import yaml
+
 from ..types import ALL_LEVELS, CONCRETE_LEVELS, LEVEL_ORDER, SecurityLevel
 
 logger = logging.getLogger(__name__)
@@ -81,12 +83,11 @@ _FILE_TRUST_DIRTY: bool = False
 def _load_yaml_registry(path: str) -> Dict[str, List[str]]:
     """Load a YAML registry file from *path*, returning {} on any failure."""
     try:
-        import yaml
-
         with open(path, "r", encoding="utf-8") as fh:
             data = yaml.safe_load(fh)
         return {k: [str(v) for v in vs] for k, vs in (data or {}).items()}
     except Exception:
+        logger.error("Failed to load YAML registry from %s", path, exc_info=True)
         return {}
 
 
@@ -97,13 +98,12 @@ def _save_yaml_registry(path: str, data: Dict[str, List[str]]) -> bool:
     failure never crashes the policy-check hot path.
     """
     try:
-        import yaml
-
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8") as fh:
             yaml.safe_dump(data, fh, allow_unicode=True, sort_keys=True)
         return True
     except Exception:
+        logger.error("Failed to save YAML registry to %s", path, exc_info=True)
         return False
 
 
@@ -210,7 +210,12 @@ def _path_matches(path: str, pattern: str) -> bool:
         if PurePosixPath(expanded).match(pattern):
             return True
     except Exception:
-        pass
+        logger.debug(
+            "_path_matches: PurePosixPath.match failed for path=%r pattern=%r",
+            expanded,
+            pattern,
+            exc_info=True,
+        )
     # Basename match for extension patterns (e.g. *.pem)
     return fnmatch.fnmatch(os.path.basename(path), pattern)
 
@@ -328,7 +333,7 @@ def classify_confidentiality(paths: List[str]) -> SecurityLevel:
             for path in paths:
                 if any(_path_matches(path, pat) for pat in reg.get(level, [])):
                     return level
-    logger.warning(
+    logger.info(
         "classify_confidentiality: no rule matched %s; returning UNKNOWN", paths
     )
     return "UNKNOWN"
@@ -347,7 +352,7 @@ def classify_trustworthiness(paths: List[str]) -> SecurityLevel:
             for path in paths:
                 if any(_path_matches(path, pat) for pat in reg.get(level, [])):
                     return level
-    logger.warning(
+    logger.info(
         "classify_trustworthiness: no rule matched %s; returning UNKNOWN", paths
     )
     return "UNKNOWN"

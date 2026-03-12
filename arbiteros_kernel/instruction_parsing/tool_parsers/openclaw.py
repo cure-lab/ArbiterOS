@@ -237,6 +237,9 @@ def _classify_segment(seg_str: str) -> str:
     try:
         tokens = shlex.split(seg_str)
     except ValueError:
+        logger.warning(
+            "shlex.split failed for segment %r; falling back to str.split", seg_str
+        )
         tokens = seg_str.split()
     if not tokens:
         return "READ"
@@ -295,6 +298,9 @@ def _parse_exec(
         try:
             tokens = shlex.split(seg_str)
         except ValueError:
+            logger.warning(
+                "shlex.split failed for segment %r; falling back to str.split", seg_str
+            )
             tokens = seg_str.split()
         path_tokens.extend(t for t in tokens[1:] if _is_path_like(t))
 
