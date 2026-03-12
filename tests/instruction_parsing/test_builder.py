@@ -97,22 +97,6 @@ class TestAddFromStructuredOutput:
         )
         assert instr["instruction_category"] == "COGNITIVE.Reasoning"
 
-    def test_explicit_type_overrides_intent(self):
-        builder = InstructionBuilder()
-        instr = builder.add_from_structured_output(
-            structured={"intent": "REASON", "content": "..."},
-            explicit_type="EXEC",
-        )
-        assert instr["instruction_type"] == "EXEC"
-
-    def test_explicit_category_overrides_map(self):
-        builder = InstructionBuilder()
-        instr = builder.add_from_structured_output(
-            structured={"intent": "REASON"},
-            explicit_category="CUSTOM.Category",
-        )
-        assert instr["instruction_category"] == "CUSTOM.Category"
-
     def test_runtime_step_auto_increments(self):
         builder = InstructionBuilder()
         i1 = builder.add_from_structured_output(structured=_simple_structured())

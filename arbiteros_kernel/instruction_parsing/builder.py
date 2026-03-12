@@ -21,6 +21,7 @@ from .types import (
     SecurityType,
     TaintStatus,
     compute_taint_status_from_instructions,
+    make_security_type,
 )
 
 
@@ -103,17 +104,25 @@ class InstructionBuilder:
         runtime_step: Optional[int] = None,
         security_type: Optional[SecurityType] = None,
         rule_types: Optional[List[RuleType]] = None,
-        explicit_category: Optional[str] = None,
-        explicit_type: Optional[str] = None,
     ) -> Instruction:
         """Build an Instruction from a structured LLM output { intent, content }."""
         intent = structured.get("intent")
-        action_type = explicit_type or intent
-        category = explicit_category or (
+        action_type = intent
+        category = (
             INSTRUCTION_TYPE_TO_CATEGORY.get(action_type)
             if action_type is not None
             else None
         )
+
+        if security_type is None:
+            security_type = make_security_type(
+                confidentiality="UNKNOWN",
+                trustworthiness="UNKNOWN",
+                confidence="UNKNOWN",
+                reversible=True,
+                authority="UNKNOWN",
+            )
+
         return self._commit(
             self._build(
                 content=structured.get("content"),
