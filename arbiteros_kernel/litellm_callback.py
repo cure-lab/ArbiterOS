@@ -3844,6 +3844,8 @@ def _add_instruction_for_non_strict(data: dict, content: str) -> None:
     """非严格格式时，为 instruction_parsing 等赋予 topic:其他，category: COGNITIVE_CORE__RESPOND。"""
     if not isinstance(content, str) or not content.strip():
         return
+    if data.get("_skip_instruction_adding"):
+        return
     metadata = data.get("metadata") if isinstance(data, dict) else {}
     trace_id = (
         metadata.get("arbiteros_trace_id") if isinstance(metadata, dict) else None
@@ -3922,6 +3924,7 @@ def _response_transform_content_only(data: dict, message_dict: dict) -> Optional
                 isinstance(trace_id, str)
                 and trace_id.strip()
                 and InstructionBuilder is not None
+                and not data.get("_skip_instruction_adding")
             ):
                 builder = _get_instruction_builder_for_trace(trace_id)
                 if builder is not None:
@@ -4673,6 +4676,13 @@ class MyCustomHandler(CustomLogger):
                 if apply_info is not None or skip_policy_check:
                     data_for_transform = dict(data) if isinstance(data, dict) else {}
                     data_for_transform["_skip_category_topic_recording"] = True
+                    # 用户选 Yes 时 pre_call 已追加 protected instruction，response_transform 不再重复添加
+                    if (
+                        apply_info is not None
+                        and apply_info.get("instruction_already_applied")
+                        and apply_info.get("policy_confirmation_accepted")
+                    ):
+                        data_for_transform["_skip_instruction_adding"] = True
                 if asyncio.iscoroutinefunction(response_transform):
                     modified_dict = await response_transform(
                         data_for_transform, msg_dict
@@ -5140,6 +5150,13 @@ class MyCustomHandler(CustomLogger):
                     dict(request_data) if isinstance(request_data, dict) else {}
                 )
                 req_for_transform["_skip_category_topic_recording"] = True
+                # 用户选 Yes 时 pre_call 已追加 protected instruction，response_transform 不再重复添加
+                if (
+                    apply_info_stream is not None
+                    and apply_info_stream.get("instruction_already_applied")
+                    and apply_info_stream.get("policy_confirmation_accepted")
+                ):
+                    req_for_transform["_skip_instruction_adding"] = True
             if asyncio.iscoroutinefunction(response_transform):
                 modified_dict = await response_transform(req_for_transform, msg_dict)
             else:
