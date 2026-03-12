@@ -106,41 +106,40 @@ class TaintStatus(NamedTuple):
     confidentiality: SecurityLevel
 
 
-# LOW(0) < UNKNOWN(1) < MID(2) < HIGH(3)，取最小值即取序最小的
+# LOW(0) < UNKNOWN/MID(1) < HIGH(2); UNKNOWN is treated as MID
 _LEVEL_ORDER: Dict[str, int] = {
     "LOW": 0,
     "UNKNOWN": 1,
-    "MID": 2,
-    "HIGH": 3,
+    "MID": 1,
+    "HIGH": 2,
 }
 
 
-def _min_level(values: List[str]) -> SecurityLevel:
-    """从多个 SecurityLevel 中取序最小的。空列表返回 MID。"""
-    if not values:
-        return "MID"
-    valid = [v for v in values if v in _LEVEL_ORDER]
-    if not valid:
-        return "MID"
-    return min(valid, key=lambda v: _LEVEL_ORDER[v])  # type: ignore[return-value]
+def _collect_levels(instructions: List[Dict[str, Any]], key: str) -> List[str]:
+    result: List[str] = []
+    for instr in instructions or []:
+        st = instr.get("security_type")
+        if isinstance(st, dict):
+            v = st.get(key)
+            if isinstance(v, str) and v.strip() and v.strip() in _LEVEL_ORDER:
+                result.append(v.strip())
+    return result
 
 
 def compute_taint_status_from_instructions(
     instructions: List[Dict[str, Any]],
 ) -> TaintStatus:
-    """从 instruction history 计算 trustworthiness 和 confidentiality 各自的最小值。"""
-    trust_vals: List[str] = []
-    conf_vals: List[str] = []
-    for instr in instructions or []:
-        st = instr.get("security_type")
-        if isinstance(st, dict):
-            t = st.get("trustworthiness")
-            c = st.get("confidentiality")
-            if isinstance(t, str) and t.strip():
-                trust_vals.append(t.strip())
-            if isinstance(c, str) and c.strip():
-                conf_vals.append(c.strip())
-    return TaintStatus(
-        trustworthiness=_min_level(trust_vals),
-        confidentiality=_min_level(conf_vals),
-    )
+    """Compute the taint status of the current session from its instruction history.
+
+    - trustworthiness: minimum across all instructions (least trusted wins)
+    - confidentiality:  maximum across all instructions (most sensitive wins)
+    - UNKNOWN is treated as MID; empty list defaults to MID.
+    """
+    trust_vals = _collect_levels(instructions, "trustworthiness")
+    conf_vals = _collect_levels(instructions, "confidentiality")
+
+    raw_trust = min(trust_vals, key=lambda v: _LEVEL_ORDER[v]) if trust_vals else "MID"
+    raw_conf = max(conf_vals, key=lambda v: _LEVEL_ORDER[v]) if conf_vals else "MID"
+    trustworthiness: SecurityLevel = "MID" if raw_trust == "UNKNOWN" else raw_trust
+    confidentiality: SecurityLevel = "MID" if raw_conf == "UNKNOWN" else raw_conf
+    return TaintStatus(trustworthiness=trustworthiness, confidentiality=confidentiality)
