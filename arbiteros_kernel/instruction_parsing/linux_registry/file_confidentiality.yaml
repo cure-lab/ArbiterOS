@@ -109,6 +109,9 @@ HIGH:
   - ~/.openclaw/workspace-*/IDENTITY.md
   - ~/.openclaw/workspace-*/memory/**
 
+  # ── ArbiterOS kernel config ────────────────────────────────────────────────
+  - ~/.arbiteros/*
+
 MID:
   # ── System-wide configuration ────────────────────────────────────────────────
   - /etc/*
