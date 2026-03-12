@@ -1,5 +1,3 @@
-import os
-
 import pytest
 
 import arbiteros_kernel.instruction_parsing.tool_parsers.linux_registry as lr
