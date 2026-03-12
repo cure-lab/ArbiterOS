@@ -11,6 +11,7 @@ To add a new tool:
   2. Register it in TOOL_PARSER_REGISTRY at the bottom.
 """
 
+import logging
 import os
 import re
 import shlex
@@ -28,6 +29,8 @@ from .linux_registry import (
     classify_trustworthiness,
     register_file_taint,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _is_path_like(token: str) -> bool:
@@ -263,6 +266,9 @@ def _parse_exec(
     command = str(args.get("command", ""))
 
     if not command.strip():
+        logger.error(
+            "Empty command string in exec; defaulting to EXEC with UNKNOWN security"
+        )
         return ToolParseResult(
             "EXEC",
             make_security_type(

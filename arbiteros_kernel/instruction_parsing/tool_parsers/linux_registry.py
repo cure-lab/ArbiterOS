@@ -18,11 +18,19 @@ Classification strategy:
 
 import atexit
 import fnmatch
+import logging
 import os
 from pathlib import PurePosixPath
 from typing import Dict, List, Optional
 
-from ..types import SecurityLevel
+from ..types import ALL_LEVELS, CONCRETE_LEVELS, LEVEL_ORDER, SecurityLevel
+
+logger = logging.getLogger(__name__)
+
+# Levels ordered for classification: confidentiality (highest wins) and
+# trustworthiness (lowest wins), derived from the shared CONCRETE_LEVELS table.
+_CONF_LEVELS: List[SecurityLevel] = list(reversed(CONCRETE_LEVELS))
+_TRUST_LEVELS: List[SecurityLevel] = list(CONCRETE_LEVELS)
 
 # ---------------------------------------------------------------------------
 # Directory paths
@@ -185,6 +193,29 @@ def _get_trust_user() -> Dict[str, List[str]]:
 
 
 # ---------------------------------------------------------------------------
+# Classification helpers
+# ---------------------------------------------------------------------------
+
+
+def _path_matches(path: str, pattern: str) -> bool:
+    """Return True if *path* matches *pattern* (glob, PurePosixPath-aware)."""
+    # Full-string match first — handles URLs (http://*) and absolute globs
+    if fnmatch.fnmatch(path, pattern):
+        return True
+    # Expand leading ~ so patterns like ~/.ssh/* work
+    expanded = os.path.expanduser(path)
+    if fnmatch.fnmatch(expanded, pattern):
+        return True
+    try:
+        if PurePosixPath(expanded).match(pattern):
+            return True
+    except Exception:
+        pass
+    # Basename match for extension patterns (e.g. *.pem)
+    return fnmatch.fnmatch(os.path.basename(path), pattern)
+
+
+# ---------------------------------------------------------------------------
 # Mutators — write only to user layer
 # ---------------------------------------------------------------------------
 
@@ -218,14 +249,11 @@ def register_file_taint(
     """
     global _FILE_CONF_DIRTY, _FILE_TRUST_DIRTY
 
-    _CONF_ORDER = {"UNKNOWN": 0, "LOW": 1, "MID": 2, "HIGH": 3}
-    _TRUST_ORDER = {"UNKNOWN": 0, "HIGH": 3, "MID": 2, "LOW": 1}
-
     # Source-layer classification for the path
     source_conf: SecurityLevel = next(
         (
             lvl
-            for lvl in ("HIGH", "MID", "LOW")
+            for lvl in _CONF_LEVELS
             if any(_path_matches(path, pat) for pat in _get_conf_source().get(lvl, []))
         ),
         "UNKNOWN",
@@ -233,26 +261,25 @@ def register_file_taint(
     source_trust: SecurityLevel = next(
         (
             lvl
-            for lvl in ("LOW", "MID", "HIGH")
+            for lvl in _TRUST_LEVELS
             if any(_path_matches(path, pat) for pat in _get_trust_source().get(lvl, []))
         ),
         "UNKNOWN",
     )
 
-    # Worst-case: more restrictive of source and taint
-    effective_conf: SecurityLevel = (
-        confidentiality
-        if _CONF_ORDER.get(confidentiality, 0) >= _CONF_ORDER.get(source_conf, 0)
-        else source_conf
+    # Worst-case: more restrictive of source and taint.
+    # UNKNOWN is treated as MID, so normalise after comparison.
+    _raw_conf: SecurityLevel = max(
+        confidentiality, source_conf, key=lambda v: LEVEL_ORDER.get(v, 1)
     )
-    effective_trust: SecurityLevel = (
-        trustworthiness
-        if _TRUST_ORDER.get(trustworthiness, 0) <= _TRUST_ORDER.get(source_trust, 0)
-        else source_trust
+    effective_conf: SecurityLevel = "MID" if _raw_conf == "UNKNOWN" else _raw_conf
+    _raw_trust: SecurityLevel = min(
+        trustworthiness, source_trust, key=lambda v: LEVEL_ORDER.get(v, 1)
     )
+    effective_trust: SecurityLevel = "MID" if _raw_trust == "UNKNOWN" else _raw_trust
 
     conf = _get_conf_user()
-    for lvl in ("HIGH", "MID", "LOW"):
+    for lvl in ALL_LEVELS:
         entries = conf.setdefault(lvl, [])
         if path in entries:
             entries.remove(path)
@@ -260,35 +287,12 @@ def register_file_taint(
     _FILE_CONF_DIRTY = True
 
     trust = _get_trust_user()
-    for lvl in ("HIGH", "MID", "LOW"):
+    for lvl in ALL_LEVELS:
         entries = trust.setdefault(lvl, [])
         if path in entries:
             entries.remove(path)
     trust.setdefault(effective_trust, []).append(path)
     _FILE_TRUST_DIRTY = True
-
-
-# ---------------------------------------------------------------------------
-# Classification helpers
-# ---------------------------------------------------------------------------
-
-
-def _path_matches(path: str, pattern: str) -> bool:
-    """Return True if *path* matches *pattern* (glob, PurePosixPath-aware)."""
-    # Full-string match first — handles URLs (http://*) and absolute globs
-    if fnmatch.fnmatch(path, pattern):
-        return True
-    # Expand leading ~ so patterns like ~/.ssh/* work
-    expanded = os.path.expanduser(path)
-    if fnmatch.fnmatch(expanded, pattern):
-        return True
-    try:
-        if PurePosixPath(expanded).match(pattern):
-            return True
-    except Exception:
-        pass
-    # Basename match for extension patterns (e.g. *.pem)
-    return fnmatch.fnmatch(os.path.basename(path), pattern)
 
 
 def classify_exe(exe: str, subcommand: Optional[str]) -> str:
@@ -320,10 +324,13 @@ def classify_confidentiality(paths: List[str]) -> SecurityLevel:
     if not paths:
         return "UNKNOWN"
     for reg in (_get_conf_user(), _get_conf_source()):
-        for level in ("HIGH", "MID", "LOW"):
+        for level in _CONF_LEVELS:
             for path in paths:
                 if any(_path_matches(path, pat) for pat in reg.get(level, [])):
                     return level
+    logger.warning(
+        "classify_confidentiality: no rule matched %s; returning UNKNOWN", paths
+    )
     return "UNKNOWN"
 
 
@@ -336,8 +343,11 @@ def classify_trustworthiness(paths: List[str]) -> SecurityLevel:
     if not paths:
         return "UNKNOWN"
     for reg in (_get_trust_user(), _get_trust_source()):
-        for level in ("LOW", "MID", "HIGH"):
+        for level in _TRUST_LEVELS:
             for path in paths:
                 if any(_path_matches(path, pat) for pat in reg.get(level, [])):
                     return level
+    logger.warning(
+        "classify_trustworthiness: no rule matched %s; returning UNKNOWN", paths
+    )
     return "UNKNOWN"

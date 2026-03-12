@@ -2,6 +2,7 @@
 
 import pytest
 
+from arbiteros_kernel.instruction_parsing.tool_parsers import parse_tool_instruction
 from arbiteros_kernel.instruction_parsing.tool_parsers.linux_registry import (
     _path_matches,
 )
@@ -14,7 +15,6 @@ from arbiteros_kernel.instruction_parsing.tool_parsers.linux_registry import (
 from arbiteros_kernel.instruction_parsing.tool_parsers.linux_registry import (
     classify_trustworthiness as _classify_trustworthiness,
 )
-from arbiteros_kernel.instruction_parsing.tool_parsers import parse_tool_instruction
 from arbiteros_kernel.instruction_parsing.tool_parsers.openclaw import (
     TOOL_PARSER_REGISTRY,
     _classify_segment,
