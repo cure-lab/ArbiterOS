@@ -88,7 +88,7 @@ def _is_memory_file(args: Dict[str, Any]) -> bool:
     return parent == _MEMORY_DIR_NAME and basename.endswith(".md")
 
 
-def _parse_read(args: Dict[str, Any]) -> ToolParseResult:
+def _parse_read(args: Dict[str, Any], taint_status: Optional[TaintStatus] = None) -> ToolParseResult:
     """read: workspace identity/memory files → RETRIEVE; others → READ.
 
     Confidentiality and trustworthiness are resolved via linux_registry so
@@ -242,7 +242,7 @@ def _classify_segment(seg_str: str) -> str:
     return classify_exe(exe, subcommand)
 
 
-def _parse_exec(args: Dict[str, Any]) -> ToolParseResult:
+def _parse_exec(args: Dict[str, Any], taint_status: Optional[TaintStatus] = None) -> ToolParseResult:
     """
     exec: classify the shell command using linux_registry.
 
@@ -311,7 +311,7 @@ def _parse_exec(args: Dict[str, Any]) -> ToolParseResult:
     )
 
 
-def _parse_process(args: Dict[str, Any]) -> ToolParseResult:
+def _parse_process(args: Dict[str, Any], taint_status: Optional[TaintStatus] = None) -> ToolParseResult:
     """process: list/log → READ; poll → WAIT; others → EXEC."""
     action = args.get("action", "")
     if action in {"list", "log"}:
@@ -360,7 +360,7 @@ _BROWSER_READ_ACTIONS = {
 _BROWSER_ASK_ACTIONS = {"dialog"}
 
 
-def _parse_browser(args: Dict[str, Any]) -> ToolParseResult:
+def _parse_browser(args: Dict[str, Any], taint_status: Optional[TaintStatus] = None) -> ToolParseResult:
     """browser: READ (snapshot/status/…), ASK (dialog), EXEC (navigate/click/…)."""
     action = args.get("action", "")
     if action in _BROWSER_READ_ACTIONS:
@@ -398,7 +398,7 @@ def _parse_browser(args: Dict[str, Any]) -> ToolParseResult:
 # ---------------------------------------------------------------------------
 
 
-def _parse_canvas(args: Dict[str, Any]) -> ToolParseResult:
+def _parse_canvas(args: Dict[str, Any], taint_status: Optional[TaintStatus] = None) -> ToolParseResult:
     """canvas: snapshot → READ; everything else → EXEC."""
     action = args.get("action", "")
     if action == "snapshot":
@@ -439,7 +439,7 @@ _NODES_READ_ACTIONS_HIGH = {
 }
 
 
-def _parse_nodes(args: Dict[str, Any]) -> ToolParseResult:
+def _parse_nodes(args: Dict[str, Any], taint_status: Optional[TaintStatus] = None) -> ToolParseResult:
     """nodes: READ (sense/status) vs EXEC (approve/run/invoke/notify).
 
     Camera, screen-recording, and location actions are READ but carry HIGH
@@ -485,7 +485,7 @@ def _parse_nodes(args: Dict[str, Any]) -> ToolParseResult:
 # ---------------------------------------------------------------------------
 
 
-def _parse_cron(args: Dict[str, Any]) -> ToolParseResult:
+def _parse_cron(args: Dict[str, Any], taint_status: Optional[TaintStatus] = None) -> ToolParseResult:
     """cron: READ (status/list/runs), WRITE (add/update), EXEC (remove/run/wake)."""
     action = args.get("action", "")
     if action in {"status", "list", "runs"}:
@@ -527,7 +527,7 @@ def _parse_cron(args: Dict[str, Any]) -> ToolParseResult:
 # ---------------------------------------------------------------------------
 
 
-def _parse_message(args: Dict[str, Any]) -> ToolParseResult:
+def _parse_message(args: Dict[str, Any], taint_status: Optional[TaintStatus] = None) -> ToolParseResult:
     """message: edit → WRITE; send/broadcast/react/delete → EXEC."""
     action = args.get("action", "")
     if action == "edit":
@@ -558,7 +558,7 @@ def _parse_message(args: Dict[str, Any]) -> ToolParseResult:
 # ---------------------------------------------------------------------------
 
 
-def _parse_tts(args: Dict[str, Any]) -> ToolParseResult:
+def _parse_tts(args: Dict[str, Any], taint_status: Optional[TaintStatus] = None) -> ToolParseResult:
     """tts: audio output → EXEC."""
     return ToolParseResult(
         "EXEC",
@@ -577,7 +577,7 @@ def _parse_tts(args: Dict[str, Any]) -> ToolParseResult:
 # ---------------------------------------------------------------------------
 
 
-def _parse_gateway(args: Dict[str, Any]) -> ToolParseResult:
+def _parse_gateway(args: Dict[str, Any], taint_status: Optional[TaintStatus] = None) -> ToolParseResult:
     """gateway: READ (config.get/schema), WRITE (config.apply/patch), EXEC (restart/update.run)."""
     action = args.get("action", "")
     if action in {"config.get", "config.schema"}:
@@ -619,7 +619,7 @@ def _parse_gateway(args: Dict[str, Any]) -> ToolParseResult:
 # ---------------------------------------------------------------------------
 
 
-def _parse_agents_list(args: Dict[str, Any]) -> ToolParseResult:
+def _parse_agents_list(args: Dict[str, Any], taint_status: Optional[TaintStatus] = None) -> ToolParseResult:
     """agents_list: enumerate available agents → RETRIEVE."""
     return ToolParseResult(
         "RETRIEVE",
@@ -633,7 +633,7 @@ def _parse_agents_list(args: Dict[str, Any]) -> ToolParseResult:
     )
 
 
-def _parse_sessions_list(args: Dict[str, Any]) -> ToolParseResult:
+def _parse_sessions_list(args: Dict[str, Any], taint_status: Optional[TaintStatus] = None) -> ToolParseResult:
     """sessions_list: enumerate sessions → RETRIEVE."""
     return ToolParseResult(
         "RETRIEVE",
@@ -647,7 +647,7 @@ def _parse_sessions_list(args: Dict[str, Any]) -> ToolParseResult:
     )
 
 
-def _parse_sessions_history(args: Dict[str, Any]) -> ToolParseResult:
+def _parse_sessions_history(args: Dict[str, Any], taint_status: Optional[TaintStatus] = None) -> ToolParseResult:
     """sessions_history: fetch conversation history → RETRIEVE."""
     return ToolParseResult(
         "RETRIEVE",
@@ -661,7 +661,7 @@ def _parse_sessions_history(args: Dict[str, Any]) -> ToolParseResult:
     )
 
 
-def _parse_sessions_send(args: Dict[str, Any]) -> ToolParseResult:
+def _parse_sessions_send(args: Dict[str, Any], taint_status: Optional[TaintStatus] = None) -> ToolParseResult:
     """sessions_send: send message to another session → DELEGATE."""
     return ToolParseResult(
         "DELEGATE",
@@ -675,7 +675,7 @@ def _parse_sessions_send(args: Dict[str, Any]) -> ToolParseResult:
     )
 
 
-def _parse_sessions_spawn(args: Dict[str, Any]) -> ToolParseResult:
+def _parse_sessions_spawn(args: Dict[str, Any], taint_status: Optional[TaintStatus] = None) -> ToolParseResult:
     """sessions_spawn: launch a sub-agent → DELEGATE."""
     return ToolParseResult(
         "DELEGATE",
@@ -689,7 +689,7 @@ def _parse_sessions_spawn(args: Dict[str, Any]) -> ToolParseResult:
     )
 
 
-def _parse_session_status(args: Dict[str, Any]) -> ToolParseResult:
+def _parse_session_status(args: Dict[str, Any], taint_status: Optional[TaintStatus] = None) -> ToolParseResult:
     """session_status: query current session state → RETRIEVE."""
     return ToolParseResult(
         "RETRIEVE",
@@ -708,7 +708,7 @@ def _parse_session_status(args: Dict[str, Any]) -> ToolParseResult:
 # ---------------------------------------------------------------------------
 
 
-def _parse_web_search(args: Dict[str, Any]) -> ToolParseResult:
+def _parse_web_search(args: Dict[str, Any], taint_status: Optional[TaintStatus] = None) -> ToolParseResult:
     """web_search: external search → READ (untrusted results)."""
     return ToolParseResult(
         "READ",
@@ -722,7 +722,7 @@ def _parse_web_search(args: Dict[str, Any]) -> ToolParseResult:
     )
 
 
-def _parse_web_fetch(args: Dict[str, Any]) -> ToolParseResult:
+def _parse_web_fetch(args: Dict[str, Any], taint_status: Optional[TaintStatus] = None) -> ToolParseResult:
     """web_fetch: fetch page content → READ."""
     return ToolParseResult(
         "READ",
@@ -741,7 +741,7 @@ def _parse_web_fetch(args: Dict[str, Any]) -> ToolParseResult:
 # ---------------------------------------------------------------------------
 
 
-def _parse_image(args: Dict[str, Any]) -> ToolParseResult:
+def _parse_image(args: Dict[str, Any], taint_status: Optional[TaintStatus] = None) -> ToolParseResult:
     """image: image analysis (perception) → READ.
 
     Trustworthiness is resolved via file_trustworthiness.yaml — external
@@ -766,7 +766,7 @@ def _parse_image(args: Dict[str, Any]) -> ToolParseResult:
 # ---------------------------------------------------------------------------
 
 
-def _parse_memory_search(args: Dict[str, Any]) -> ToolParseResult:
+def _parse_memory_search(args: Dict[str, Any], taint_status: Optional[TaintStatus] = None) -> ToolParseResult:
     """memory_search: semantic search over MEMORY.md → RETRIEVE."""
     return ToolParseResult(
         "RETRIEVE",
@@ -780,7 +780,7 @@ def _parse_memory_search(args: Dict[str, Any]) -> ToolParseResult:
     )
 
 
-def _parse_memory_get(args: Dict[str, Any]) -> ToolParseResult:
+def _parse_memory_get(args: Dict[str, Any], taint_status: Optional[TaintStatus] = None) -> ToolParseResult:
     """memory_get: read a memory fragment by path → RETRIEVE."""
     return ToolParseResult(
         "RETRIEVE",
@@ -838,11 +838,7 @@ def parse_tool_instruction(
     Unregistered tools fall back to ("EXEC", None).
     """
     args = arguments or {}
-    if tool_name == "edit":
-        return _parse_edit(args, taint_status)
-    if tool_name == "write":
-        return _parse_write(args, taint_status)
     parser = TOOL_PARSER_REGISTRY.get(tool_name)
     if not parser:
         return ToolParseResult("EXEC")
-    return parser(args)
+    return parser(args, taint_status)

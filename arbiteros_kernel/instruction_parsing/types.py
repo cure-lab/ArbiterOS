@@ -49,6 +49,16 @@ def make_security_type(
 
 
 # ---------------------------------------------------------------------------
+# Taint status
+# ---------------------------------------------------------------------------
+
+
+class TaintStatus(NamedTuple):
+    trustworthiness: SecurityLevel
+    confidentiality: SecurityLevel
+
+
+# ---------------------------------------------------------------------------
 # Tool parser contract
 # ---------------------------------------------------------------------------
 
@@ -60,7 +70,7 @@ class ToolParseResult(NamedTuple):
     security_type: Optional[SecurityType] = None
 
 
-ToolParser = Callable[[Dict[str, Any]], ToolParseResult]
+ToolParser = Callable[[Dict[str, Any], Optional[TaintStatus]], ToolParseResult]
 
 
 # ---------------------------------------------------------------------------
@@ -97,13 +107,8 @@ INSTRUCTION_TYPE_TO_CATEGORY: Dict[str, str] = {
 
 
 # ---------------------------------------------------------------------------
-# Taint status
+# Taint computation helpers
 # ---------------------------------------------------------------------------
-
-
-class TaintStatus(NamedTuple):
-    trustworthiness: SecurityLevel
-    confidentiality: SecurityLevel
 
 
 # LOW(0) < UNKNOWN/MID(1) < HIGH(2); UNKNOWN is treated as MID
