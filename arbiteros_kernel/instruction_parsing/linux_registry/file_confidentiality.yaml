@@ -93,22 +93,6 @@ HIGH:
   - ~/.openclaw/agents/*/sessions/**
   - ~/.openclaw/openclaw.json
 
-  # ── OpenClaw workspace — identity & persistent memory files ─────────────────
-  # Files loaded at every agent session; contain persona, user profile (PII)
-  # and curated long-term memory. Profile-specific workspace-<name>/ is also covered.
-  - ~/.openclaw/workspace/SOUL.md
-  - ~/.openclaw/workspace/MEMORY.md
-  - ~/.openclaw/workspace/AGENTS.md
-  - ~/.openclaw/workspace/USER.md
-  - ~/.openclaw/workspace/IDENTITY.md
-  - ~/.openclaw/workspace/memory/**
-  - ~/.openclaw/workspace-*/SOUL.md
-  - ~/.openclaw/workspace-*/MEMORY.md
-  - ~/.openclaw/workspace-*/AGENTS.md
-  - ~/.openclaw/workspace-*/USER.md
-  - ~/.openclaw/workspace-*/IDENTITY.md
-  - ~/.openclaw/workspace-*/memory/**
-
   # ── ArbiterOS kernel config ────────────────────────────────────────────────
   - ~/.arbiteros/*
 
@@ -231,3 +215,19 @@ LOW:
   - /var/log/messages
   - /var/log/dmesg
   - /var/log/kern.log
+
+  # ── OpenClaw workspace — identity & persistent memory files ─────────────────
+  # Files loaded at every agent session; contain persona, user profile (PII)
+  # and curated long-term memory. Profile-specific workspace-<name>/ is also covered.
+  - ~/.openclaw/workspace/SOUL.md
+  - ~/.openclaw/workspace/MEMORY.md
+  - ~/.openclaw/workspace/AGENTS.md
+  - ~/.openclaw/workspace/USER.md
+  - ~/.openclaw/workspace/IDENTITY.md
+  - ~/.openclaw/workspace/memory/**
+  - ~/.openclaw/workspace-*/SOUL.md
+  - ~/.openclaw/workspace-*/MEMORY.md
+  - ~/.openclaw/workspace-*/AGENTS.md
+  - ~/.openclaw/workspace-*/USER.md
+  - ~/.openclaw/workspace-*/IDENTITY.md
+  - ~/.openclaw/workspace-*/memory/**
