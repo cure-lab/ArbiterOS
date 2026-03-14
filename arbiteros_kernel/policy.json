@@ -72,7 +72,8 @@
 
   "taint": {
     "enabled": true,
-
+    "watermark": { "enabled": true },
+    
     "sources": ["read", "gmail_read", "web_fetch"],
     "sinks": ["exec", "write"],
 
