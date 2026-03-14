@@ -16,6 +16,11 @@ except ImportError:
     InstructionBuilder = None  # type: ignore[misc, assignment]
 
 try:
+    from arbiteros_kernel.instruction_parsing.tool_parsers import parse_tool_instruction
+except ImportError:
+    parse_tool_instruction = None  # type: ignore[misc, assignment]
+
+try:
     from arbiteros_kernel.instruction_parsing.instruction_security_registry import (
         get_instruction_security,
     )
@@ -4193,6 +4198,105 @@ def _wrap_messages_with_categories(
     return {**data, "messages": messages}
 
 
+def _inject_taint_watermarks_into_messages(data: dict) -> dict:
+    """
+    对 role=tool 的 content 在开头注入 taint 水印：[ARBITEROS_TAINT trustworthiness=X confidentiality=Y]
+    水印来自产生该 result 的 tool call 的 security_type（由 instruction parser 解析 path/args 得到）。
+    """
+    if parse_tool_instruction is None:
+        return data
+    # 环境变量可强制开启，便于调试
+    env_force = os.getenv("ARBITEROS_TAINT_WATERMARK_ENABLED", "").strip().lower()
+    if env_force in ("1", "true", "yes"):
+        pass  # 强制开启，跳过 config 检查
+    else:
+        runtime = get_runtime()
+        cfg = getattr(runtime, "cfg", {}) if runtime else {}
+        taint_cfg = cfg.get("taint") if isinstance(cfg, dict) else {}
+        if not isinstance(taint_cfg, dict):
+            return data
+        # watermark.enabled 默认跟随 taint.enabled，便于未显式配置时也能生效
+        wm_cfg = taint_cfg.get("watermark") or {}
+        if not (wm_cfg.get("enabled", taint_cfg.get("enabled", False))):
+            return data
+
+    messages = data.get("messages")
+    if not isinstance(messages, list):
+        return data
+
+    tool_call_id_to_taint: dict[str, tuple[str, str]] = {}
+    new_messages = list(messages)
+    modified = False
+
+    for i, msg in enumerate(new_messages):
+        if not isinstance(msg, dict):
+            continue
+        if msg.get("role") == "assistant":
+            tool_calls = msg.get("tool_calls")
+            if isinstance(tool_calls, list):
+                tool_call_id_to_taint = {}
+                for tc in tool_calls:
+                    if not isinstance(tc, dict):
+                        continue
+                    tc_id = tc.get("id") or tc.get("tool_call_id")
+                    if not isinstance(tc_id, str) or not tc_id.strip():
+                        continue
+                    fn = tc.get("function")
+                    tool_name = (
+                        fn.get("name")
+                        if isinstance(fn, dict) and isinstance(fn.get("name"), str)
+                        else "unknown_tool"
+                    )
+                    raw_args = fn.get("arguments") if isinstance(fn, dict) else None
+                    args = (
+                        _safe_json_loads(raw_args)
+                        if isinstance(raw_args, str)
+                        else raw_args
+                    )
+                    if not isinstance(args, dict):
+                        args = {}
+                    try:
+                        result = parse_tool_instruction(tool_name, args)
+                        st = result.security_type if hasattr(result, "security_type") else {}
+                        if isinstance(st, dict):
+                            tw = st.get("trustworthiness", "UNKNOWN")
+                            cf = st.get("confidentiality", "UNKNOWN")
+                            tool_call_id_to_taint[tc_id.strip()] = (
+                                str(tw) if tw else "UNKNOWN",
+                                str(cf) if cf else "UNKNOWN",
+                            )
+                    except Exception:
+                        tool_call_id_to_taint[tc_id.strip()] = ("UNKNOWN", "UNKNOWN")
+        elif msg.get("role") == "tool":
+            tc_id = msg.get("tool_call_id")
+            if isinstance(tc_id, str) and tc_id.strip():
+                taint = tool_call_id_to_taint.get(tc_id.strip())
+                if taint:
+                    trust, conf = taint
+                    watermark = (
+                        f"[ARBITEROS_TAINT trustworthiness={trust} confidentiality={conf}]\n"
+                    )
+                    content = msg.get("content")
+                    if isinstance(content, str):
+                        new_messages[i] = {
+                            **msg,
+                            "content": watermark + content,
+                        }
+                        modified = True
+                    elif isinstance(content, list):
+                        new_parts = list(content)
+                        for j, part in enumerate(new_parts):
+                            if isinstance(part, dict) and part.get("type") == "text":
+                                txt = part.get("text")
+                                if isinstance(txt, str):
+                                    new_parts[j] = {**part, "text": watermark + txt}
+                                    new_messages[i] = {**msg, "content": new_parts}
+                                    modified = True
+                                break
+
+    return {**data, "messages": new_messages} if modified else data
+
+
 response_transform: Optional[Any] = _response_transform_content_only
 stream_chunk_transform: Optional[Any] = None
 
@@ -4270,6 +4374,7 @@ class MyCustomHandler(CustomLogger):
             _clear_stripped_categories_for_trace(trace_id_for_cache)
         # 把 history 里 assistant 的 content 按当前 trace 记录的 category 从后往前包回结构，再请求
         data = _wrap_messages_with_categories(data, trace_id=trace_id_for_cache)
+        data = _inject_taint_watermarks_into_messages(data)
 
         # Clean up any previously persisted noisy topic summaries so future traces
         # don't inherit "process step" labels (e.g., "new session / greet user / next").
