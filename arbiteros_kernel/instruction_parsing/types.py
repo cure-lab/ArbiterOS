@@ -111,10 +111,10 @@ INSTRUCTION_TYPE_TO_CATEGORY: Dict[str, str] = {
 # ---------------------------------------------------------------------------
 
 
-# LOW(0) < UNKNOWN/MID(1) < HIGH(2); UNKNOWN is treated as MID
-LEVEL_ORDER: Dict[str, int] = {
+# LOW(0) < UNKNOWN(0.5) < MID(1) < HIGH(2); UNKNOWN stays as UNKNOWN in output
+LEVEL_ORDER: Dict[str, float] = {
     "LOW": 0,
-    "UNKNOWN": 1,
+    "UNKNOWN": 0.5,
     "MID": 1,
     "HIGH": 2,
 }
@@ -148,13 +148,13 @@ def compute_taint_status_from_instructions(
 
     - trustworthiness: minimum across all instructions (least trusted wins)
     - confidentiality:  maximum across all instructions (most sensitive wins)
-    - UNKNOWN is treated as MID; empty list defaults to MID.
+    - UNKNOWN stays as UNKNOWN (ordered between LOW and MID); empty list defaults to MID.
     """
     trust_vals = collect_levels(instructions, "trustworthiness")
     conf_vals = collect_levels(instructions, "confidentiality")
 
     raw_trust = min(trust_vals, key=lambda v: LEVEL_ORDER[v]) if trust_vals else "MID"
     raw_conf = max(conf_vals, key=lambda v: LEVEL_ORDER[v]) if conf_vals else "MID"
-    trustworthiness: SecurityLevel = "MID" if raw_trust == "UNKNOWN" else raw_trust
-    confidentiality: SecurityLevel = "MID" if raw_conf == "UNKNOWN" else raw_conf
+    trustworthiness: SecurityLevel = raw_trust
+    confidentiality: SecurityLevel = raw_conf
     return TaintStatus(trustworthiness=trustworthiness, confidentiality=confidentiality)
