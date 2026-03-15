@@ -21,6 +21,13 @@ except ImportError:
     parse_tool_instruction = None  # type: ignore[misc, assignment]
 
 try:
+    from arbiteros_kernel.instruction_parsing.types import (
+        compute_taint_status_from_instructions,
+    )
+except ImportError:
+    compute_taint_status_from_instructions = None  # type: ignore[misc, assignment]
+
+try:
     from arbiteros_kernel.instruction_parsing.instruction_security_registry import (
         get_instruction_security,
     )
@@ -4198,10 +4205,13 @@ def _wrap_messages_with_categories(
     return {**data, "messages": messages}
 
 
-def _inject_taint_watermarks_into_messages(data: dict) -> dict:
+def _inject_taint_watermarks_into_messages(
+    data: dict, *, trace_id: Optional[str] = None
+) -> dict:
     """
     对 role=tool 的 content 在开头注入 taint 水印：[ARBITEROS_TAINT trustworthiness=X confidentiality=Y]
-    水印来自产生该 result 的 tool call 的 security_type（由 instruction parser 解析 path/args 得到）。
+    水印为累积 taint：instruction history 中该 tool call 之前所有 instruction 的 trustworthiness(min)、confidentiality(max)。
+    同一 tool_call_id 在 instructions 中可能两条（先不带 result，后带 result），取第一次出现的 index 作为边界。
     """
     if parse_tool_instruction is None:
         return data
@@ -4225,6 +4235,27 @@ def _inject_taint_watermarks_into_messages(data: dict) -> dict:
         return data
 
     tool_call_id_to_taint: dict[str, tuple[str, str]] = {}
+    tool_call_id_to_index: dict[str, int] = {}
+    instructions: list[dict[str, Any]] = []
+
+    # 从 InstructionBuilder 建立 tool_call_id -> 第一次出现的 index（不带 result 的那条）
+    if (
+        trace_id
+        and InstructionBuilder is not None
+        and compute_taint_status_from_instructions is not None
+    ):
+        builder = _get_instruction_builder_for_trace(trace_id)
+        if builder is not None:
+            instructions = list(getattr(builder, "instructions", []) or [])
+            for idx, instr in enumerate(instructions):
+                content = instr.get("content")
+                if isinstance(content, dict):
+                    tcid = content.get("tool_call_id")
+                    if isinstance(tcid, str) and tcid.strip():
+                        tcid = tcid.strip()
+                        if tcid not in tool_call_id_to_index:
+                            tool_call_id_to_index[tcid] = idx
+
     new_messages = list(messages)
     modified = False
 
@@ -4270,29 +4301,42 @@ def _inject_taint_watermarks_into_messages(data: dict) -> dict:
         elif msg.get("role") == "tool":
             tc_id = msg.get("tool_call_id")
             if isinstance(tc_id, str) and tc_id.strip():
-                taint = tool_call_id_to_taint.get(tc_id.strip())
-                if taint:
-                    trust, conf = taint
-                    watermark = (
-                        f"[ARBITEROS_TAINT trustworthiness={trust} confidentiality={conf}]\n"
+                tc_id = tc_id.strip()
+                trust, conf = "MID", "MID"
+                # 优先用累积 taint（该 tool call 之前 + 该 tool call 本身，因 result 来自此 call）
+                idx = tool_call_id_to_index.get(tc_id)
+                if idx is not None and instructions:
+                    instructions_up_to = instructions[0 : idx + 1]
+                    taint_status = compute_taint_status_from_instructions(
+                        instructions_up_to
                     )
-                    content = msg.get("content")
-                    if isinstance(content, str):
-                        new_messages[i] = {
-                            **msg,
-                            "content": watermark + content,
-                        }
-                        modified = True
-                    elif isinstance(content, list):
-                        new_parts = list(content)
-                        for j, part in enumerate(new_parts):
-                            if isinstance(part, dict) and part.get("type") == "text":
-                                txt = part.get("text")
-                                if isinstance(txt, str):
-                                    new_parts[j] = {**part, "text": watermark + txt}
-                                    new_messages[i] = {**msg, "content": new_parts}
-                                    modified = True
-                                break
+                    trust = taint_status.trustworthiness
+                    conf = taint_status.confidentiality
+                else:
+                    taint = tool_call_id_to_taint.get(tc_id)
+                    if taint:
+                        trust, conf = taint
+
+                watermark = (
+                    f"[ARBITEROS_TAINT trustworthiness={trust} confidentiality={conf}]\n"
+                )
+                content = msg.get("content")
+                if isinstance(content, str):
+                    new_messages[i] = {
+                        **msg,
+                        "content": watermark + content,
+                    }
+                    modified = True
+                elif isinstance(content, list):
+                    new_parts = list(content)
+                    for j, part in enumerate(new_parts):
+                        if isinstance(part, dict) and part.get("type") == "text":
+                            txt = part.get("text")
+                            if isinstance(txt, str):
+                                new_parts[j] = {**part, "text": watermark + txt}
+                                new_messages[i] = {**msg, "content": new_parts}
+                                modified = True
+                            break
 
     return {**data, "messages": new_messages} if modified else data
 
@@ -4374,7 +4418,7 @@ class MyCustomHandler(CustomLogger):
             _clear_stripped_categories_for_trace(trace_id_for_cache)
         # 把 history 里 assistant 的 content 按当前 trace 记录的 category 从后往前包回结构，再请求
         data = _wrap_messages_with_categories(data, trace_id=trace_id_for_cache)
-        data = _inject_taint_watermarks_into_messages(data)
+        data = _inject_taint_watermarks_into_messages(data, trace_id=trace_id_for_cache)
 
         # Clean up any previously persisted noisy topic summaries so future traces
         # don't inherit "process step" labels (e.g., "new session / greet user / next").
