@@ -149,44 +149,47 @@ def compute_taint_status_from_instructions(
 ) -> TaintStatus:
     """Compute the taint status of the current session from its instruction history.
 
-    This function is the **final aggregation step** and enforces a two-stage contract:
-
-    - Parsing-stage classifiers may legitimately emit ``UNKNOWN`` for paths or
-      executables that are not registered in any registry.  That sentinel travels
-      through individual instructions unchanged so that information is preserved.
-    - The aggregated result returned here must always be a concrete level
-      (LOW / MID / HIGH) because downstream policy checks require a definite
-      value.  Any ``UNKNOWN`` result — whether inherited from individual
-      instructions or produced by an empty instruction list — is normalised to
-      ``MID`` and a warning is logged so that callers are aware of the
-      substitution.
-
     Aggregation rules:
-    - trustworthiness: minimum across all instructions (least trusted wins).
-    - confidentiality:  maximum across all instructions (most sensitive wins).
-    - ``UNKNOWN`` sits between ``LOW`` and ``MID`` in the ordering (score 0.5)
-      during comparison, so it can be superseded by any concrete level.
+    - trustworthiness: minimum across all instructions (least trusted wins)
+    - confidentiality:  maximum across all instructions (most sensitive wins)
+
+    UNKNOWN semantics:
+    - For confidentiality (max): UNKNOWN counts as smallest (loses; never chosen when
+      any concrete level exists).
+    - For trustworthiness (min): UNKNOWN counts as largest (loses; never chosen when
+      any concrete level exists).
+    - Only when all values are UNKNOWN do we return UNKNOWN.  Empty list defaults to MID.
+    - When UNKNOWN is returned, a warning is logged for visibility.
     """
     trust_vals = collect_levels(instructions, "trustworthiness")
     conf_vals = collect_levels(instructions, "confidentiality")
 
-    raw_trust = min(trust_vals, key=lambda v: LEVEL_ORDER[v]) if trust_vals else "UNKNOWN"
-    raw_conf = max(conf_vals, key=lambda v: LEVEL_ORDER[v]) if conf_vals else "UNKNOWN"
+    # Exclude UNKNOWN: for min, UNKNOWN is largest (loses); for max, UNKNOWN is smallest (loses)
+    trust_concrete = [v for v in trust_vals if v != "UNKNOWN"]
+    conf_concrete = [v for v in conf_vals if v != "UNKNOWN"]
 
+    raw_trust = (
+        min(trust_concrete, key=lambda v: LEVEL_ORDER[v])
+        if trust_concrete
+        else ("UNKNOWN" if trust_vals else "MID")
+    )
+    raw_conf = (
+        max(conf_concrete, key=lambda v: LEVEL_ORDER[v])
+        if conf_concrete
+        else ("UNKNOWN" if conf_vals else "MID")
+    )
     trustworthiness: SecurityLevel = raw_trust
     confidentiality: SecurityLevel = raw_conf
 
     if trustworthiness == "UNKNOWN":
         logger.warning(
             "compute_taint_status_from_instructions: trustworthiness resolved to "
-            "UNKNOWN (no concrete level found); normalising to MID for downstream processing."
+            "UNKNOWN (no concrete level found); keeping as UNKNOWN."
         )
-        trustworthiness = "MID"
     if confidentiality == "UNKNOWN":
         logger.warning(
             "compute_taint_status_from_instructions: confidentiality resolved to "
-            "UNKNOWN (no concrete level found); normalising to MID for downstream processing."
+            "UNKNOWN (no concrete level found); keeping as UNKNOWN."
         )
-        confidentiality = "MID"
 
     return TaintStatus(trustworthiness=trustworthiness, confidentiality=confidentiality)
