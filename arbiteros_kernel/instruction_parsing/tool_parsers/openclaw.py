@@ -15,7 +15,7 @@ import logging
 import os
 import re
 import shlex
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from ..types import (
     TaintStatus,
@@ -36,14 +36,7 @@ logger = logging.getLogger(__name__)
 def _is_path_like(token: str) -> bool:
     """Heuristic: does this shell token look like a filesystem path or URL?"""
     return (
-        token.startswith("/")
-        or token.startswith("~/")
-        or token.startswith("./")
-        or token.startswith("../")
-        or token.startswith("~")
-        or token.startswith("http://")
-        or token.startswith("https://")
-        or token.startswith("ftp://")
+        token.startswith(("/", "~/", "./", "../", "~", "http://", "https://", "ftp://"))
         or "\\" in token  # Windows path
         or ("/" in token and not token.startswith("-"))
     )
@@ -89,6 +82,34 @@ def _is_memory_file(args: Dict[str, Any]) -> bool:
     # Daily memory log: any .md file whose immediate parent dir is named "memory"
     parent = os.path.basename(os.path.dirname(raw))
     return parent == _MEMORY_DIR_NAME and basename.endswith(".md")
+
+
+def _make_write_result(
+    args: Dict[str, Any], taint_status: Optional[TaintStatus]
+) -> ToolParseResult:
+    """Shared body for edit and write when not targeting a memory file.
+
+    Registers the file path in the user registry (using taint_status or an
+    UNKNOWN/UNKNOWN fallback when no taint context is available) and resolves
+    confidentiality/trustworthiness via linux_registry.
+    """
+    raw = str(args.get("path") or args.get("file_path") or "")
+    paths = [raw] if raw else []
+    if raw:
+        taint = taint_status or TaintStatus(trustworthiness="UNKNOWN", confidentiality="UNKNOWN")
+        register_file_taint(raw, taint.trustworthiness, taint.confidentiality)
+    confidentiality = classify_confidentiality(paths) if paths else "UNKNOWN"
+    trustworthiness = classify_trustworthiness(paths) if paths else "UNKNOWN"
+    return ToolParseResult(
+        "WRITE",
+        make_security_type(
+            confidentiality=confidentiality,
+            trustworthiness=trustworthiness,
+            confidence="UNKNOWN",
+            reversible=True,
+            authority="UNKNOWN",
+        ),
+    )
 
 
 def _parse_read(
@@ -147,25 +168,7 @@ def _parse_edit(
                 authority="UNKNOWN",
             ),
         )
-    raw = str(args.get("path") or args.get("file_path") or "")
-    paths = [raw] if raw else []
-    if raw:
-        taint = taint_status or TaintStatus(
-            trustworthiness="MID", confidentiality="MID"
-        )
-        register_file_taint(raw, taint.trustworthiness, taint.confidentiality)
-    confidentiality = classify_confidentiality(paths) if paths else "UNKNOWN"
-    trustworthiness = classify_trustworthiness(paths) if paths else "UNKNOWN"
-    return ToolParseResult(
-        "WRITE",
-        make_security_type(
-            confidentiality=confidentiality,
-            trustworthiness=trustworthiness,
-            confidence="UNKNOWN",
-            reversible=True,
-            authority="UNKNOWN",
-        ),
-    )
+    return _make_write_result(args, taint_status)
 
 
 def _parse_write(
@@ -188,25 +191,7 @@ def _parse_write(
                 authority="UNKNOWN",
             ),
         )
-    raw = str(args.get("path") or args.get("file_path") or "")
-    paths = [raw] if raw else []
-    if raw:
-        taint = taint_status or TaintStatus(
-            trustworthiness="MID", confidentiality="MID"
-        )
-        register_file_taint(raw, taint.trustworthiness, taint.confidentiality)
-    confidentiality = classify_confidentiality(paths) if paths else "UNKNOWN"
-    trustworthiness = classify_trustworthiness(paths) if paths else "UNKNOWN"
-    return ToolParseResult(
-        "WRITE",
-        make_security_type(
-            confidentiality=confidentiality,
-            trustworthiness=trustworthiness,
-            confidence="UNKNOWN",
-            reversible=True,
-            authority="UNKNOWN",
-        ),
-    )
+    return _make_write_result(args, taint_status)
 
 
 # ---------------------------------------------------------------------------
@@ -217,14 +202,23 @@ def _parse_write(
 _ITYPE_PRIORITY = {"EXEC": 3, "WRITE": 2, "READ": 1}
 
 # Regex that splits a shell command string on operators (longest match first).
-# Handles ||, &&, |, ;, & robustly regardless of surrounding whitespace.
-_SHELL_OP_RE = re.compile(r"\|\||&&|[|;&]")
+# Handles ||, &&, |, ;, &, and newlines robustly regardless of surrounding
+# whitespace.  Newlines are treated as implicit command separators (like ;).
+_SHELL_OP_RE = re.compile(r"\|\||&&|[|;&\n]")
+
+# Shell redirect operators whose immediately following token is always a file
+# path, even when the filename contains no directory separator.
+_REDIRECT_OPS = {">", ">>", "<", "<<", "2>", "2>>", "&>", "&>>"}
+
+# Subset of _REDIRECT_OPS that write to a file (as opposed to reading from one).
+_WRITE_REDIRECT_OPS = {">", ">>", "&>", "&>>"}
 
 
 def _split_pipeline_str(command: str) -> List[str]:
     """
-    Split *command* at shell operators (||, &&, |, ;, &) at the string level,
-    before shlex tokenisation.  Returns a list of raw command strings.
+    Split *command* at shell operators (||, &&, |, ;, &, newline) at the
+    string level, before shlex tokenisation.  Returns a list of raw command
+    strings.
     Quoted operators (e.g. inside '…' or "…") are ignored by the simple
     regex; for the security classification use-case this conservative split
     is sound (it may produce empty/short segments which are dropped).
@@ -250,6 +244,67 @@ def _classify_segment(seg_str: str) -> str:
     return classify_exe(exe, subcommand)
 
 
+def _collect_exec_path_tokens(
+    seg_strings: List[str], itypes: List[str]
+) -> Tuple[List[str], List[str]]:
+    """Collect file-path tokens and write targets from all pipeline segments.
+
+    For each segment:
+    • EXEC  — include ``tokens[0]`` only when it is itself a path-like file
+              (e.g. ``~/downloads/malware.sh``); arguments are not data files.
+    • READ/WRITE — include redirect targets and bare non-flag arguments so
+                   that e.g. ``cat input.txt`` factors in trustworthiness.
+    • Any segment — redirect output targets (``>``, ``>>``, …) are always
+                   collected as write targets.
+
+    Returns:
+        path_tokens:   all paths used for security classification (conf/trust).
+        write_targets: paths that receive written data; registered in the user
+                       registry so future reads inherit the correct taint.
+    """
+    path_tokens: List[str] = []
+    write_targets: List[str] = []
+
+    for seg_idx, seg_str in enumerate(seg_strings):
+        seg_itype = itypes[seg_idx]
+        try:
+            tokens = shlex.split(seg_str)
+        except ValueError:
+            logger.warning(
+                "shlex.split failed for segment %r; falling back to str.split", seg_str
+            )
+            tokens = seg_str.split()
+
+        # For EXEC segments, include the executable only when it is a path-like
+        # file (e.g. ~/downloads/malware.sh) — its location determines trust.
+        if tokens and seg_itype == "EXEC" and _is_path_like(tokens[0]):
+            path_tokens.append(tokens[0])
+
+        tokens_no_exe = tokens[1:]
+        skip_next = False
+        for i, t in enumerate(tokens_no_exe):
+            if skip_next:
+                # Already consumed as a redirect target; skip.
+                skip_next = False
+                continue
+            if _is_path_like(t):
+                path_tokens.append(t)
+            elif t in _REDIRECT_OPS and i + 1 < len(tokens_no_exe):
+                # The token immediately after a redirect operator is a file path.
+                target = tokens_no_exe[i + 1]
+                path_tokens.append(target)
+                if t in _WRITE_REDIRECT_OPS:
+                    write_targets.append(target)
+                skip_next = True
+            elif not t.startswith("-") and seg_itype in ("READ", "WRITE"):
+                # Bare filename argument from a READ/WRITE segment.
+                path_tokens.append(t)
+                if seg_itype == "WRITE":
+                    write_targets.append(t)
+
+    return path_tokens, write_targets
+
+
 def _parse_exec(
     args: Dict[str, Any], taint_status: Optional[TaintStatus] = None
 ) -> ToolParseResult:
@@ -257,14 +312,23 @@ def _parse_exec(
     exec: classify the shell command using linux_registry.
 
     Steps:
-      1. Split the command string on shell operators (||, &&, |, ;, &) at
+      1. Log an error for multi-line commands; newlines are treated as
+         implicit command separators (equivalent to ;) for classification.
+      2. Split the command string on shell operators (||, &&, |, ;, &, \\n) at
          string level — before shlex — so that `cmd1; cmd2` and
          `cmd1 | cmd2` are both decomposed correctly.
-      2. Classify each segment via exe_registry; take the highest-priority type
+      3. Classify each segment via exe_registry; take the highest-priority type
          (EXEC > WRITE > READ) across all segments.
-      3. Collect path-like tokens from ALL segments; resolve worst-case
-         confidentiality and trustworthiness via linux_registry.
-      4. Return a ToolParseResult reflecting all findings.
+      4. Collect path-like tokens from READ/WRITE segments, redirect-target
+         tokens from any segment, and — when the executable is itself a
+         path-like file (e.g. ~/downloads/malware.sh) — the executable token.
+         Resolve worst-case confidentiality and trustworthiness via
+         linux_registry.  For pure EXEC commands without any file paths the
+         defaults are LOW confidentiality / HIGH trustworthiness, mirroring
+         how system executables are classified in the file registry.
+      5. Register write targets (redirect output files and WRITE segment
+         arguments) in the user registry so future reads inherit taint labels.
+      6. Return a ToolParseResult reflecting all findings.
     """
     command = str(args.get("command", ""))
 
@@ -283,6 +347,16 @@ def _parse_exec(
             ),
         )
 
+    # Multi-line commands must not be passed as a single string; log an error.
+    # Newlines are still handled gracefully as command separators by _SHELL_OP_RE
+    # so classification continues rather than failing outright.
+    if "\n" in command:
+        logger.error(
+            "_parse_exec: multi-line command string received; newlines are treated "
+            "as command separators: %r",
+            command,
+        )
+
     # Split on shell operators at string level first
     seg_strings = _split_pipeline_str(command)
     if not seg_strings:
@@ -292,25 +366,28 @@ def _parse_exec(
     itypes = [_classify_segment(s) for s in seg_strings]
     itype = max(itypes, key=lambda t: _ITYPE_PRIORITY.get(t, 0))
 
-    # Collect path-like tokens from ALL segments (skip each segment's executable)
-    path_tokens: List[str] = []
-    for seg_str in seg_strings:
-        try:
-            tokens = shlex.split(seg_str)
-        except ValueError:
-            logger.warning(
-                "shlex.split failed for segment %r; falling back to str.split", seg_str
-            )
-            tokens = seg_str.split()
-        path_tokens.extend(t for t in tokens[1:] if _is_path_like(t))
+    # Collect file-path tokens and write targets from all pipeline segments.
+    path_tokens, write_targets = _collect_exec_path_tokens(seg_strings, itypes)
 
     if path_tokens:
         confidentiality = classify_confidentiality(path_tokens)
         trustworthiness = classify_trustworthiness(path_tokens)
     else:
-        # No explicit paths — conservative defaults based on instruction type
-        confidentiality = "MID" if itype == "EXEC" else "LOW"
-        trustworthiness = "MID" if itype in ("EXEC", "WRITE") else "HIGH"
+        # No explicit file paths.  Confidentiality and trustworthiness are only
+        # meaningful for READ/WRITE data access; for pure EXEC the defaults
+        # match how system executables appear in the file registry: LOW
+        # confidentiality (no sensitive data produced) and HIGH trustworthiness
+        # (package-manager-verified system commands).  WRITE without paths
+        # (e.g. touch newfile where newfile is non-path-like) uses MID trust
+        # because it modifies user-space state.
+        confidentiality = "LOW"
+        trustworthiness = "MID" if itype == "WRITE" else "HIGH"
+
+    # Register written files in the user registry so that future commands
+    # that read these outputs inherit the correct taint labels.  Only output
+    # targets are registered (not read inputs).
+    for write_target in write_targets:
+        register_file_taint(write_target, trustworthiness, confidentiality)
 
     # READ operations do not persistently alter state → reversible
     reversible = itype == "READ"
@@ -699,10 +776,12 @@ def _parse_sessions_history(
     )
 
 
-def _parse_sessions_send(
-    args: Dict[str, Any], taint_status: Optional[TaintStatus] = None
-) -> ToolParseResult:
-    """sessions_send: send message to another session → DELEGATE."""
+def _make_delegate_result() -> ToolParseResult:
+    """Shared result for cross-session DELEGATE operations (send/spawn).
+
+    Both actions dispatch a task to another agent session that is only
+    partially trusted, hence MID trustworthiness.
+    """
     return ToolParseResult(
         "DELEGATE",
         make_security_type(
@@ -715,20 +794,18 @@ def _parse_sessions_send(
     )
 
 
+def _parse_sessions_send(
+    args: Dict[str, Any], taint_status: Optional[TaintStatus] = None
+) -> ToolParseResult:
+    """sessions_send: send message to another session → DELEGATE."""
+    return _make_delegate_result()
+
+
 def _parse_sessions_spawn(
     args: Dict[str, Any], taint_status: Optional[TaintStatus] = None
 ) -> ToolParseResult:
     """sessions_spawn: launch a sub-agent → DELEGATE."""
-    return ToolParseResult(
-        "DELEGATE",
-        make_security_type(
-            confidentiality="MID",
-            trustworthiness="MID",
-            confidence="UNKNOWN",
-            reversible=False,
-            authority="UNKNOWN",
-        ),
-    )
+    return _make_delegate_result()
 
 
 def _parse_session_status(
@@ -752,36 +829,36 @@ def _parse_session_status(
 # ---------------------------------------------------------------------------
 
 
-def _parse_web_search(
-    args: Dict[str, Any], taint_status: Optional[TaintStatus] = None
-) -> ToolParseResult:
-    """web_search: external search → READ (untrusted results)."""
+def _make_external_read_result() -> ToolParseResult:
+    """Shared result for external web reads (search/fetch).
+
+    Both return READ with LOW trustworthiness because external content may
+    contain prompt injections or malicious instructions.
+    """
     return ToolParseResult(
         "READ",
         make_security_type(
             confidentiality="LOW",
-            trustworthiness="LOW",  # external web results may contain prompt injections
+            trustworthiness="LOW",  # external content may contain prompt injections
             confidence="UNKNOWN",
             reversible=True,
             authority="UNKNOWN",
         ),
     )
+
+
+def _parse_web_search(
+    args: Dict[str, Any], taint_status: Optional[TaintStatus] = None
+) -> ToolParseResult:
+    """web_search: external search → READ (untrusted results)."""
+    return _make_external_read_result()
 
 
 def _parse_web_fetch(
     args: Dict[str, Any], taint_status: Optional[TaintStatus] = None
 ) -> ToolParseResult:
     """web_fetch: fetch page content → READ."""
-    return ToolParseResult(
-        "READ",
-        make_security_type(
-            confidentiality="LOW",
-            trustworthiness="LOW",  # fetched page may contain malicious instructions
-            confidence="UNKNOWN",
-            reversible=True,
-            authority="UNKNOWN",
-        ),
-    )
+    return _make_external_read_result()
 
 
 # ---------------------------------------------------------------------------
@@ -816,10 +893,12 @@ def _parse_image(
 # ---------------------------------------------------------------------------
 
 
-def _parse_memory_search(
-    args: Dict[str, Any], taint_status: Optional[TaintStatus] = None
-) -> ToolParseResult:
-    """memory_search: semantic search over MEMORY.md → RETRIEVE."""
+def _make_memory_retrieve_result() -> ToolParseResult:
+    """Shared result for agent memory retrieval (search/get).
+
+    Both operations read from the agent's own memory store, which is
+    inherently trusted (HIGH) and may contain sensitive experience (MID conf).
+    """
     return ToolParseResult(
         "RETRIEVE",
         make_security_type(
@@ -832,20 +911,18 @@ def _parse_memory_search(
     )
 
 
+def _parse_memory_search(
+    args: Dict[str, Any], taint_status: Optional[TaintStatus] = None
+) -> ToolParseResult:
+    """memory_search: semantic search over MEMORY.md → RETRIEVE."""
+    return _make_memory_retrieve_result()
+
+
 def _parse_memory_get(
     args: Dict[str, Any], taint_status: Optional[TaintStatus] = None
 ) -> ToolParseResult:
     """memory_get: read a memory fragment by path → RETRIEVE."""
-    return ToolParseResult(
-        "RETRIEVE",
-        make_security_type(
-            confidentiality="MID",
-            trustworthiness="HIGH",
-            confidence="UNKNOWN",
-            reversible=True,
-            authority="UNKNOWN",
-        ),
-    )
+    return _make_memory_retrieve_result()
 
 
 # ---------------------------------------------------------------------------

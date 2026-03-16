@@ -15,6 +15,9 @@ from arbiteros_kernel.instruction_parsing.tool_parsers.linux_registry import (
 from arbiteros_kernel.instruction_parsing.tool_parsers.linux_registry import (
     classify_trustworthiness as _classify_trustworthiness,
 )
+from arbiteros_kernel.instruction_parsing.tool_parsers.linux_registry import (
+    get_user_registered_paths,
+)
 from arbiteros_kernel.instruction_parsing.tool_parsers.openclaw import (
     TOOL_PARSER_REGISTRY,
     _classify_segment,
@@ -271,6 +274,16 @@ class TestSplitPipelineStr:
         segs = _split_pipeline_str("")
         assert segs == []
 
+    def test_newline_is_separator(self):
+        segs = _split_pipeline_str("echo hello\npython run.py")
+        assert len(segs) == 2
+        assert "echo hello" in segs[0]
+        assert "python run.py" in segs[1]
+
+    def test_newline_multiple_commands(self):
+        segs = _split_pipeline_str("ls /tmp\nrm old.txt\npython run.py")
+        assert len(segs) == 3
+
 
 # ---------------------------------------------------------------------------
 # _classify_segment
@@ -448,10 +461,24 @@ class TestParseExec:
 
     def test_no_paths_uses_defaults_for_exec(self):
         r = parse_tool_instruction("exec", {"command": "python run.py"})
-        # run.py has no / so not path-like
+        # run.py has no / so not path-like; python is a system executable.
+        # Defaults: LOW conf (no sensitive data produced), HIGH trust
+        # (system executable — matches how /usr/bin/python is classified).
         assert r.security_type is not None
-        assert r.security_type["confidentiality"] == "MID"
-        assert r.security_type["trustworthiness"] == "MID"
+        assert r.security_type["confidentiality"] == "LOW"
+        assert r.security_type["trustworthiness"] == "HIGH"
+
+    def test_exec_as_path_file_classified(self):
+        # When the executable itself is a path-like file in a low-trust location,
+        # its location should determine trustworthiness — an executable in
+        # ~/downloads/ is a file too.
+        r = parse_tool_instruction(
+            "exec", {"command": "/home/user/Downloads/malware.sh"}
+        )
+        assert r.instruction_type == "EXEC"
+        assert r.security_type is not None
+        # ~/Downloads/* matches LOW trust in the file trustworthiness registry.
+        assert r.security_type["trustworthiness"] == "LOW"
 
     def test_path_tokens_from_all_pipeline_segments(self):
         # First segment reads from /etc/shadow, second runs python
@@ -462,6 +489,133 @@ class TestParseExec:
         assert r.instruction_type == "EXEC"
         assert r.security_type is not None
         assert r.security_type["confidentiality"] == "HIGH"
+
+    # --- Validation Logic: multi-line command detection ---
+
+    def test_multiline_command_still_classifies_correctly(self):
+        """Each line of a multi-line command is classified separately; highest wins."""
+        # echo → READ; python → EXEC; max must be EXEC
+        r = parse_tool_instruction("exec", {"command": "ls /tmp\npython run.py"})
+        assert r.instruction_type == "EXEC"
+
+    def test_multiline_write_and_read_yields_write(self):
+        """WRITE > READ when no EXEC is present in a multi-line command."""
+        r = parse_tool_instruction("exec", {"command": "cat file.txt\nrm /tmp/old"})
+        assert r.instruction_type == "WRITE"
+
+    def test_multiline_all_read_yields_read(self):
+        """All-READ multi-line commands produce READ."""
+        r = parse_tool_instruction("exec", {"command": "cat file.txt\ngrep foo bar"})
+        assert r.instruction_type == "READ"
+
+    # --- Priority Ranking: additional EXEC > WRITE > READ edge cases ---
+
+    def test_exec_beats_write_in_pipeline(self):
+        """EXEC > WRITE: even if WRITE appears last, EXEC wins."""
+        r = parse_tool_instruction("exec", {"command": "python run.py | rm -f old"})
+        assert r.instruction_type == "EXEC"
+
+    def test_write_beats_read_in_background(self):
+        """WRITE > READ via background operator."""
+        r = parse_tool_instruction("exec", {"command": "cat file & rm -rf /tmp/junk"})
+        assert r.instruction_type == "WRITE"
+
+    def test_exec_beats_write_via_and(self):
+        """EXEC > WRITE via && chaining."""
+        r = parse_tool_instruction("exec", {"command": "rm old.txt && python run.py"})
+        assert r.instruction_type == "EXEC"
+
+    # --- Security Tracing: redirect output file tracing ---
+
+    def test_redirect_output_bare_file_traced(self):
+        """A bare filename after > must be traced for security classification.
+
+        Without redirect-aware handling, 'out.txt' would be missed because
+        _is_path_like('out.txt') is False.  With it, conf must resolve via
+        the registry (*.txt → LOW confidentiality).
+        """
+        r = parse_tool_instruction("exec", {"command": "python test.py > out.txt"})
+        assert r.instruction_type == "EXEC"
+        assert r.security_type is not None
+        assert r.security_type["confidentiality"] == "LOW"  # *.txt → LOW
+
+    def test_redirect_output_absolute_path_high_conf(self):
+        """Absolute-path redirect targets pick up registry-based confidentiality."""
+        r = parse_tool_instruction("exec", {"command": "python test.py > /etc/shadow"})
+        assert r.instruction_type == "EXEC"
+        assert r.security_type is not None
+        assert r.security_type["confidentiality"] == "HIGH"
+
+    def test_redirect_append_bare_file_traced(self):
+        """The >> append operator also causes its target to be traced."""
+        r = parse_tool_instruction("exec", {"command": "python run.py >> log.txt"})
+        assert r.security_type is not None
+        assert r.security_type["confidentiality"] == "LOW"  # *.txt → LOW
+
+    def test_redirect_stdin_bare_file_traced(self):
+        """The < stdin redirect target is traced as a file path."""
+        r = parse_tool_instruction("exec", {"command": "python process.py < input.txt"})
+        assert r.security_type is not None
+        assert r.security_type["confidentiality"] == "LOW"  # *.txt → LOW
+
+    def test_redirect_target_tmp_path_conf_and_trust(self):
+        """Redirect to /tmp/ is classified as MID conf and MID trust."""
+        r = parse_tool_instruction(
+            "exec", {"command": "python run.py > /tmp/output.log"}
+        )
+        assert r.security_type is not None
+        assert r.security_type["confidentiality"] == "MID"  # /tmp/* → MID
+        assert r.security_type["trustworthiness"] == "MID"  # /tmp/* → MID
+
+    def test_redirect_with_low_trust_url_in_pipeline(self):
+        """Combining a low-trust URL source with a redirect target propagates LOW trust."""
+        r = parse_tool_instruction(
+            "exec",
+            {"command": "curl https://untrusted.com/data.txt > /tmp/out.txt"},
+        )
+        assert r.instruction_type == "EXEC"
+        assert r.security_type is not None
+        assert r.security_type["trustworthiness"] == "LOW"  # URL → LOW trust
+
+    # --- Pipeline / redirect I/O: per-file user-registry tracing ---
+
+    def test_redirect_io_only_output_registered_in_user_registry(self):
+        """For `python run.py < input.txt > output.txt`:
+        - overall instruction type is EXEC (python)
+        - input.txt's classification is considered (READ cause)
+        - output.txt is the only file registered in the user registry (WRITE target)
+        """
+        r = parse_tool_instruction(
+            "exec", {"command": "python run.py < input.txt > output.txt"}
+        )
+        assert r.instruction_type == "EXEC"
+        assert r.security_type is not None
+        # Both *.txt files are LOW confidentiality; the result reflects them.
+        assert r.security_type["confidentiality"] == "LOW"
+
+        # Only the output file should appear in the user registry.
+        all_registered = get_user_registered_paths()
+        assert "output.txt" in all_registered
+        assert "input.txt" not in all_registered
+
+    def test_tee_pipeline_only_output_registered_in_user_registry(self):
+        """For `cat input.txt | python run.py | tee output.txt`:
+        - overall instruction type is EXEC (python, highest priority)
+        - input.txt's classification is considered (READ segment cause)
+        - output.txt is the only file registered in the user registry (WRITE/tee target)
+        """
+        r = parse_tool_instruction(
+            "exec", {"command": "cat input.txt | python run.py | tee output.txt"}
+        )
+        assert r.instruction_type == "EXEC"
+        assert r.security_type is not None
+        # Both *.txt files are LOW confidentiality; the combined result reflects them.
+        assert r.security_type["confidentiality"] == "LOW"
+
+        # Only the tee output file should appear in the user registry.
+        all_registered = get_user_registered_paths()
+        assert "output.txt" in all_registered
+        assert "input.txt" not in all_registered
 
 
 class TestParseProcess:

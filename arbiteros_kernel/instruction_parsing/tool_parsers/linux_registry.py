@@ -234,6 +234,17 @@ def save_registries() -> None:
     _atexit_save()
 
 
+def get_user_registered_paths() -> List[str]:
+    """Return a flat list of every file path recorded in the user confidentiality registry.
+
+    Useful for testing and auditing: callers can check whether a specific file
+    has been registered (i.e. produced by a previous WRITE operation) without
+    accessing private module state directly.
+    """
+    user_conf = _get_conf_user()
+    return [path for entries in user_conf.values() for path in entries]
+
+
 def register_file_taint(
     path: str,
     trustworthiness: SecurityLevel,
