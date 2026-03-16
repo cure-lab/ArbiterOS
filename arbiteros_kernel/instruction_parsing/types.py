@@ -153,43 +153,38 @@ def compute_taint_status_from_instructions(
     - trustworthiness: minimum across all instructions (least trusted wins)
     - confidentiality:  maximum across all instructions (most sensitive wins)
 
-    UNKNOWN semantics:
-    - For confidentiality (max): UNKNOWN counts as smallest (loses; never chosen when
-      any concrete level exists).
-    - For trustworthiness (min): UNKNOWN counts as largest (loses; never chosen when
-      any concrete level exists).
-    - Only when all values are UNKNOWN do we return UNKNOWN.  Empty list defaults to MID.
-    - When UNKNOWN is returned, a warning is logged for visibility.
+    UNKNOWN semantics (registry does not define UNKNOWN; treat as MID):
+    - UNKNOWN participates in comparison with score 0.5 (between LOW and MID).
+    - When result would be UNKNOWN (empty list, all UNKNOWN, or UNKNOWN wins in mixed),
+      a warning is logged and the result is normalized to MID.
+    - Final output is always LOW, MID, or HIGH — never UNKNOWN.
     """
     trust_vals = collect_levels(instructions, "trustworthiness")
     conf_vals = collect_levels(instructions, "confidentiality")
 
-    # Exclude UNKNOWN: for min, UNKNOWN is largest (loses); for max, UNKNOWN is smallest (loses)
-    trust_concrete = [v for v in trust_vals if v != "UNKNOWN"]
-    conf_concrete = [v for v in conf_vals if v != "UNKNOWN"]
-
+    # UNKNOWN participates in min/max (LEVEL_ORDER has UNKNOWN=0.5)
     raw_trust = (
-        min(trust_concrete, key=lambda v: LEVEL_ORDER[v])
-        if trust_concrete
-        else ("UNKNOWN" if trust_vals else "MID")
+        min(trust_vals, key=lambda v: LEVEL_ORDER[v])
+        if trust_vals
+        else "UNKNOWN"
     )
     raw_conf = (
-        max(conf_concrete, key=lambda v: LEVEL_ORDER[v])
-        if conf_concrete
-        else ("UNKNOWN" if conf_vals else "MID")
+        max(conf_vals, key=lambda v: LEVEL_ORDER[v])
+        if conf_vals
+        else "UNKNOWN"
     )
-    trustworthiness: SecurityLevel = raw_trust
-    confidentiality: SecurityLevel = raw_conf
 
-    if trustworthiness == "UNKNOWN":
+    if raw_trust == "UNKNOWN":
         logger.warning(
             "compute_taint_status_from_instructions: trustworthiness resolved to "
             "UNKNOWN (no concrete level found); keeping as UNKNOWN."
         )
-    if confidentiality == "UNKNOWN":
+        raw_trust = "MID"
+    if raw_conf == "UNKNOWN":
         logger.warning(
             "compute_taint_status_from_instructions: confidentiality resolved to "
             "UNKNOWN (no concrete level found); keeping as UNKNOWN."
         )
+        raw_conf = "MID"
 
-    return TaintStatus(trustworthiness=trustworthiness, confidentiality=confidentiality)
+    return TaintStatus(trustworthiness=raw_trust, confidentiality=raw_conf)
