@@ -72,44 +72,32 @@
 
   "taint": {
     "enabled": true,
-    "watermark": { "enabled": true },
-    
-    "sources": ["read", "gmail_read", "web_fetch"],
-    "sinks": ["exec", "write"],
 
-    "untrusted_sources": {
-      "tools": ["read", "gmail_read", "web_fetch"],
-      "patterns": [
-        "INJECT_ME",
-        "ignore previous",
-        "exec:",
-        "tool:",
-        "run:",
-        "rm -rf",
-        "curl",
-        "apikey",
-        "token"
-      ]
-    },
-
-    "high_risk_tools": ["exec", "write"],
-
-    "treat_respond_as_sink": true,
-    "instruction_sinks": ["RESPOND"],
-    "sink_block_window_seconds": 60,
-
-    "min_snippet_len": 6,
-    "max_snippet_len": 512,
-    "max_snippets_per_event": 50,
-    "snippet_cache_max": 200,
-    "event_dedupe_max": 512,
-
-    "approval": {
-      "mode": "file",
-      "dir": "~/.arbiteros/approvals",
-      "ttl_seconds": 120,
-      "delete_on_use": true,
-      "show_instructions": true
+    "taint_policy": {
+      "input_tools": ["read", "web_fetch", "web_search", "session_status", "sessions_list", "sessions_history", "memory_search", "memory_get", "agents_list", "image"],
+      "output_tools": ["edit", "write", "exec", "message", "sessions_send", "sessions_spawn", "tts", "gateway"],
+      "tools_by_action": {
+        "browser": {
+          "input_actions": ["status", "start", "stop", "profiles", "tabs", "snapshot", "screenshot", "console", "pdf"],
+          "output_actions": ["open", "focus", "close", "navigate", "upload", "dialog", "act"]
+        },
+        "process": {
+          "input_actions": ["list", "poll", "log"],
+          "output_actions": ["write", "send-keys", "submit", "paste", "kill"]
+        },
+        "canvas": {
+          "input_actions": ["snapshot"],
+          "output_actions": ["present", "hide", "navigate", "eval", "a2ui_push", "a2ui_reset"]
+        },
+        "nodes": {
+          "input_actions": ["status", "describe", "camera_snap", "camera_list", "camera_clip", "screen_record", "location_get"],
+          "output_actions": ["pending", "approve", "reject", "notify", "run", "invoke"]
+        },
+        "cron": {
+          "input_actions": ["status", "list", "runs"],
+          "output_actions": ["add", "update", "remove", "run", "wake"]
+        }
+      }
     }
   },
 
