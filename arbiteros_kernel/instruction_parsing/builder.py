@@ -78,13 +78,21 @@ class InstructionBuilder:
         }
 
     def _commit(self, instr: Instruction) -> Instruction:
-        """Wire source_message_id linkage and append to the list."""
+        """Wire source_message_id linkage, append to the list, and set cumulative prop_*."""
         if self._root_source_message_id is None:
             self._root_source_message_id = instr["id"]
         if instr.get("source_message_id") is None:
             instr["source_message_id"] = self._root_source_message_id
         self._last_instruction_id = instr["id"]
         self.instructions.append(instr)
+
+        # Cumulative taint from start to this instruction (inclusive)
+        taint = compute_taint_status_from_instructions(self.instructions)
+        st = instr.get("security_type")
+        if isinstance(st, dict):
+            st["prop_confidentiality"] = taint.confidentiality
+            st["prop_trustworthiness"] = taint.trustworthiness
+
         return instr
 
     def get_taint_status(self) -> TaintStatus:
