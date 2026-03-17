@@ -153,10 +153,9 @@ def compute_taint_status_from_instructions(
     - trustworthiness: minimum across all instructions (least trusted wins)
     - confidentiality:  maximum across all instructions (most sensitive wins)
 
-    UNKNOWN semantics (registry does not define UNKNOWN; treat as MID):
-    - UNKNOWN participates in comparison with score 0.5 (between LOW and MID).
-    - When result would be UNKNOWN (empty list, all UNKNOWN, or UNKNOWN wins in mixed),
-      a warning is logged and the result is normalized to MID.
+    UNKNOWN semantics (registry does not define UNKNOWN):
+    - trustworthiness: UNKNOWN participates with score 0.5; when UNKNOWN wins, normalised to MID.
+    - confidentiality: UNKNOWN participates with score 0.5; when UNKNOWN wins, normalised to LOW.
     - Final output is always LOW, MID, or HIGH — never UNKNOWN.
     """
     trust_vals = collect_levels(instructions, "trustworthiness")
@@ -183,8 +182,8 @@ def compute_taint_status_from_instructions(
     if raw_conf == "UNKNOWN":
         logger.warning(
             "compute_taint_status_from_instructions: confidentiality resolved to "
-            "UNKNOWN (no concrete level found); keeping as UNKNOWN."
+            "UNKNOWN (no concrete level found); normalised to LOW."
         )
-        raw_conf = "MID"
+        raw_conf = "LOW"
 
     return TaintStatus(trustworthiness=raw_trust, confidentiality=raw_conf)
