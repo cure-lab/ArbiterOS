@@ -170,7 +170,7 @@ class TestComputeTaintStatus:
 
         result = compute_taint_status_from_instructions([])
         assert result.trustworthiness == "MID"
-        assert result.confidentiality == "MID"
+        assert result.confidentiality == "LOW"
 
     def test_empty_list_logs_warning(self):
         from arbiteros_kernel.instruction_parsing import types
@@ -193,7 +193,7 @@ class TestComputeTaintStatus:
         instructions = [self._make_instr("UNKNOWN", "UNKNOWN")] * 3
         result = compute_taint_status_from_instructions(instructions)
         assert result.trustworthiness == "MID"
-        assert result.confidentiality == "MID"
+        assert result.confidentiality == "LOW"
 
     def test_all_unknown_instructions_logs_warning(self):
         from arbiteros_kernel.instruction_parsing import types
@@ -300,8 +300,8 @@ class TestComputeTaintStatus:
         result = compute_taint_status_from_instructions(instructions)
         assert result.confidentiality == "HIGH"
 
-    def test_unknown_conf_superseded_by_low_gives_mid(self):
-        """If the only concrete conf is LOW, UNKNOWN (score 0.5) wins → normalised to MID."""
+    def test_unknown_conf_superseded_by_low_gives_low(self):
+        """If the only concrete conf is LOW, UNKNOWN (score 0.5) wins → normalised to LOW."""
         from arbiteros_kernel.instruction_parsing import types
         from arbiteros_kernel.instruction_parsing.types import (
             compute_taint_status_from_instructions,
@@ -313,7 +313,7 @@ class TestComputeTaintStatus:
         ]
         with patch.object(types.logger, "warning") as mock_warn:
             result = compute_taint_status_from_instructions(instructions)
-        assert result.confidentiality == "MID"
+        assert result.confidentiality == "LOW"
         assert mock_warn.call_count >= 1
         joined = " ".join(str(c) for c in mock_warn.call_args_list)
         assert "confidentiality" in joined
