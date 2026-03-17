@@ -228,6 +228,9 @@ def _split_pipeline_str(command: str) -> List[str]:
 
 def _classify_segment(seg_str: str) -> str:
     """Return instruction type (EXEC/WRITE/READ) for a single command string."""
+    # Strip subshell-grouping parentheses that may remain after splitting on
+    # shell operators, e.g. "(cat file" → "cat file", "grep root)" → "grep root".
+    seg_str = seg_str.strip().strip("()")
     try:
         tokens = shlex.split(seg_str)
     except ValueError:
@@ -267,6 +270,9 @@ def _collect_exec_path_tokens(
 
     for seg_idx, seg_str in enumerate(seg_strings):
         seg_itype = itypes[seg_idx]
+        # Mirror the parenthesis-stripping done in _classify_segment so that
+        # tokens[0] is the bare executable name even for subshell segments.
+        seg_str = seg_str.strip().strip("()")
         try:
             tokens = shlex.split(seg_str)
         except ValueError:
