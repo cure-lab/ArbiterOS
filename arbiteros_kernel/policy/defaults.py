@@ -14,7 +14,7 @@ from .path_budget_policy import PathBudgetPolicy
 from .rate_limit_policy import RateLimitPolicy
 from .security_label_policy import SecurityLabelPolicy
 from .taint_policy import TaintPolicy
-
+from .exec_composite_policy import ExecCompositePolicy
 if TYPE_CHECKING:
     from .policy import Policy
 
@@ -44,6 +44,7 @@ POLICY_CLASS_MAP: dict[str, type["Policy"]] = {
     "RateLimitPolicy": RateLimitPolicy,
     "OutputBudgetPolicy": OutputBudgetPolicy,
     "SecurityLabelPolicy": SecurityLabelPolicy,
+    "ExecCompositePolicy": ExecCompositePolicy,
 }
 
 
@@ -100,6 +101,11 @@ def _default_registry_data() -> list[dict[str, object]]:
             "description": (
                 "Gates tool calls and RESPOND by security_type (confidence, authority_label, etc.)."
             ),
+        },
+        {
+            "name": "ExecCompositePolicy",
+            "enabled": True,
+            "description": "Handles multi-segment exec commands using Kernel coarse parse metadata.",
         },
     ]
 

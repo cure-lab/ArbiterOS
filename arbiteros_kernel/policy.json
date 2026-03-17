@@ -100,7 +100,12 @@
       }
     }
   },
-
+  "exec_composite_policy": {
+  "enabled": true,
+  "allow_multi_read_only": false,
+  "block_if_any_write": true,
+  "block_if_any_exec": true
+},
   "efsm": {
   "enabled": true,
   "initial": "IDLE",

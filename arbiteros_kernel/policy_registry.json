@@ -33,5 +33,10 @@
     "name": "SecurityLabelPolicy",
     "enabled": true,
     "description": "Gates tool calls and RESPOND by security_type (confidence, authority_label, etc.)."
+  },
+  {
+    "name": "ExecCompositePolicy",
+    "enabled": true,
+    "description": "Handles multi-segment exec commands using Kernel coarse parse metadata."
   }
 ]

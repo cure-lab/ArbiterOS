@@ -3,7 +3,7 @@ model_list:
     litellm_params:
       model: openai/gpt-4o-mini
       api_key: 
-      api_base:
+      api_base: 
       response_format:
         type: json_schema
         json_schema:

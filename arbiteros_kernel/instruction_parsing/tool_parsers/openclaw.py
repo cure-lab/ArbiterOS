@@ -193,6 +193,8 @@ def _parse_write(
         )
     return _make_write_result(args, taint_status)
 
+def _extract_shell_operators(command: str) -> List[str]:
+    return re.findall(r"\|\||&&|[|;&\n]", command)
 
 # ---------------------------------------------------------------------------
 # Process / shell execution
@@ -317,24 +319,9 @@ def _parse_exec(
     """
     exec: classify the shell command using linux_registry.
 
-    Steps:
-      1. Log an error for multi-line commands; newlines are treated as
-         implicit command separators (equivalent to ;) for classification.
-      2. Split the command string on shell operators (||, &&, |, ;, &, \\n) at
-         string level — before shlex — so that `cmd1; cmd2` and
-         `cmd1 | cmd2` are both decomposed correctly.
-      3. Classify each segment via exe_registry; take the highest-priority type
-         (EXEC > WRITE > READ) across all segments.
-      4. Collect path-like tokens from READ/WRITE segments, redirect-target
-         tokens from any segment, and — when the executable is itself a
-         path-like file (e.g. ~/downloads/malware.sh) — the executable token.
-         Resolve worst-case confidentiality and trustworthiness via
-         linux_registry.  For pure EXEC commands without any file paths the
-         defaults are LOW confidentiality / HIGH trustworthiness, mirroring
-         how system executables are classified in the file registry.
-      5. Register write targets (redirect output files and WRITE segment
-         arguments) in the user registry so future reads inherit taint labels.
-      6. Return a ToolParseResult reflecting all findings.
+    In addition to the folded instruction_type/security_type, expose the
+    coarse split result in security_type.custom["exec_parse"] so upper-layer
+    policy can inspect per-segment classification without re-parsing.
     """
     command = str(args.get("command", ""))
 
@@ -350,12 +337,21 @@ def _parse_exec(
                 confidence="UNKNOWN",
                 reversible=False,
                 authority="UNKNOWN",
+                custom={
+                    "exec_parse": {
+                        "command": command,
+                        "segments": [],
+                        "operators": [],
+                        "segment_instruction_types": [],
+                        "path_tokens": [],
+                        "write_targets": [],
+                        "parser_kind": "coarse_shell_split",
+                        "parse_error": "empty_command",
+                    }
+                },
             ),
         )
 
-    # Multi-line commands must not be passed as a single string; log an error.
-    # Newlines are still handled gracefully as command separators by _SHELL_OP_RE
-    # so classification continues rather than failing outright.
     if "\n" in command:
         logger.error(
             "_parse_exec: multi-line command string received; newlines are treated "
@@ -368,6 +364,8 @@ def _parse_exec(
     if not seg_strings:
         seg_strings = [command]
 
+    operators = _extract_shell_operators(command)
+
     # Instruction type = maximum priority across all segments
     itypes = [_classify_segment(s) for s in seg_strings]
     itype = max(itypes, key=lambda t: _ITYPE_PRIORITY.get(t, 0))
@@ -379,23 +377,12 @@ def _parse_exec(
         confidentiality = classify_confidentiality(path_tokens)
         trustworthiness = classify_trustworthiness(path_tokens)
     else:
-        # No explicit file paths.  Confidentiality and trustworthiness are only
-        # meaningful for READ/WRITE data access; for pure EXEC the defaults
-        # match how system executables appear in the file registry: LOW
-        # confidentiality (no sensitive data produced) and HIGH trustworthiness
-        # (package-manager-verified system commands).  WRITE without paths
-        # (e.g. touch newfile where newfile is non-path-like) uses MID trust
-        # because it modifies user-space state.
         confidentiality = "LOW"
         trustworthiness = "MID" if itype == "WRITE" else "HIGH"
 
-    # Register written files in the user registry so that future commands
-    # that read these outputs inherit the correct taint labels.  Only output
-    # targets are registered (not read inputs).
     for write_target in write_targets:
         register_file_taint(write_target, trustworthiness, confidentiality)
 
-    # READ operations do not persistently alter state → reversible
     reversible = itype == "READ"
 
     return ToolParseResult(
@@ -406,9 +393,19 @@ def _parse_exec(
             confidence="UNKNOWN",
             reversible=reversible,
             authority="UNKNOWN",
+            custom={
+                "exec_parse": {
+                    "command": command,
+                    "segments": seg_strings,
+                    "operators": operators,
+                    "segment_instruction_types": itypes,
+                    "path_tokens": path_tokens,
+                    "write_targets": write_targets,
+                    "parser_kind": "coarse_shell_split",
+                }
+            },
         ),
     )
-
 
 def _parse_process(
     args: Dict[str, Any], taint_status: Optional[TaintStatus] = None
