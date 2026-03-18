@@ -33,11 +33,6 @@ HIGH:
   - /run/secrets/*
   - /run/credentials/**
 
-  # ── Root home ───────────────────────────────────────────────────────────────
-  - /root/*
-  - /root/.**
-  - /root/**
-
   # ── User private keys & credential stores ──────────────────────────────────
   - ~/.ssh/*
   - ~/.gnupg/*
