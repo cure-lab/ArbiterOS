@@ -18,3 +18,5 @@ _pkg_logger = logging.getLogger(__name__)
 if not _pkg_logger.handlers:
     _pkg_logger.addHandler(RichHandler(rich_tracebacks=True, show_path=True))
     _pkg_logger.propagate = False
+
+_pkg_logger.setLevel(logging.INFO)
