@@ -9,6 +9,7 @@ Supports two input paths:
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -23,6 +24,8 @@ from .types import (
     compute_taint_status_from_instructions,
     make_security_type,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class InstructionBuilder:
@@ -93,6 +96,9 @@ class InstructionBuilder:
             st["prop_confidentiality"] = taint.confidentiality
             st["prop_trustworthiness"] = taint.trustworthiness
 
+        logger.info(
+            f"Committed instruction {instr['id']} (type={instr.get('instruction_type')}, category={instr.get('instruction_category')}, security={st})"
+        )
         return instr
 
     def get_taint_status(self) -> TaintStatus:
@@ -124,8 +130,8 @@ class InstructionBuilder:
 
         if security_type is None:
             security_type = make_security_type(
-                confidentiality="UNKNOWN",
-                trustworthiness="UNKNOWN",
+                confidentiality="LOW",
+                trustworthiness="HIGH",
                 confidence="UNKNOWN",
                 reversible=True,
                 authority="UNKNOWN",
