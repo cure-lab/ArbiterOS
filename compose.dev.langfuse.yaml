@@ -1,0 +1,15 @@
+services:
+  langfuse-web:
+    build:
+      context: ./langfuse
+      dockerfile: ./web/Dockerfile
+      args:
+        NEXT_PUBLIC_LANGFUSE_CLOUD_REGION: ${NEXT_PUBLIC_LANGFUSE_CLOUD_REGION:-}
+
+  langfuse-worker:
+    build:
+      context: ./langfuse
+      dockerfile: ./worker/Dockerfile
+      args:
+        NEXT_PUBLIC_LANGFUSE_CLOUD_REGION: ${NEXT_PUBLIC_LANGFUSE_CLOUD_REGION:-}
+
