@@ -1,4 +1,3 @@
-# arbiteros_kernel/policy/efsm_gate_policy.py
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -37,6 +36,20 @@ def _split_history_and_latest(
         return instructions[:-n], latest_instructions
 
     return instructions, latest_instructions
+
+
+def _friendly_approval_message(tool_name: str, msg: str) -> str:
+    text = (msg or "").strip()
+    if not text:
+        return f"工具 `{tool_name}` 需要用户确认后才能继续执行。"
+    return f"工具 `{tool_name}` 需要用户确认后才能继续执行。{text}"
+
+
+def _friendly_efsm_block_message(tool_name: str, reason: str | None) -> str:
+    text = (reason or "").strip()
+    if not text:
+        return f"已拦截工具 `{tool_name}`：当前流程状态不允许该操作。"
+    return f"已拦截工具 `{tool_name}`：当前流程状态不允许该操作。详情：{text}"
 
 
 class EfsmGatePolicy(Policy):
@@ -86,7 +99,7 @@ class EfsmGatePolicy(Policy):
             args_dict = raw_args if isinstance(raw_args, dict) else {}
             args_dict = canonicalize_args(args_dict)
 
-          # event type: ALWAYS derive from tool name (read/write/exec),
+            # event type: ALWAYS derive from tool name (read/write/exec),
             # because upstream traces often label tool instructions as "EXEC".
             it = RUNTIME.tool_to_instruction_type(tool_name)
 
@@ -118,7 +131,8 @@ class EfsmGatePolicy(Policy):
                     kept.append(RUNTIME.write_back_tool_args(tc, args_dict, was_json_str))
                     continue
                 msg = RUNTIME.approval_hint(op_id=op_id, scope=scope, base=f"efsm: action requires approval (event={it}, scope={scope})")
-                errors.append(f"POLICY_BLOCK tool={tool_name} reason={msg} op_id={op_id}")
+                friendly_msg = _friendly_approval_message(tool_name, msg)
+                errors.append(friendly_msg)
                 RUNTIME.audit(
                     phase="policy.efsm_gate",
                     trace_id=trace_id,
@@ -131,7 +145,8 @@ class EfsmGatePolicy(Policy):
                 continue
 
             if not step.allow:
-                errors.append(f"POLICY_BLOCK tool={tool_name} reason={step.reason} op_id={op_id}")
+                friendly_msg = _friendly_efsm_block_message(tool_name, step.reason)
+                errors.append(friendly_msg)
                 RUNTIME.audit(
                     phase="policy.efsm_gate",
                     trace_id=trace_id,

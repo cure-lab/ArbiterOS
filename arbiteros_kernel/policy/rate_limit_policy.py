@@ -1,4 +1,3 @@
-# arbiteros_kernel/policy/rate_limit_policy.py
 from __future__ import annotations
 
 from typing import Any, Dict, List
@@ -7,6 +6,13 @@ from arbiteros_kernel.policy_check import PolicyCheckResult
 from arbiteros_kernel.policy_runtime import RUNTIME, canonicalize_args
 
 from .policy import Policy
+
+
+def _friendly_rate_limit_reason(tool_name: str, reason: str | None) -> str:
+    text = (reason or "").strip()
+    if not text:
+        return f"已拦截工具 `{tool_name}`：同一工具被连续调用次数过多，请稍后再试或改用其他操作。"
+    return f"已拦截工具 `{tool_name}`：同一工具被连续调用次数过多。详情：{text}"
 
 
 class RateLimitPolicy(Policy):
@@ -53,7 +59,7 @@ class RateLimitPolicy(Policy):
                     "content": {"tool_name": tool_name, "arguments": args_dict},
                 })
             else:
-                errors.append(f"POLICY_BLOCK tool={tool_name} reason={reason}")
+                errors.append(_friendly_rate_limit_reason(tool_name, reason))
                 RUNTIME.audit(
                     phase="policy.rate_limit",
                     trace_id=trace_id,

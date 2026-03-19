@@ -1,4 +1,3 @@
-# arbiteros_kernel/policy/allow_deny_policy.py
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
@@ -22,6 +21,20 @@ def _latest_tool_instr_index(latest_instructions: List[Dict[str, Any]]) -> Dict[
         if isinstance(tcid, str) and tcid:
             out[tcid] = ins
     return out
+
+
+def _friendly_allow_deny_reason(tool_name: str, reason: str | None) -> str:
+    text = (reason or "").strip()
+    if not text:
+        return f"已拦截工具 `{tool_name}`：当前策略不允许该操作。"
+    return f"已拦截工具 `{tool_name}`：当前策略不允许该操作。详情：{text}"
+
+
+def _friendly_respond_allow_deny_reason(reason: str | None) -> str:
+    text = (reason or "").strip()
+    if not text:
+        return "当前策略不允许直接输出这条回复，已停止返回内容。"
+    return f"当前策略不允许直接输出这条回复，已停止返回内容。详情：{text}"
 
 
 class AllowDenyPolicy(Policy):
@@ -66,7 +79,7 @@ class AllowDenyPolicy(Policy):
             if ok:
                 kept.append(RUNTIME.write_back_tool_args(tc, args_dict, was_json_str))
             else:
-                errors.append(f"POLICY_BLOCK tool={tool_name} reason={reason}")
+                errors.append(_friendly_allow_deny_reason(tool_name, reason))
 
                 RUNTIME.audit(
                     phase="policy.allow_deny",
@@ -91,7 +104,7 @@ class AllowDenyPolicy(Policy):
         if isinstance(content, str) and content.strip():
             ok, reason = RUNTIME.check_allow_deny(tool="@instruction", instruction_type="RESPOND", category="EXECUTION.Human")
             if not ok:
-                msg = f"POLICY_BLOCK instruction=RESPOND reason={reason}"
+                msg = _friendly_respond_allow_deny_reason(reason)
                 response["content"] = msg
                 return PolicyCheckResult(modified=True, response=response, error_type=msg)
 

@@ -1,4 +1,3 @@
-# arbiteros_kernel/policy/output_budget_policy.py
 from __future__ import annotations
 
 from typing import Any, Dict, List
@@ -39,13 +38,14 @@ class OutputBudgetPolicy(Policy):
         trimmed = content[:max_chars]
         response = dict(current_response)
         response["content"] = trimmed
-        msg = f"POLICY_TRANSFORM output truncated to {max_chars} chars"
+        audit_msg = f"POLICY_TRANSFORM output truncated to {max_chars} chars"
+        user_msg = f"回复内容过长，已按当前策略截断为前 {max_chars} 个字符。"
         RUNTIME.audit(
             phase="policy.output_budget",
             trace_id=trace_id,
             tool="@instruction",
             decision="TRANSFORM",
-            reason=msg,
+            reason=audit_msg,
             args={"orig_len": len(content), "max_chars": max_chars},
         )
-        return PolicyCheckResult(modified=True, response=response, error_type=msg)
+        return PolicyCheckResult(modified=True, response=response, error_type=user_msg)

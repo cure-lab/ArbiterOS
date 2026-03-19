@@ -1,4 +1,3 @@
-# arbiteros_kernel/policy/security_label_policy.py
 from __future__ import annotations
 
 from typing import Any, Dict, List
@@ -7,6 +6,13 @@ from arbiteros_kernel.policy_check import PolicyCheckResult
 from arbiteros_kernel.policy_runtime import RUNTIME
 
 from .policy import Policy
+
+
+def _friendly_security_reason(reason: str | None) -> str:
+    text = (reason or "").strip()
+    if not text:
+        return "当前操作未通过安全标签检查。"
+    return f"当前操作未通过安全标签检查。详情：{text}"
 
 
 class SecurityLabelPolicy(Policy):
@@ -55,7 +61,7 @@ class SecurityLabelPolicy(Policy):
             if ok:
                 kept.append(tc)
             else:
-                errors.append(f"POLICY_BLOCK tool={tool_name} reason={reason}")
+                errors.append(f"已拦截工具 `{tool_name}`：{_friendly_security_reason(reason)}")
                 RUNTIME.audit(
                     phase="policy.security_label",
                     trace_id=trace_id,
@@ -85,7 +91,7 @@ class SecurityLabelPolicy(Policy):
                         break
             ok, reason = RUNTIME.check_security(respond_st)
             if not ok:
-                msg = f"POLICY_BLOCK instruction=RESPOND reason={reason}"
+                msg = f"当前回复未通过安全标签检查，已停止输出。{_friendly_security_reason(reason)}"
                 response["content"] = msg
                 return PolicyCheckResult(modified=True, response=response, error_type=msg)
 

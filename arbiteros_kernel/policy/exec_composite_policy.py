@@ -244,6 +244,12 @@ def _build_review_message(
     return "\n".join(lines)
 
 
+def _build_review_summary(command: str, review_reasons: List[str]) -> str:
+    if review_reasons:
+        return f"exec 命令需要确认后才能继续执行：检测到未知或复杂操作（{'; '.join(review_reasons)}）。"
+    return f"exec 命令需要确认后才能继续执行：检测到未知或复杂操作。"
+
+
 class ExecCompositePolicy(Policy):
     """
     Composite/unknown exec review policy.
@@ -400,10 +406,7 @@ class ExecCompositePolicy(Policy):
             )
             review_msgs.append(msg)
 
-            err = (
-                f"REQUIRE_APPROVAL tool=exec reason={';'.join(review_reasons)} "
-                f"(command={command})"
-            )
+            err = _build_review_summary(command, review_reasons)
             errors.append(err)
 
             RUNTIME.audit(

@@ -1,12 +1,43 @@
-# arbiteros_kernel/policy/schema_policy.py
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, List
 
 from arbiteros_kernel.policy_check import PolicyCheckResult
 from arbiteros_kernel.policy_runtime import RUNTIME, canonicalize_args
 
 from .policy import Policy
+
+
+def _friendly_schema_reason(tool_name: str, reason: str) -> str:
+    text = (reason or "").strip()
+
+    if not text:
+        return f"工具 `{tool_name}` 的参数格式不符合要求。请检查必填字段、字段类型和取值范围。"
+
+    m = re.search(r"'([^']+)' is a required property", text)
+    if m:
+        field = m.group(1)
+        return f"工具 `{tool_name}` 缺少必填参数 `{field}`。"
+
+    m = re.search(r"Additional properties are not allowed \('([^']+)' was unexpected\)", text)
+    if m:
+        field = m.group(1)
+        return f"工具 `{tool_name}` 包含不支持的参数 `{field}`。"
+
+    if "is not of type" in text:
+        return f"工具 `{tool_name}` 的某个参数类型不正确。请检查参数类型是否填写正确。"
+
+    if "is not one of" in text:
+        return f"工具 `{tool_name}` 的某个参数取值不合法。请使用允许的选项。"
+
+    if "too short" in text:
+        return f"工具 `{tool_name}` 的某个参数内容过短。"
+
+    if "too long" in text:
+        return f"工具 `{tool_name}` 的某个参数内容过长。"
+
+    return f"工具 `{tool_name}` 的参数未通过格式校验。详情：{text}"
 
 
 class SchemaValidationPolicy(Policy):
@@ -40,7 +71,7 @@ class SchemaValidationPolicy(Policy):
             if ok:
                 kept.append(RUNTIME.write_back_tool_args(tc, args_dict, was_json_str))
             else:
-                errors.append(f"POLICY_BLOCK tool={tool_name} reason={reason}")
+                errors.append(_friendly_schema_reason(tool_name, reason))
                 RUNTIME.audit(
                     phase="policy.schema",
                     trace_id=trace_id,

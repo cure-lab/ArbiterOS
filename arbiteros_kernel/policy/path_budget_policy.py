@@ -1,4 +1,3 @@
-# arbiteros_kernel/policy/path_budget_policy.py
 from __future__ import annotations
 
 from typing import Any, Dict, List
@@ -7,6 +6,22 @@ from arbiteros_kernel.policy_check import PolicyCheckResult
 from arbiteros_kernel.policy_runtime import RUNTIME, canonicalize_args
 
 from .policy import Policy
+
+
+def _friendly_path_budget_reason(tool_name: str, reason: str | None) -> str:
+    text = (reason or "").strip()
+    lower = text.lower()
+
+    if "path" in lower or "prefix" in lower or "workspace" in lower:
+        base = f"已拦截工具 `{tool_name}`：访问路径不在当前策略允许的范围内。"
+    elif "length" in lower or "too long" in lower or "max_str_len" in lower:
+        base = f"已拦截工具 `{tool_name}`：参数内容过长，超过了当前策略允许的长度。"
+    else:
+        base = f"已拦截工具 `{tool_name}`：参数或路径未通过检查。"
+
+    if text:
+        return f"{base} 详情：{text}"
+    return base
 
 
 class PathBudgetPolicy(Policy):
@@ -47,7 +62,7 @@ class PathBudgetPolicy(Policy):
             if ok:
                 kept.append(new_tc)
             else:
-                errors.append(f"POLICY_BLOCK tool={tool_name} reason={reason}")
+                errors.append(_friendly_path_budget_reason(tool_name, reason))
                 RUNTIME.audit(
                     phase="policy.path_budget",
                     trace_id=trace_id,

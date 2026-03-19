@@ -118,6 +118,18 @@ def _classify_tool(tool_name: str, args_dict: Dict[str, Any]) -> str:
     return "none"
 
 
+def _friendly_taint_message(tool_name: str, kind: str, trust: str, required_level: str) -> str:
+    if kind == "input":
+        return (
+            f"已拦截工具 `{tool_name}`：当前指令的可信级别为 `{trust}`，"
+            f"低于读取该信息所需的级别 `{required_level}`。"
+        )
+    return (
+        f"已拦截工具 `{tool_name}`：当前指令的可信级别为 `{trust}`，"
+        f"低于执行该输出操作所需的级别 `{required_level}`。"
+    )
+
+
 class TaintPolicy(Policy):
     """
     Taint analysis policy: gates tool calls based on trustworthiness vs confidentiality.
@@ -183,6 +195,7 @@ class TaintPolicy(Policy):
                     if not ok
                     else None
                 )
+                user_message = _friendly_taint_message(tool_name, kind, trust, conf)
             else:
                 ok = _level_at_least(trust, prop_conf)
                 reason = (
@@ -190,11 +203,12 @@ class TaintPolicy(Policy):
                     if not ok
                     else None
                 )
+                user_message = _friendly_taint_message(tool_name, kind, trust, prop_conf)
 
             if ok:
                 kept.append(tc)
             else:
-                errors.append(f"POLICY_BLOCK tool={tool_name} reason={reason}")
+                errors.append(user_message)
                 RUNTIME.audit(
                     phase="policy.taint",
                     trace_id=trace_id,

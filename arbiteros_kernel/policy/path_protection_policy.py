@@ -43,11 +43,11 @@ def _is_protected_path(path: str | None) -> tuple[bool, str]:
     if not path or not path.strip():
         return False, ""
     if "hard_code" in path:
-        return True, f"Tool call blocked: read path contains hard_code ({path})"
+        return True, f"已拦截 `read`：路径中包含受保护目录 `hard_code`，不能直接读取该内容（{path}）。"
     normalized = path.strip().replace("\\", "/").rstrip("/")
     filename = normalized.split("/")[-1] if normalized else ""
     if filename == ".env":
-        return True, f"Tool call blocked: read path targets .env file ({path})"
+        return True, f"已拦截 `read`：不能直接读取 `.env` 文件（{path}）。"
     return False, ""
 
 
