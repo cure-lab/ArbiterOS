@@ -189,6 +189,11 @@ LOW:
   # ── Plain-text source / documentation ───────────────────────────────────────
   - "*.txt"
   - "*.md"
+  - "*.docx"
+  - "*.xlsx"
+  - "*.pdf"
+  - "*.mp3"
+  - "*.mp4"
   - "*.rst"
   - "*.html"
   - "*.htm"
