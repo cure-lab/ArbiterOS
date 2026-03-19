@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# This script generates a stack.env file for the ArbiterOS project.
 set -euo pipefail
 
 OUT_FILE="${OUT_FILE:-stack.env}"

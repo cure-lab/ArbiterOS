@@ -1,3 +1,4 @@
+# This script generates a stack.env file for the ArbiterOS project.
 Param(
   [Parameter(Mandatory = $false)]
   [string]$OutFile = "stack.env",
