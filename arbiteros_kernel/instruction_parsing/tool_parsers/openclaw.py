@@ -13,7 +13,6 @@ To add a new tool:
 
 import logging
 import os
-import re
 import shlex
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -193,20 +192,12 @@ def _parse_write(
         )
     return _make_write_result(args, taint_status)
 
-def _extract_shell_operators(command: str) -> List[str]:
-    return re.findall(r"\|\||&&|[|;&\n]", command)
-
 # ---------------------------------------------------------------------------
 # Process / shell execution
 # ---------------------------------------------------------------------------
 
 
 _ITYPE_PRIORITY = {"EXEC": 3, "WRITE": 2, "READ": 1}
-
-# Regex that splits a shell command string on operators (longest match first).
-# Handles ||, &&, |, ;, &, and newlines robustly regardless of surrounding
-# whitespace.  Newlines are treated as implicit command separators (like ;).
-_SHELL_OP_RE = re.compile(r"\|\||&&|[|;&\n]")
 
 # Shell redirect operators whose immediately following token is always a file
 # path, even when the filename contains no directory separator.
@@ -216,16 +207,66 @@ _REDIRECT_OPS = {">", ">>", "<", "<<", "2>", "2>>", "&>", "&>>"}
 _WRITE_REDIRECT_OPS = {">", ">>", "&>", "&>>"}
 
 
+def _split_pipeline(command: str) -> Tuple[List[str], List[str]]:
+    """
+    Quote-aware split of *command* on shell operators (||, &&, |, ;, &, newline).
+
+    Scans the string while tracking quote state; operators inside single or
+    double quotes (e.g. the ``|`` delimiters in ``sed 's|old|new|'``) are not
+    treated as separators.  Each segment is sliced from the original string so
+    quotes are preserved verbatim.
+
+    Returns (segments, operators).
+    """
+    segments: List[str] = []
+    operators: List[str] = []
+    in_single = in_double = escaped = False
+    start = i = 0
+
+    while i < len(command):
+        c = command[i]
+        if escaped:
+            escaped = False
+        elif c == "\\" and not in_single:
+            escaped = True
+        elif c == "'" and not in_double:
+            in_single = not in_single
+        elif c == '"' and not in_single:
+            in_double = not in_double
+        elif not in_single and not in_double:
+            two = command[i : i + 2]
+            if two in ("||", "&&"):
+                seg = command[start:i].strip()
+                if seg:
+                    segments.append(seg)
+                operators.append(two)
+                i += 2
+                start = i
+                continue
+            if c in ("|", ";", "&", "\n"):
+                seg = command[start:i].strip()
+                if seg:
+                    segments.append(seg)
+                operators.append(c)
+                start = i + 1
+        i += 1
+
+    seg = command[start:].strip()
+    if seg:
+        segments.append(seg)
+
+    return segments, operators
+
+
 def _split_pipeline_str(command: str) -> List[str]:
-    """
-    Split *command* at shell operators (||, &&, |, ;, &, newline) at the
-    string level, before shlex tokenisation.  Returns a list of raw command
-    strings.
-    Quoted operators (e.g. inside '…' or "…") are ignored by the simple
-    regex; for the security classification use-case this conservative split
-    is sound (it may produce empty/short segments which are dropped).
-    """
-    return [seg for seg in _SHELL_OP_RE.split(command) if seg.strip()]
+    """Return pipeline segments; see ``_split_pipeline`` for details."""
+    segments, _ = _split_pipeline(command)
+    return segments
+
+
+def _extract_shell_operators(command: str) -> List[str]:
+    _, operators = _split_pipeline(command)
+    return operators
 
 
 def _classify_segment(seg_str: str) -> str:
@@ -359,12 +400,10 @@ def _parse_exec(
             command,
         )
 
-    # Split on shell operators at string level first
-    seg_strings = _split_pipeline_str(command)
+    # Split on shell operators at string level first (quote-aware)
+    seg_strings, operators = _split_pipeline(command)
     if not seg_strings:
         seg_strings = [command]
-
-    operators = _extract_shell_operators(command)
 
     # Instruction type = maximum priority across all segments
     itypes = [_classify_segment(s) for s in seg_strings]

@@ -284,6 +284,23 @@ class TestSplitPipelineStr:
         segs = _split_pipeline_str("ls /tmp\nrm old.txt\npython run.py")
         assert len(segs) == 3
 
+    def test_quoted_pipe_not_split(self):
+        # The | chars inside sed 's|...|' must not be treated as pipe operators.
+        cmd = r"find . -type d | sed 's|^\./||' | sort"
+        segs = _split_pipeline_str(cmd)
+        assert len(segs) == 3
+        assert "sed" in segs[1]
+        assert "sort" in segs[2]
+
+    def test_quoted_pipe_operators(self):
+        from arbiteros_kernel.instruction_parsing.tool_parsers.openclaw import (
+            _split_pipeline,
+        )
+        cmd = r"find . | sed 's|a|b|' | sort"
+        segs, ops = _split_pipeline(cmd)
+        assert segs == ["find .", "sed 's|a|b|'", "sort"]
+        assert ops == ["|", "|"]
+
 
 # ---------------------------------------------------------------------------
 # _classify_segment
