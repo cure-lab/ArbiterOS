@@ -12,4 +12,3 @@ services:
       dockerfile: ./worker/Dockerfile
       args:
         NEXT_PUBLIC_LANGFUSE_CLOUD_REGION: ${NEXT_PUBLIC_LANGFUSE_CLOUD_REGION:-}
-
