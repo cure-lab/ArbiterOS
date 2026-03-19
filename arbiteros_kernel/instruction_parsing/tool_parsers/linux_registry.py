@@ -115,6 +115,13 @@ def _user_path(filename: str) -> str:
     return os.path.join(_USER_REGISTRY_DIR, filename)
 
 
+def _ensure_user_registry(path: str, keys: List[str]) -> None:
+    """Create *path* with empty-list values for each key if it does not exist."""
+    if os.path.exists(path):
+        return
+    _save_yaml_registry(path, {k: [] for k in keys})
+
+
 # ---------------------------------------------------------------------------
 # atexit flush — writes only to user layer
 # ---------------------------------------------------------------------------
@@ -174,6 +181,7 @@ def _get_trust_source() -> Dict[str, List[str]]:
 def _get_exe_user() -> Dict[str, List[str]]:
     global _EXE_USER
     if _EXE_USER is None:
+        _ensure_user_registry(_user_path("exe_registry.yaml"), ["EXEC", "WRITE", "READ"])
         _EXE_USER = _load_yaml_registry(_user_path("exe_registry.yaml"))
     return _EXE_USER
 
@@ -181,6 +189,9 @@ def _get_exe_user() -> Dict[str, List[str]]:
 def _get_conf_user() -> Dict[str, List[str]]:
     global _FILE_CONF_USER
     if _FILE_CONF_USER is None:
+        _ensure_user_registry(
+            _user_path("file_confidentiality.yaml"), ["HIGH", "MID", "LOW"]
+        )
         _FILE_CONF_USER = _load_yaml_registry(_user_path("file_confidentiality.yaml"))
     return _FILE_CONF_USER
 
@@ -188,6 +199,9 @@ def _get_conf_user() -> Dict[str, List[str]]:
 def _get_trust_user() -> Dict[str, List[str]]:
     global _FILE_TRUST_USER
     if _FILE_TRUST_USER is None:
+        _ensure_user_registry(
+            _user_path("file_trustworthiness.yaml"), ["HIGH", "MID", "LOW"]
+        )
         _FILE_TRUST_USER = _load_yaml_registry(_user_path("file_trustworthiness.yaml"))
     return _FILE_TRUST_USER
 
