@@ -16,18 +16,6 @@ except ImportError:
     InstructionBuilder = None  # type: ignore[misc, assignment]
 
 try:
-    from arbiteros_kernel.instruction_parsing.tool_parsers import parse_tool_instruction
-except ImportError:
-    parse_tool_instruction = None  # type: ignore[misc, assignment]
-
-try:
-    from arbiteros_kernel.instruction_parsing.types import (
-        compute_taint_status_from_instructions,
-    )
-except ImportError:
-    compute_taint_status_from_instructions = None  # type: ignore[misc, assignment]
-
-try:
     from arbiteros_kernel.instruction_parsing.instruction_security_registry import (
         get_instruction_security,
     )
@@ -3461,7 +3449,9 @@ def _resolve_category_cache_trace_id(data: dict) -> Optional[str]:
 
 
 def _get_instruction_builder_for_trace(trace_id: str) -> Optional[Any]:
-    """Get or create InstructionBuilder for a trace_id. Returns None if instruction_parsing unavailable."""
+    """Get or create InstructionBuilder for a trace_id. Returns None if instruction_parsing unavailable.
+    On cache miss, tries to load instructions from log/{trace_id}.json so watermarks can read prop_*.
+    """
     if (
         InstructionBuilder is None
         or not isinstance(trace_id, str)
@@ -3472,6 +3462,21 @@ def _get_instruction_builder_for_trace(trace_id: str) -> Optional[Any]:
         builder = _instruction_builders_by_trace.get(trace_id)
         if builder is None:
             builder = InstructionBuilder(trace_id=trace_id)
+            # 从磁盘加载已持久化的 instructions，供 pre_call 水印读取 prop_*（避免 cache miss 时 builder 为空）
+            trace_file = _INSTRUCTION_LOG_DIR / f"{trace_id.strip()}.json"
+            if trace_file.exists():
+                try:
+                    raw = json.loads(trace_file.read_text(encoding="utf-8"))
+                    instrs = raw.get("instructions")
+                    if isinstance(instrs, list) and instrs:
+                        builder.instructions = instrs
+                        if instrs:
+                            builder._last_instruction_id = instrs[-1].get("id")
+                            builder._root_source_message_id = instrs[0].get(
+                                "source_message_id"
+                            ) or instrs[0].get("id")
+                except Exception:
+                    pass  # Best-effort; empty builder is acceptable
             _instruction_builders_by_trace[trace_id] = builder
             # Evict oldest if over limit (simple FIFO by trace_id order)
             if len(_instruction_builders_by_trace) > _MAX_INSTRUCTION_BUILDERS:
@@ -4210,40 +4215,18 @@ def _inject_taint_watermarks_into_messages(
 ) -> dict:
     """
     对 role=tool 的 content 在开头注入 taint 水印：[ARBITEROS_TAINT trustworthiness=X confidentiality=Y]
-    水印为累积 taint：instruction history 中该 tool call 之前所有 instruction 的 trustworthiness(min)、confidentiality(max)。
-    同一 tool_call_id 在 instructions 中可能两条（先不带 result，后带 result），取第一次出现的 index 作为边界。
+    从 instruction history 按 tool_call_id 匹配，读取 prop_trustworthiness/prop_confidentiality 写进去即可，与 taint 配置无关。
+    同一 tool_call_id 在 instructions 中可能两条（先不带 result，后带 result），取第一次出现的 index。
     """
-    if parse_tool_instruction is None:
-        return data
-    # 环境变量可强制开启，便于调试
-    env_force = os.getenv("ARBITEROS_TAINT_WATERMARK_ENABLED", "").strip().lower()
-    if env_force in ("1", "true", "yes"):
-        pass  # 强制开启，跳过 config 检查
-    else:
-        runtime = get_runtime()
-        cfg = getattr(runtime, "cfg", {}) if runtime else {}
-        taint_cfg = cfg.get("taint") if isinstance(cfg, dict) else {}
-        if not isinstance(taint_cfg, dict):
-            return data
-        # watermark.enabled 默认跟随 taint.enabled，便于未显式配置时也能生效
-        wm_cfg = taint_cfg.get("watermark") or {}
-        if not (wm_cfg.get("enabled", taint_cfg.get("enabled", False))):
-            return data
-
     messages = data.get("messages")
     if not isinstance(messages, list):
         return data
 
-    tool_call_id_to_taint: dict[str, tuple[str, str]] = {}
     tool_call_id_to_index: dict[str, int] = {}
     instructions: list[dict[str, Any]] = []
 
     # 从 InstructionBuilder 建立 tool_call_id -> 第一次出现的 index（不带 result 的那条）
-    if (
-        trace_id
-        and InstructionBuilder is not None
-        and compute_taint_status_from_instructions is not None
-    ):
+    if trace_id and InstructionBuilder is not None:
         builder = _get_instruction_builder_for_trace(trace_id)
         if builder is not None:
             instructions = list(getattr(builder, "instructions", []) or [])
@@ -4262,60 +4245,18 @@ def _inject_taint_watermarks_into_messages(
     for i, msg in enumerate(new_messages):
         if not isinstance(msg, dict):
             continue
-        if msg.get("role") == "assistant":
-            tool_calls = msg.get("tool_calls")
-            if isinstance(tool_calls, list):
-                tool_call_id_to_taint = {}
-                for tc in tool_calls:
-                    if not isinstance(tc, dict):
-                        continue
-                    tc_id = tc.get("id") or tc.get("tool_call_id")
-                    if not isinstance(tc_id, str) or not tc_id.strip():
-                        continue
-                    fn = tc.get("function")
-                    tool_name = (
-                        fn.get("name")
-                        if isinstance(fn, dict) and isinstance(fn.get("name"), str)
-                        else "unknown_tool"
-                    )
-                    raw_args = fn.get("arguments") if isinstance(fn, dict) else None
-                    args = (
-                        _safe_json_loads(raw_args)
-                        if isinstance(raw_args, str)
-                        else raw_args
-                    )
-                    if not isinstance(args, dict):
-                        args = {}
-                    try:
-                        result = parse_tool_instruction(tool_name, args)
-                        st = result.security_type if hasattr(result, "security_type") else {}
-                        if isinstance(st, dict):
-                            tw = st.get("trustworthiness", "UNKNOWN")
-                            cf = st.get("confidentiality", "UNKNOWN")
-                            tool_call_id_to_taint[tc_id.strip()] = (
-                                str(tw) if tw else "UNKNOWN",
-                                str(cf) if cf else "UNKNOWN",
-                            )
-                    except Exception:
-                        tool_call_id_to_taint[tc_id.strip()] = ("UNKNOWN", "UNKNOWN")
-        elif msg.get("role") == "tool":
+        if msg.get("role") == "tool":
             tc_id = msg.get("tool_call_id")
             if isinstance(tc_id, str) and tc_id.strip():
                 tc_id = tc_id.strip()
                 trust, conf = "MID", "MID"
-                # 优先用累积 taint（该 tool call 之前 + 该 tool call 本身，因 result 来自此 call）
+                # 从 instruction 的 prop_* 读取累积 taint，不重新 parse，避免 register_file_taint 副作用
                 idx = tool_call_id_to_index.get(tc_id)
-                if idx is not None and instructions:
-                    instructions_up_to = instructions[0 : idx + 1]
-                    taint_status = compute_taint_status_from_instructions(
-                        instructions_up_to
-                    )
-                    trust = taint_status.trustworthiness
-                    conf = taint_status.confidentiality
-                else:
-                    taint = tool_call_id_to_taint.get(tc_id)
-                    if taint:
-                        trust, conf = taint
+                if idx is not None and idx < len(instructions):
+                    st = instructions[idx].get("security_type")
+                    if isinstance(st, dict):
+                        trust = st.get("prop_trustworthiness") or "MID"
+                        conf = st.get("prop_confidentiality") or "MID"
 
                 watermark = (
                     f"[ARBITEROS_TAINT trustworthiness={trust} confidentiality={conf}]\n"

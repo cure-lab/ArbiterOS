@@ -96,9 +96,6 @@ class InstructionBuilder:
             st["prop_confidentiality"] = taint.confidentiality
             st["prop_trustworthiness"] = taint.trustworthiness
 
-        logger.info(
-            f"Committed instruction {instr['id']} (type={instr.get('instruction_type')}, category={instr.get('instruction_category')}, security={st})"
-        )
         return instr
 
     def get_taint_status(self) -> TaintStatus:

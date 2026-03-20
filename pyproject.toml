@@ -5,6 +5,7 @@ description = "LLM Gateway based ArbiterOS"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "bashlex>=0.18",
     "langfuse>=3.14.1",
     "litellm[proxy]>=1.81.5",
     "mlflow[genai]>=3.9.0",

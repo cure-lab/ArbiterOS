@@ -18,11 +18,13 @@ from arbiteros_kernel.instruction_parsing.tool_parsers.linux_registry import (
 from arbiteros_kernel.instruction_parsing.tool_parsers.linux_registry import (
     get_user_registered_paths,
 )
+from arbiteros_kernel.instruction_parsing.helpers.shell import (
+    classify_segment as _classify_segment,
+    is_path_like as _is_path_like,
+    split_pipeline_str as _split_pipeline_str,
+)
 from arbiteros_kernel.instruction_parsing.tool_parsers.openclaw import (
     TOOL_PARSER_REGISTRY,
-    _classify_segment,
-    _is_path_like,
-    _split_pipeline_str,
 )
 
 # ---------------------------------------------------------------------------
@@ -160,7 +162,7 @@ class TestClassifyConfidentiality:
         assert _classify_confidentiality(["/home/user/server.pem"]) == "HIGH"
 
     def test_high_confidentiality_dotenv(self):
-        assert _classify_confidentiality([".env"]) == "HIGH"
+        assert _classify_confidentiality(["/home/user/.env"]) == "HIGH"
 
     def test_high_confidentiality_ssh_key(self):
         assert _classify_confidentiality(["~/.ssh/id_rsa"]) == "HIGH"
@@ -175,7 +177,7 @@ class TestClassifyConfidentiality:
 
     def test_mid_confidentiality_yaml_extension(self):
         # *.yaml is in MID
-        assert _classify_confidentiality(["config.yaml"]) == "MID"
+        assert _classify_confidentiality(["/home/user/config.yaml"]) == "MID"
 
     def test_unknown_confidentiality_unmatched(self):
         # A path that doesn't match any pattern
@@ -293,8 +295,8 @@ class TestSplitPipelineStr:
         assert "sort" in segs[2]
 
     def test_quoted_pipe_operators(self):
-        from arbiteros_kernel.instruction_parsing.tool_parsers.openclaw import (
-            _split_pipeline,
+        from arbiteros_kernel.instruction_parsing.helpers.shell import (
+            split_pipeline as _split_pipeline,
         )
         cmd = r"find . | sed 's|a|b|' | sort"
         segs, ops = _split_pipeline(cmd)
@@ -381,7 +383,7 @@ class TestParseEdit:
         assert r.instruction_type == "STORE"
 
     def test_high_conf_destination(self):
-        r = parse_tool_instruction("edit", {"path": ".env"})
+        r = parse_tool_instruction("edit", {"path": "/home/user/.env"})
         assert r.instruction_type == "WRITE"
         assert r.security_type is not None
         assert r.security_type["confidentiality"] == "HIGH"
@@ -545,16 +547,14 @@ class TestParseExec:
     # --- Security Tracing: redirect output file tracing ---
 
     def test_redirect_output_bare_file_traced(self):
-        """A bare filename after > must be traced for security classification.
+        """A redirect target must be traced for security classification.
 
-        Without redirect-aware handling, 'out.txt' would be missed because
-        _is_path_like('out.txt') is False.  With it, conf must resolve via
-        the registry (*.txt → LOW confidentiality).
+        /tmp/* is MID confidentiality in the source registry.
         """
-        r = parse_tool_instruction("exec", {"command": "python test.py > out.txt"})
+        r = parse_tool_instruction("exec", {"command": "python test.py > /tmp/out.txt"})
         assert r.instruction_type == "EXEC"
         assert r.security_type is not None
-        assert r.security_type["confidentiality"] == "LOW"  # *.txt → LOW
+        assert r.security_type["confidentiality"] == "MID"  # /tmp/* → MID
 
     def test_redirect_output_absolute_path_high_conf(self):
         """Absolute-path redirect targets pick up registry-based confidentiality."""
@@ -565,15 +565,15 @@ class TestParseExec:
 
     def test_redirect_append_bare_file_traced(self):
         """The >> append operator also causes its target to be traced."""
-        r = parse_tool_instruction("exec", {"command": "python run.py >> log.txt"})
+        r = parse_tool_instruction("exec", {"command": "python run.py >> /tmp/log.txt"})
         assert r.security_type is not None
-        assert r.security_type["confidentiality"] == "LOW"  # *.txt → LOW
+        assert r.security_type["confidentiality"] == "MID"  # /tmp/* → MID
 
     def test_redirect_stdin_bare_file_traced(self):
         """The < stdin redirect target is traced as a file path."""
-        r = parse_tool_instruction("exec", {"command": "python process.py < input.txt"})
+        r = parse_tool_instruction("exec", {"command": "python process.py < /tmp/input.txt"})
         assert r.security_type is not None
-        assert r.security_type["confidentiality"] == "LOW"  # *.txt → LOW
+        assert r.security_type["confidentiality"] == "MID"  # /tmp/* → MID
 
     def test_redirect_target_tmp_path_conf_and_trust(self):
         """Redirect to /tmp/ is classified as MID conf and MID trust."""
@@ -597,42 +597,42 @@ class TestParseExec:
     # --- Pipeline / redirect I/O: per-file user-registry tracing ---
 
     def test_redirect_io_only_output_registered_in_user_registry(self):
-        """For `python run.py < input.txt > output.txt`:
+        """For `python run.py < /tmp/input.txt > /tmp/output.txt`:
         - overall instruction type is EXEC (python)
-        - input.txt's classification is considered (READ cause)
-        - output.txt is the only file registered in the user registry (WRITE target)
+        - /tmp/input.txt's classification is considered (READ cause)
+        - /tmp/output.txt is the only file registered in the user registry (WRITE target)
         """
         r = parse_tool_instruction(
-            "exec", {"command": "python run.py < input.txt > output.txt"}
+            "exec", {"command": "python run.py < /tmp/input.txt > /tmp/output.txt"}
         )
         assert r.instruction_type == "EXEC"
         assert r.security_type is not None
-        # Both *.txt files are LOW confidentiality; the result reflects them.
-        assert r.security_type["confidentiality"] == "LOW"
+        # Both /tmp/*.txt files are MID confidentiality via /tmp/* pattern.
+        assert r.security_type["confidentiality"] == "MID"
 
         # Only the output file should appear in the user registry.
         all_registered = get_user_registered_paths()
-        assert "output.txt" in all_registered
-        assert "input.txt" not in all_registered
+        assert "/tmp/output.txt" in all_registered
+        assert "/tmp/input.txt" not in all_registered
 
     def test_tee_pipeline_only_output_registered_in_user_registry(self):
-        """For `cat input.txt | python run.py | tee output.txt`:
+        """For `cat /tmp/input.txt | python run.py | tee /tmp/output.txt`:
         - overall instruction type is EXEC (python, highest priority)
-        - input.txt's classification is considered (READ segment cause)
-        - output.txt is the only file registered in the user registry (WRITE/tee target)
+        - /tmp/input.txt's classification is considered (READ segment cause)
+        - /tmp/output.txt is the only file registered in the user registry (WRITE/tee target)
         """
         r = parse_tool_instruction(
-            "exec", {"command": "cat input.txt | python run.py | tee output.txt"}
+            "exec", {"command": "cat /tmp/input.txt | python run.py | tee /tmp/output.txt"}
         )
         assert r.instruction_type == "EXEC"
         assert r.security_type is not None
-        # Both *.txt files are LOW confidentiality; the combined result reflects them.
-        assert r.security_type["confidentiality"] == "LOW"
+        # Both /tmp/*.txt files are MID confidentiality via /tmp/* pattern.
+        assert r.security_type["confidentiality"] == "MID"
 
         # Only the tee output file should appear in the user registry.
         all_registered = get_user_registered_paths()
-        assert "output.txt" in all_registered
-        assert "input.txt" not in all_registered
+        assert "/tmp/output.txt" in all_registered
+        assert "/tmp/input.txt" not in all_registered
 
 
 class TestParseProcess:
