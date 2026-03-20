@@ -38,18 +38,45 @@ def _split_history_and_latest(
     return instructions, latest_instructions
 
 
-def _friendly_approval_message(tool_name: str, msg: str) -> str:
+def _friendly_approval_message(
+    tool_name: str,
+    instruction_type: str,
+    current_state: Any,
+    msg: str,
+) -> str:
     text = (msg or "").strip()
-    if not text:
-        return f"工具 `{tool_name}` 需要用户确认后才能继续执行。"
-    return f"工具 `{tool_name}` 需要用户确认后才能继续执行。{text}"
+    state_text = str(current_state) if current_state is not None else "UNKNOWN"
+    lines: List[str] = [
+        f"我暂时没有执行工具 `{tool_name}`。",
+        f"当前流程阶段：`{state_text}`。",
+        f"你请求的动作类型：`{instruction_type}`。",
+        "原因：按照当前流程规则，这一步在执行前需要先获得用户确认。",
+        "这通常表示该操作可能带来实际副作用，或者必须在确认后才能继续。"
+    ]
+    if text:
+        lines.append(f"补充说明：{text}")
+    lines.append("如果你确认要继续，请先完成确认步骤，然后再重新发起这一步操作。")
+    return "\n".join(lines)
 
 
-def _friendly_efsm_block_message(tool_name: str, reason: str | None) -> str:
+def _friendly_efsm_block_message(
+    tool_name: str,
+    instruction_type: str,
+    current_state: Any,
+    reason: str | None,
+) -> str:
     text = (reason or "").strip()
-    if not text:
-        return f"已拦截工具 `{tool_name}`：当前流程状态不允许该操作。"
-    return f"已拦截工具 `{tool_name}`：当前流程状态不允许该操作。详情：{text}"
+    state_text = str(current_state) if current_state is not None else "UNKNOWN"
+    lines: List[str] = [
+        f"我没有执行工具 `{tool_name}`。",
+        f"当前流程阶段：`{state_text}`。",
+        f"你请求的动作类型：`{instruction_type}`。",
+        "原因：当前流程在这个阶段不允许执行这类操作。"
+    ]
+    if text:
+        lines.append(f"补充说明：{text}")
+    lines.append("通常需要先完成前一步、进入允许该操作的阶段，或改用当前阶段允许的操作后再试。")
+    return "\n".join(lines)
 
 
 class EfsmGatePolicy(Policy):
@@ -121,6 +148,7 @@ class EfsmGatePolicy(Policy):
                 "op_id": op_id,
             }
 
+            current_state_before = state
             step = RUNTIME.efsm_step(current_state=state, vars_=vars_, plan=plan, event=it, payload=payload)
             # advance local state for next tool_call
             state = step.next_state
@@ -131,7 +159,7 @@ class EfsmGatePolicy(Policy):
                     kept.append(RUNTIME.write_back_tool_args(tc, args_dict, was_json_str))
                     continue
                 msg = RUNTIME.approval_hint(op_id=op_id, scope=scope, base=f"efsm: action requires approval (event={it}, scope={scope})")
-                friendly_msg = _friendly_approval_message(tool_name, msg)
+                friendly_msg = _friendly_approval_message(tool_name, it, current_state_before, msg)
                 errors.append(friendly_msg)
                 RUNTIME.audit(
                     phase="policy.efsm_gate",
@@ -145,7 +173,7 @@ class EfsmGatePolicy(Policy):
                 continue
 
             if not step.allow:
-                friendly_msg = _friendly_efsm_block_message(tool_name, step.reason)
+                friendly_msg = _friendly_efsm_block_message(tool_name, it, current_state_before, step.reason)
                 errors.append(friendly_msg)
                 RUNTIME.audit(
                     phase="policy.efsm_gate",
@@ -165,7 +193,7 @@ class EfsmGatePolicy(Policy):
             if not kept:
                 response["function_call"] = None
                 if not isinstance(response.get("content"), str) or not response.get("content"):
-                    response["content"] = "\n".join(errors[:3])
-            return PolicyCheckResult(modified=True, response=response, error_type="\n".join(errors))
+                    response["content"] = "\n\n".join(errors[:3])
+            return PolicyCheckResult(modified=True, response=response, error_type="\n\n".join(errors))
 
         return PolicyCheckResult(modified=False, response=current_response, error_type=None)

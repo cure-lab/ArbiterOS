@@ -43,11 +43,19 @@ def _is_protected_path(path: str | None) -> tuple[bool, str]:
     if not path or not path.strip():
         return False, ""
     if "hard_code" in path:
-        return True, f"已拦截 `read`：路径中包含受保护目录 `hard_code`，不能直接读取该内容（{path}）。"
+        return True, (
+            f"我没有执行这次 `read` 操作。\n"
+            f"原因：目标路径 `{path}` 位于受保护目录 `hard_code` 中，不能被直接读取。\n"
+            "如果你需要继续，请改为读取非敏感文件，或通过允许的方式获取该信息。"
+        )
     normalized = path.strip().replace("\\", "/").rstrip("/")
     filename = normalized.split("/")[-1] if normalized else ""
     if filename == ".env":
-        return True, f"已拦截 `read`：不能直接读取 `.env` 文件（{path}）。"
+        return True, (
+            f"我没有执行这次 `read` 操作。\n"
+            f"原因：目标路径 `{path}` 指向 `.env` 文件，这类文件通常包含密钥或环境变量，不能被直接读取。\n"
+            "如果你需要继续，请改为读取不含敏感信息的文件，或由更高权限流程处理。"
+        )
     return False, ""
 
 
@@ -124,5 +132,5 @@ class ToolPathProtectionPolicy(Policy):
         return PolicyCheckResult(
             modified=True,
             response=response,
-            error_type="\n".join(errors),
+            error_type="\n\n".join(errors),
         )

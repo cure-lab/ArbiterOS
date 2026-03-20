@@ -8,11 +8,29 @@ from arbiteros_kernel.policy_runtime import RUNTIME
 from .policy import Policy
 
 
-def _friendly_security_reason(reason: str | None) -> str:
+def _friendly_security_reason(tool_name: str, reason: str | None) -> str:
     text = (reason or "").strip()
-    if not text:
-        return "当前操作未通过安全标签检查。"
-    return f"当前操作未通过安全标签检查。详情：{text}"
+    lines: List[str] = [
+        f"我没有执行工具 `{tool_name}`。",
+        "原因：这一步未通过当前安全规则检查。",
+        "这通常表示该操作会接触更敏感的信息，或者当前请求的可信级别不足以执行这一步。"
+    ]
+    if text:
+        lines.append(f"补充说明：{text}")
+    lines.append("如果你希望继续，请改为更低敏感度的操作，或先完成更高权限/确认流程。")
+    return "\n".join(lines)
+
+
+def _friendly_respond_security_reason(reason: str | None) -> str:
+    text = (reason or "").strip()
+    lines: List[str] = [
+        "我没有直接输出这条回复。",
+        "原因：这段内容未通过当前安全规则检查。"
+    ]
+    if text:
+        lines.append(f"补充说明：{text}")
+    lines.append("如果你希望继续，请先降低输出内容的敏感度，或完成所需的确认/授权步骤。")
+    return "\n".join(lines)
 
 
 class SecurityLabelPolicy(Policy):
@@ -61,7 +79,7 @@ class SecurityLabelPolicy(Policy):
             if ok:
                 kept.append(tc)
             else:
-                errors.append(f"已拦截工具 `{tool_name}`：{_friendly_security_reason(reason)}")
+                errors.append(_friendly_security_reason(tool_name, reason))
                 RUNTIME.audit(
                     phase="policy.security_label",
                     trace_id=trace_id,
@@ -76,8 +94,8 @@ class SecurityLabelPolicy(Policy):
             if not kept:
                 response["function_call"] = None
                 if not isinstance(response.get("content"), str) or not response.get("content"):
-                    response["content"] = "\n".join(errors[:3])
-            return PolicyCheckResult(modified=True, response=response, error_type="\n".join(errors))
+                    response["content"] = "\n\n".join(errors[:3])
+            return PolicyCheckResult(modified=True, response=response, error_type="\n\n".join(errors))
 
         # RESPOND label check (best-effort: find RESPOND in latest_instructions; else skip)
         content = response.get("content")
@@ -91,7 +109,7 @@ class SecurityLabelPolicy(Policy):
                         break
             ok, reason = RUNTIME.check_security(respond_st)
             if not ok:
-                msg = f"当前回复未通过安全标签检查，已停止输出。{_friendly_security_reason(reason)}"
+                msg = _friendly_respond_security_reason(reason)
                 response["content"] = msg
                 return PolicyCheckResult(modified=True, response=response, error_type=msg)
 

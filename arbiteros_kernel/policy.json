@@ -30,7 +30,7 @@
   "output_budget": { "max_chars": 500 },
 
   "rate_limit": {
-    "max_consecutive_same_tool": 20,
+    "max_consecutive_same_tool": 10,
     "window_seconds": 10,
     "max_calls_per_window": 20
   },
