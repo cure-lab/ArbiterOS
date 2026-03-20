@@ -317,11 +317,11 @@ def register_file_taint(
     )
 
     # Worst-case: more restrictive of source and taint.
-    # UNKNOWN is treated as MID, so normalise after comparison.
+    # UNKNOWN normalisation: confidentiality → LOW, trustworthiness → MID.
     _raw_conf: SecurityLevel = max(
         confidentiality, source_conf, key=lambda v: LEVEL_ORDER.get(v, 1)
     )
-    effective_conf: SecurityLevel = "MID" if _raw_conf == "UNKNOWN" else _raw_conf
+    effective_conf: SecurityLevel = "LOW" if _raw_conf == "UNKNOWN" else _raw_conf
     _raw_trust: SecurityLevel = min(
         trustworthiness, source_trust, key=lambda v: LEVEL_ORDER.get(v, 1)
     )
