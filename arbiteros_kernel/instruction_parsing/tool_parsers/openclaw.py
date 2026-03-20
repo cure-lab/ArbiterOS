@@ -13,9 +13,14 @@ To add a new tool:
 
 import logging
 import os
-import shlex
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional
 
+from ..helpers.shell import (
+    _ITYPE_PRIORITY,
+    classify_segment,
+    collect_exec_path_tokens,
+    split_pipeline,
+)
 from ..types import (
     TaintStatus,
     ToolParser,
@@ -24,21 +29,11 @@ from ..types import (
 )
 from .linux_registry import (
     classify_confidentiality,
-    classify_exe,
     classify_trustworthiness,
     register_file_taint,
 )
 
 logger = logging.getLogger(__name__)
-
-
-def _is_path_like(token: str) -> bool:
-    """Heuristic: does this shell token look like a filesystem path or URL?"""
-    return (
-        token.startswith(("/", "~/", "./", "../", "~", "http://", "https://", "ftp://"))
-        or "\\" in token  # Windows path
-        or ("/" in token and not token.startswith("-"))
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -197,163 +192,6 @@ def _parse_write(
 # ---------------------------------------------------------------------------
 
 
-_ITYPE_PRIORITY = {"EXEC": 3, "WRITE": 2, "READ": 1}
-
-# Shell redirect operators whose immediately following token is always a file
-# path, even when the filename contains no directory separator.
-_REDIRECT_OPS = {">", ">>", "<", "<<", "2>", "2>>", "&>", "&>>"}
-
-# Subset of _REDIRECT_OPS that write to a file (as opposed to reading from one).
-_WRITE_REDIRECT_OPS = {">", ">>", "&>", "&>>"}
-
-
-def _split_pipeline(command: str) -> Tuple[List[str], List[str]]:
-    """
-    Quote-aware split of *command* on shell operators (||, &&, |, ;, &, newline).
-
-    Scans the string while tracking quote state; operators inside single or
-    double quotes (e.g. the ``|`` delimiters in ``sed 's|old|new|'``) are not
-    treated as separators.  Each segment is sliced from the original string so
-    quotes are preserved verbatim.
-
-    Returns (segments, operators).
-    """
-    segments: List[str] = []
-    operators: List[str] = []
-    in_single = in_double = escaped = False
-    start = i = 0
-
-    while i < len(command):
-        c = command[i]
-        if escaped:
-            escaped = False
-        elif c == "\\" and not in_single:
-            escaped = True
-        elif c == "'" and not in_double:
-            in_single = not in_single
-        elif c == '"' and not in_single:
-            in_double = not in_double
-        elif not in_single and not in_double:
-            two = command[i : i + 2]
-            if two in ("||", "&&"):
-                seg = command[start:i].strip()
-                if seg:
-                    segments.append(seg)
-                operators.append(two)
-                i += 2
-                start = i
-                continue
-            if c in ("|", ";", "&", "\n"):
-                seg = command[start:i].strip()
-                if seg:
-                    segments.append(seg)
-                operators.append(c)
-                start = i + 1
-        i += 1
-
-    seg = command[start:].strip()
-    if seg:
-        segments.append(seg)
-
-    return segments, operators
-
-
-def _split_pipeline_str(command: str) -> List[str]:
-    """Return pipeline segments; see ``_split_pipeline`` for details."""
-    segments, _ = _split_pipeline(command)
-    return segments
-
-
-def _extract_shell_operators(command: str) -> List[str]:
-    _, operators = _split_pipeline(command)
-    return operators
-
-
-def _classify_segment(seg_str: str) -> str:
-    """Return instruction type (EXEC/WRITE/READ) for a single command string."""
-    # Strip subshell-grouping parentheses that may remain after splitting on
-    # shell operators, e.g. "(cat file" → "cat file", "grep root)" → "grep root".
-    seg_str = seg_str.strip().strip("()")
-    try:
-        tokens = shlex.split(seg_str)
-    except ValueError:
-        logger.warning(
-            "shlex.split failed for segment %r; falling back to str.split", seg_str
-        )
-        tokens = seg_str.split()
-    if not tokens:
-        return "READ"
-    exe = os.path.basename(tokens[0])
-    subcommand: Optional[str] = None
-    if len(tokens) > 1 and not tokens[1].startswith("-"):
-        subcommand = tokens[1]
-    return classify_exe(exe, subcommand)
-
-
-def _collect_exec_path_tokens(
-    seg_strings: List[str], itypes: List[str]
-) -> Tuple[List[str], List[str]]:
-    """Collect file-path tokens and write targets from all pipeline segments.
-
-    For each segment:
-    • EXEC  — include ``tokens[0]`` only when it is itself a path-like file
-              (e.g. ``~/downloads/malware.sh``); arguments are not data files.
-    • READ/WRITE — include redirect targets and bare non-flag arguments so
-                   that e.g. ``cat input.txt`` factors in trustworthiness.
-    • Any segment — redirect output targets (``>``, ``>>``, …) are always
-                   collected as write targets.
-
-    Returns:
-        path_tokens:   all paths used for security classification (conf/trust).
-        write_targets: paths that receive written data; registered in the user
-                       registry so future reads inherit the correct taint.
-    """
-    path_tokens: List[str] = []
-    write_targets: List[str] = []
-
-    for seg_idx, seg_str in enumerate(seg_strings):
-        seg_itype = itypes[seg_idx]
-        # Mirror the parenthesis-stripping done in _classify_segment so that
-        # tokens[0] is the bare executable name even for subshell segments.
-        seg_str = seg_str.strip().strip("()")
-        try:
-            tokens = shlex.split(seg_str)
-        except ValueError:
-            logger.warning(
-                "shlex.split failed for segment %r; falling back to str.split", seg_str
-            )
-            tokens = seg_str.split()
-
-        # For EXEC segments, include the executable only when it is a path-like
-        # file (e.g. ~/downloads/malware.sh) — its location determines trust.
-        if tokens and seg_itype == "EXEC" and _is_path_like(tokens[0]):
-            path_tokens.append(tokens[0])
-
-        tokens_no_exe = tokens[1:]
-        skip_next = False
-        for i, t in enumerate(tokens_no_exe):
-            if skip_next:
-                # Already consumed as a redirect target; skip.
-                skip_next = False
-                continue
-            if _is_path_like(t):
-                path_tokens.append(t)
-            elif t in _REDIRECT_OPS and i + 1 < len(tokens_no_exe):
-                # The token immediately after a redirect operator is a file path.
-                target = tokens_no_exe[i + 1]
-                path_tokens.append(target)
-                if t in _WRITE_REDIRECT_OPS:
-                    write_targets.append(target)
-                skip_next = True
-            elif not t.startswith("-") and seg_itype in ("READ", "WRITE"):
-                # Bare filename argument from a READ/WRITE segment.
-                path_tokens.append(t)
-                if seg_itype == "WRITE":
-                    write_targets.append(t)
-
-    return path_tokens, write_targets
-
-
 def _parse_exec(
     args: Dict[str, Any], taint_status: Optional[TaintStatus] = None
 ) -> ToolParseResult:
@@ -401,16 +239,16 @@ def _parse_exec(
         )
 
     # Split on shell operators at string level first (quote-aware)
-    seg_strings, operators = _split_pipeline(command)
+    seg_strings, operators = split_pipeline(command)
     if not seg_strings:
         seg_strings = [command]
 
     # Instruction type = maximum priority across all segments
-    itypes = [_classify_segment(s) for s in seg_strings]
+    itypes = [classify_segment(s) for s in seg_strings]
     itype = max(itypes, key=lambda t: _ITYPE_PRIORITY.get(t, 0))
 
     # Collect file-path tokens and write targets from all pipeline segments.
-    path_tokens, write_targets = _collect_exec_path_tokens(seg_strings, itypes)
+    path_tokens, write_targets = collect_exec_path_tokens(seg_strings, itypes)
 
     if path_tokens:
         confidentiality = classify_confidentiality(path_tokens)

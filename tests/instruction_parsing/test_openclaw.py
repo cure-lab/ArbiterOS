@@ -18,11 +18,13 @@ from arbiteros_kernel.instruction_parsing.tool_parsers.linux_registry import (
 from arbiteros_kernel.instruction_parsing.tool_parsers.linux_registry import (
     get_user_registered_paths,
 )
+from arbiteros_kernel.instruction_parsing.helpers.shell import (
+    classify_segment as _classify_segment,
+    is_path_like as _is_path_like,
+    split_pipeline_str as _split_pipeline_str,
+)
 from arbiteros_kernel.instruction_parsing.tool_parsers.openclaw import (
     TOOL_PARSER_REGISTRY,
-    _classify_segment,
-    _is_path_like,
-    _split_pipeline_str,
 )
 
 # ---------------------------------------------------------------------------
@@ -293,8 +295,8 @@ class TestSplitPipelineStr:
         assert "sort" in segs[2]
 
     def test_quoted_pipe_operators(self):
-        from arbiteros_kernel.instruction_parsing.tool_parsers.openclaw import (
-            _split_pipeline,
+        from arbiteros_kernel.instruction_parsing.helpers.shell import (
+            split_pipeline as _split_pipeline,
         )
         cmd = r"find . | sed 's|a|b|' | sort"
         segs, ops = _split_pipeline(cmd)
