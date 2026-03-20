@@ -94,6 +94,10 @@ def _make_write_result(
         register_file_taint(raw, taint.trustworthiness, taint.confidentiality)
     confidentiality = classify_confidentiality(paths) if paths else "UNKNOWN"
     trustworthiness = classify_trustworthiness(paths) if paths else "UNKNOWN"
+    logger.debug(
+        "_make_write_result: path=%r → confidentiality=%s trustworthiness=%s",
+        raw, confidentiality, trustworthiness,
+    )
     return ToolParseResult(
         "WRITE",
         make_security_type(
@@ -130,6 +134,10 @@ def _parse_read(
     paths = [raw] if raw else []
     confidentiality = classify_confidentiality(paths) if paths else "UNKNOWN"
     trustworthiness = classify_trustworthiness(paths) if paths else "UNKNOWN"
+    logger.debug(
+        "_parse_read: path=%r → confidentiality=%s trustworthiness=%s",
+        raw, confidentiality, trustworthiness,
+    )
     return ToolParseResult(
         "READ",
         make_security_type(
@@ -253,9 +261,18 @@ def _parse_exec(
     if path_tokens:
         confidentiality = classify_confidentiality(path_tokens)
         trustworthiness = classify_trustworthiness(path_tokens)
+        logger.debug(
+            "_parse_exec: path_tokens=%r → confidentiality=%s trustworthiness=%s",
+            path_tokens, confidentiality, trustworthiness,
+        )
     else:
         confidentiality = "LOW"
         trustworthiness = "MID" if itype == "WRITE" else "HIGH"
+        logger.debug(
+            "_parse_exec: no path tokens → confidentiality=%s trustworthiness=%s"
+            " (itype=%s fallback)",
+            confidentiality, trustworthiness, itype,
+        )
 
     for write_target in write_targets:
         register_file_taint(write_target, trustworthiness, confidentiality)

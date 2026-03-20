@@ -353,11 +353,17 @@ def classify_confidentiality(paths: List[str]) -> SecurityLevel:
     """
     if not paths:
         return "UNKNOWN"
-    for reg in (_get_conf_user(), _get_conf_source()):
+    for layer, reg in (("user", _get_conf_user()), ("source", _get_conf_source())):
         for level in _CONF_LEVELS:
             for path in paths:
-                if any(_path_matches(path, pat) for pat in reg.get(level, [])):
-                    return level
+                for pat in reg.get(level, []):
+                    if _path_matches(path, pat):
+                        logger.debug(
+                            "classify_confidentiality: %r → %s"
+                            " (layer=%s, pattern=%r)",
+                            path, level, layer, pat,
+                        )
+                        return level
     logger.info(
         "classify_confidentiality: no rule matched %s; returning UNKNOWN", paths
     )
@@ -372,11 +378,17 @@ def classify_trustworthiness(paths: List[str]) -> SecurityLevel:
     """
     if not paths:
         return "UNKNOWN"
-    for reg in (_get_trust_user(), _get_trust_source()):
+    for layer, reg in (("user", _get_trust_user()), ("source", _get_trust_source())):
         for level in _TRUST_LEVELS:
             for path in paths:
-                if any(_path_matches(path, pat) for pat in reg.get(level, [])):
-                    return level
+                for pat in reg.get(level, []):
+                    if _path_matches(path, pat):
+                        logger.debug(
+                            "classify_trustworthiness: %r → %s"
+                            " (layer=%s, pattern=%r)",
+                            path, level, layer, pat,
+                        )
+                        return level
     logger.info(
         "classify_trustworthiness: no rule matched %s; returning UNKNOWN", paths
     )
