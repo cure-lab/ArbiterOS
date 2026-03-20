@@ -210,28 +210,42 @@ def _get_trust_user() -> Dict[str, List[str]]:
 # Classification helpers
 # ---------------------------------------------------------------------------
 
+_URL_PREFIXES = ("http://", "https://", "ftp://")
+
+
+def _is_classifiable(p: str) -> bool:
+    """Return True for paths worth consulting the registry: absolute filesystem
+    paths (including ``~/…`` after expanduser) and URLs.
+    Relative filesystem paths are rejected — they cannot be matched reliably
+    without knowing the working directory.
+    """
+    return os.path.isabs(os.path.expanduser(p)) or p.startswith(_URL_PREFIXES)
+
 
 def _path_matches(path: str, pattern: str) -> bool:
-    """Return True if *path* matches *pattern* (glob, PurePosixPath-aware)."""
-    # Full-string match first — handles URLs (http://*) and absolute globs
-    if fnmatch.fnmatch(path, pattern):
-        return True
-    # Expand leading ~ so patterns like ~/.ssh/* work
-    expanded = os.path.expanduser(path)
-    if fnmatch.fnmatch(expanded, pattern):
+    """Return True if *path* matches *pattern* (glob, PurePosixPath-aware).
+
+    Both *path* and *pattern* are normalised with expanduser before comparison
+    so that registry entries written as ``~/...`` match against already-expanded
+    absolute paths (and vice-versa).
+    """
+    expanded_path = os.path.expanduser(path)
+    expanded_pattern = os.path.expanduser(pattern)
+
+    if fnmatch.fnmatch(expanded_path, expanded_pattern):
         return True
     try:
-        if PurePosixPath(expanded).match(pattern):
+        if PurePosixPath(expanded_path).match(expanded_pattern):
             return True
     except Exception:
         logger.debug(
             "_path_matches: PurePosixPath.match failed for path=%r pattern=%r",
-            expanded,
-            pattern,
+            expanded_path,
+            expanded_pattern,
             exc_info=True,
         )
     # Basename match for extension patterns (e.g. *.pem)
-    return fnmatch.fnmatch(os.path.basename(path), pattern)
+    return fnmatch.fnmatch(os.path.basename(expanded_path), expanded_pattern)
 
 
 # ---------------------------------------------------------------------------
@@ -279,7 +293,8 @@ def register_file_taint(
     """
     global _FILE_CONF_DIRTY, _FILE_TRUST_DIRTY
 
-    if not path.startswith("/"):
+    path = os.path.expanduser(path)
+    if not os.path.isabs(path):
         logger.debug("register_file_taint: skipping non-absolute path %r", path)
         return
 
@@ -357,9 +372,15 @@ def classify_confidentiality(paths: List[str]) -> SecurityLevel:
     """
     if not paths:
         return "UNKNOWN"
+    abs_paths = [p for p in paths if _is_classifiable(p)]
+    if not abs_paths:
+        logger.debug(
+            "classify_confidentiality: no classifiable paths in %s; returning UNKNOWN", paths
+        )
+        return "UNKNOWN"
     for layer, reg in (("user", _get_conf_user()), ("source", _get_conf_source())):
         for level in _CONF_LEVELS:
-            for path in paths:
+            for path in abs_paths:
                 for pat in reg.get(level, []):
                     if _path_matches(path, pat):
                         logger.debug(
@@ -369,7 +390,7 @@ def classify_confidentiality(paths: List[str]) -> SecurityLevel:
                         )
                         return level
     logger.info(
-        "classify_confidentiality: no rule matched %s; returning UNKNOWN", paths
+        "classify_confidentiality: no rule matched %s; returning UNKNOWN", abs_paths
     )
     return "UNKNOWN"
 
@@ -382,9 +403,15 @@ def classify_trustworthiness(paths: List[str]) -> SecurityLevel:
     """
     if not paths:
         return "UNKNOWN"
+    abs_paths = [p for p in paths if _is_classifiable(p)]
+    if not abs_paths:
+        logger.debug(
+            "classify_trustworthiness: no classifiable paths in %s; returning UNKNOWN", paths
+        )
+        return "UNKNOWN"
     for layer, reg in (("user", _get_trust_user()), ("source", _get_trust_source())):
         for level in _TRUST_LEVELS:
-            for path in paths:
+            for path in abs_paths:
                 for pat in reg.get(level, []):
                     if _path_matches(path, pat):
                         logger.debug(
@@ -394,6 +421,6 @@ def classify_trustworthiness(paths: List[str]) -> SecurityLevel:
                         )
                         return level
     logger.info(
-        "classify_trustworthiness: no rule matched %s; returning UNKNOWN", paths
+        "classify_trustworthiness: no rule matched %s; returning UNKNOWN", abs_paths
     )
     return "UNKNOWN"

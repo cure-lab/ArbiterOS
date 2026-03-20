@@ -31,6 +31,12 @@ _ITYPE_PRIORITY = {"EXEC": 3, "WRITE": 2, "READ": 1}
 # Redirect types whose target is a file we write to.
 _WRITE_REDIRECT_TYPES = {">", ">>", "&>", "&>>"}
 
+# Shell operators that propagate the current shell's working directory to the
+# next command (sequential execution).  Pipe and || do not: each side of a
+# pipe runs in a subshell, and || only runs its right side when the left fails
+# (so a successful `cd` means the right side never executes).
+_CD_PROPAGATING_OPS = {"&&", ";", "\n"}
+
 
 # ---------------------------------------------------------------------------
 # Path heuristic
@@ -247,6 +253,36 @@ def classify_segment(seg_str: str) -> str:
     return classify_exe(exe, subcommand)
 
 
+def _parse_cd_dir(seg_str: str) -> Optional[str]:
+    """If *seg_str* is a ``cd <dir>`` command, return the expanded absolute
+    directory; return None for non-cd segments or relative (unresolvable) dirs.
+    """
+    try:
+        words = shlex.split(seg_str.strip())
+    except ValueError:
+        words = seg_str.strip().split()
+    if not words or words[0] != "cd" or len(words) < 2:
+        return None
+    expanded = os.path.expanduser(words[1])
+    return expanded if os.path.isabs(expanded) else None
+
+
+def _resolve_path(p: str, cd_dir: str) -> str:
+    """Resolve *p* relative to *cd_dir* when *p* is a relative filesystem path.
+
+    Absolute paths, URLs, and ``~/…`` expansions that are already absolute
+    after ``expanduser`` are returned unchanged.
+    """
+    if p.startswith(("/", "http://", "https://", "ftp://")):
+        return p
+    expanded = os.path.expanduser(p)
+    if os.path.isabs(expanded):
+        return expanded
+    resolved = os.path.normpath(os.path.join(cd_dir, expanded))
+    logger.debug("_resolve_path: %r → %r (cd=%r)", p, resolved, cd_dir)
+    return resolved
+
+
 def _collect_from_command(
     cmd_node: Any, seg_itype: str
 ) -> Tuple[List[str], List[str]]:
@@ -266,8 +302,9 @@ def _collect_from_command(
     for w in words[1:]:
         token = w.word
         if is_path_like(token):
-            # Path-like args are always relevant for security classification.
             path_tokens.append(token)
+            if seg_itype == "WRITE":
+                write_targets.append(token)
         elif not token.startswith("-") and seg_itype in ("READ", "WRITE"):
             # Bare non-flag argument in a READ/WRITE segment (e.g. ``cat foo.txt``).
             path_tokens.append(token)
@@ -288,7 +325,7 @@ def _collect_from_command(
 
 
 def collect_exec_path_tokens(
-    seg_strings: List[str], itypes: List[str]
+    seg_strings: List[str], itypes: List[str], operators: Optional[List[str]] = None
 ) -> Tuple[List[str], List[str]]:
     """Collect file-path tokens and write targets from all pipeline segments.
 
@@ -301,8 +338,13 @@ def collect_exec_path_tokens(
     • Any segment — redirect output targets (``>``, ``>>``, …) are always
                    collected as write targets.
 
-    bashlex is used to parse each segment so redirect targets and arguments
-    are identified precisely without re-implementing operator scanning.
+    When *operators* is provided, ``cd <dir>`` segments update a running
+    working-directory context that is used to resolve relative path tokens in
+    subsequent segments.  The context propagates across ``&&``, ``;``, and
+    newline operators; it is reset to *None* after ``|`` or ``||`` because
+    those operators run each side in a subshell or conditionally.
+    Only absolute (or ``~/…``-expanded) ``cd`` targets can be tracked; a
+    bare relative ``cd subdir`` leaves the context unchanged (unknown base).
 
     Returns:
         path_tokens:   all paths used for security classification (conf/trust).
@@ -311,19 +353,43 @@ def collect_exec_path_tokens(
     """
     path_tokens: List[str] = []
     write_targets: List[str] = []
+    ops: List[str] = operators or []
 
-    for seg_str, seg_itype in zip(seg_strings, itypes):
+    # Tracks the effective working directory as we walk through segments.
+    cd_dir: Optional[str] = None
+
+    for i, (seg_str, seg_itype) in enumerate(zip(seg_strings, itypes)):
+        op_after: Optional[str] = ops[i] if i < len(ops) else None
+
+        # If this segment is a cd command, update the context and skip
+        # token collection (cd itself produces no meaningful path tokens).
+        new_cd = _parse_cd_dir(seg_str)
+        if new_cd is not None:
+            cd_dir = new_cd if op_after in _CD_PROPAGATING_OPS else None
+            logger.debug(
+                "collect_exec_path_tokens: cd context → %r (op_after=%r)",
+                cd_dir, op_after,
+            )
+            continue
+
         try:
             parts = bashlex.parse(seg_str.strip())
         except Exception:
             logger.warning(
                 "bashlex failed for segment %r; skipping path extraction", seg_str
             )
-            continue
+        else:
+            for cmd_node in _find_command_nodes(parts):
+                pt, wt = _collect_from_command(cmd_node, seg_itype)
+                if cd_dir:
+                    pt = [_resolve_path(p, cd_dir) for p in pt]
+                    wt = [_resolve_path(p, cd_dir) for p in wt]
+                path_tokens.extend(pt)
+                write_targets.extend(wt)
 
-        for cmd_node in _find_command_nodes(parts):
-            pt, wt = _collect_from_command(cmd_node, seg_itype)
-            path_tokens.extend(pt)
-            write_targets.extend(wt)
+        # A non-propagating operator after this segment breaks the cd context
+        # for whatever comes next.
+        if op_after is not None and op_after not in _CD_PROPAGATING_OPS:
+            cd_dir = None
 
     return path_tokens, write_targets

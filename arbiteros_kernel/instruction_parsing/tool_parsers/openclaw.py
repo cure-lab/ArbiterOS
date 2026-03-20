@@ -256,7 +256,8 @@ def _parse_exec(
     itype = max(itypes, key=lambda t: _ITYPE_PRIORITY.get(t, 0))
 
     # Collect file-path tokens and write targets from all pipeline segments.
-    path_tokens, write_targets = collect_exec_path_tokens(seg_strings, itypes)
+    # operators is passed so shell.py can resolve relative paths under cd context.
+    path_tokens, write_targets = collect_exec_path_tokens(seg_strings, itypes, operators)
 
     if path_tokens:
         confidentiality = classify_confidentiality(path_tokens)
