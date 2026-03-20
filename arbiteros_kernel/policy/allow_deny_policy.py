@@ -23,18 +23,36 @@ def _latest_tool_instr_index(latest_instructions: List[Dict[str, Any]]) -> Dict[
     return out
 
 
-def _friendly_allow_deny_reason(tool_name: str, reason: str | None) -> str:
+def _friendly_allow_deny_reason(
+    tool_name: str,
+    instruction_type: str,
+    category: Optional[str],
+    reason: str | None,
+) -> str:
     text = (reason or "").strip()
-    if not text:
-        return f"已拦截工具 `{tool_name}`：当前策略不允许该操作。"
-    return f"已拦截工具 `{tool_name}`：当前策略不允许该操作。详情：{text}"
+    lines: List[str] = [
+        f"我没有执行工具 `{tool_name}`。",
+        f"这一步属于 `{instruction_type}` 类型的操作。"
+    ]
+    if category:
+        lines.append(f"当前操作类别为 `{category}`。")
+    lines.append("原因：当前策略不允许在这一类场景下使用这个工具。")
+    if text:
+        lines.append(f"补充说明：{text}")
+    lines.append("如果你希望继续，请改用当前阶段允许的工具，或调整到允许该操作的流程/权限后再试。")
+    return "\n".join(lines)
 
 
 def _friendly_respond_allow_deny_reason(reason: str | None) -> str:
     text = (reason or "").strip()
-    if not text:
-        return "当前策略不允许直接输出这条回复，已停止返回内容。"
-    return f"当前策略不允许直接输出这条回复，已停止返回内容。详情：{text}"
+    lines: List[str] = [
+        "我没有直接输出这条回复。",
+        "原因：当前策略不允许在这一阶段直接向用户返回这类内容。"
+    ]
+    if text:
+        lines.append(f"补充说明：{text}")
+    lines.append("如果你希望继续，请先完成当前流程要求的步骤，或改成当前策略允许的输出方式。")
+    return "\n".join(lines)
 
 
 class AllowDenyPolicy(Policy):
@@ -79,7 +97,7 @@ class AllowDenyPolicy(Policy):
             if ok:
                 kept.append(RUNTIME.write_back_tool_args(tc, args_dict, was_json_str))
             else:
-                errors.append(_friendly_allow_deny_reason(tool_name, reason))
+                errors.append(_friendly_allow_deny_reason(tool_name, it, cat, reason))
 
                 RUNTIME.audit(
                     phase="policy.allow_deny",
@@ -96,8 +114,8 @@ class AllowDenyPolicy(Policy):
             if not kept:
                 response["function_call"] = None
                 if not isinstance(response.get("content"), str) or not response.get("content"):
-                    response["content"] = "\n".join(errors[:3])
-            return PolicyCheckResult(modified=True, response=response, error_type="\n".join(errors))
+                    response["content"] = "\n\n".join(errors[:3])
+            return PolicyCheckResult(modified=True, response=response, error_type="\n\n".join(errors))
 
         # optional: instruction allow/deny on RESPOND
         content = response.get("content")

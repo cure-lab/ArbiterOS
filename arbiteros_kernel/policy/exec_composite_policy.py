@@ -210,6 +210,55 @@ def _is_interpreter_invocation(
     return False, reasons
 
 
+def _humanize_review_reason(reason: str) -> str:
+    text = (reason or "").strip()
+    if not text:
+        return "命令需要人工确认。"
+
+    if text.startswith("shell_parse_error:"):
+        return "命令的 shell 结构无法被稳定解析，自动执行风险较高。"
+
+    if text.startswith("interpreter_exec:"):
+        interp = text.split(":", 1)[1] if ":" in text else "interpreter"
+        return f"命令通过解释器 `{interp}` 执行代码或脚本。"
+
+    if text == "inline_code_execution":
+        return "命令使用了内联代码执行方式（例如 `-c`）。"
+
+    if text.startswith("script_argument:"):
+        script = text.split(":", 1)[1] if ":" in text else ""
+        return f"命令会执行脚本文件 `{script}`。"
+
+    if text.startswith("direct_script_execution:"):
+        script = text.split(":", 1)[1] if ":" in text else ""
+        return f"命令会直接运行脚本文件 `{script}`。"
+
+    if text.startswith("operators:"):
+        ops = text.split(":", 1)[1] if ":" in text else ""
+        return f"命令包含多个连接符或控制符（{ops}），不是单一步骤。"
+
+    if text.startswith("segment_count:"):
+        count = text.split(":", 1)[1] if ":" in text else "多个"
+        return f"命令被拆分后包含 {count} 个子步骤。"
+
+    if text == "contains_WRITE_segment":
+        return "子步骤中包含写入或修改类操作。"
+
+    if text == "contains_EXEC_segment":
+        return "子步骤中包含进一步执行类操作。"
+
+    if text == "read_only_composite_requires_review":
+        return "即使这是一组只读命令，当前策略仍要求先确认。"
+
+    if text == "multi_segment_command":
+        return "命令由多个子步骤组成，自动执行风险较高。"
+
+    if text == "multi_segment_not_read_only":
+        return "命令由多个子步骤组成，而且并不属于单纯只读查询。"
+
+    return text
+
+
 def _build_review_message(
     *,
     command: str,
@@ -220,34 +269,42 @@ def _build_review_message(
     parser_kind: str,
 ) -> str:
     lines: List[str] = []
-    lines.append("检测到未知或复杂的 exec 操作，已暂停自动执行。")
+    lines.append("我暂时没有自动执行这条 `exec` 命令。")
     lines.append("")
-    lines.append(f"原始命令: {command}")
+    lines.append(f"原始命令：{command}")
+    lines.append("原因：这条命令包含脚本执行、解释器调用或多段命令连接，可能带来实际副作用，因此当前策略要求先确认。")
 
     if review_reasons:
-        lines.append("触发原因:")
+        lines.append("具体触发点：")
         for reason in review_reasons:
-            lines.append(f"  - {reason}")
+            lines.append(f"  - {_humanize_review_reason(reason)}")
 
     if segments:
-        lines.append("Kernel/Policy 粗解析得到的子段如下：")
+        lines.append("命令被粗略拆分为以下子步骤：")
         for i, seg in enumerate(segments, 1):
             seg_type = seg_types[i - 1] if i - 1 < len(seg_types) else "UNKNOWN"
             lines.append(f"  {i}. [{seg_type}] {seg}")
 
     if operators:
-        lines.append(f"检测到的连接符: {', '.join(operators)}")
+        lines.append(f"检测到的连接符：{', '.join(operators)}")
 
-    lines.append(f"解析来源: {parser_kind}")
+    lines.append(f"解析来源：{parser_kind}")
     lines.append("")
-    lines.append("当前版本会将此类未知/复杂操作交由用户确认；若选择保护，则不会执行该命令。")
+    lines.append("如果你确认这条命令安全且符合预期，请先进行确认；如果不是，建议把命令拆成更简单、单一的一步后再试。")
     return "\n".join(lines)
 
 
 def _build_review_summary(command: str, review_reasons: List[str]) -> str:
+    lines: List[str] = [
+        "我暂时没有自动执行这条 `exec` 命令。",
+        "原因：这条命令被判定为未知或复杂操作，需要先确认后才能继续。"
+    ]
     if review_reasons:
-        return f"exec 命令需要确认后才能继续执行：检测到未知或复杂操作（{'; '.join(review_reasons)}）。"
-    return f"exec 命令需要确认后才能继续执行：检测到未知或复杂操作。"
+        lines.append("触发原因包括：")
+        for reason in review_reasons[:4]:
+            lines.append(f"- {_humanize_review_reason(reason)}")
+    lines.append("如果你确认要继续，请先完成确认；否则建议把命令拆成更简单的一步后再试。")
+    return "\n".join(lines)
 
 
 class ExecCompositePolicy(Policy):
@@ -438,7 +495,7 @@ class ExecCompositePolicy(Policy):
             return PolicyCheckResult(
                 modified=True,
                 response=response,
-                error_type="\n".join(errors),
+                error_type="\n\n".join(errors),
             )
 
         return PolicyCheckResult(modified=False, response=current_response, error_type=None)

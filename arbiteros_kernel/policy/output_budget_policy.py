@@ -39,7 +39,11 @@ class OutputBudgetPolicy(Policy):
         response = dict(current_response)
         response["content"] = trimmed
         audit_msg = f"POLICY_TRANSFORM output truncated to {max_chars} chars"
-        user_msg = f"回复内容过长，已按当前策略截断为前 {max_chars} 个字符。"
+        user_msg = (
+            f"这条回复原本长度为 {len(content)} 个字符，超过了当前策略允许的上限 {max_chars} 个字符。"
+            f"我已只保留前 {max_chars} 个字符。"
+            "如果你需要完整内容，请缩小查询范围，或分段获取结果。"
+        )
         RUNTIME.audit(
             phase="policy.output_budget",
             trace_id=trace_id,

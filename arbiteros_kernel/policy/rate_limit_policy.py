@@ -10,9 +10,14 @@ from .policy import Policy
 
 def _friendly_rate_limit_reason(tool_name: str, reason: str | None) -> str:
     text = (reason or "").strip()
-    if not text:
-        return f"已拦截工具 `{tool_name}`：同一工具被连续调用次数过多，请稍后再试或改用其他操作。"
-    return f"已拦截工具 `{tool_name}`：同一工具被连续调用次数过多。详情：{text}"
+    lines: List[str] = [
+        f"我没有执行工具 `{tool_name}`。",
+        "原因：同一个工具在最近的流程里被连续调用的次数过多，已经达到当前策略允许的上限。"
+    ]
+    if text:
+        lines.append(f"补充说明：{text}")
+    lines.append("请稍后再试，改用其他工具，或把操作拆成不同类型的步骤后再继续。")
+    return "\n".join(lines)
 
 
 class RateLimitPolicy(Policy):
@@ -74,7 +79,7 @@ class RateLimitPolicy(Policy):
             if not kept:
                 response["function_call"] = None
                 if not isinstance(response.get("content"), str) or not response.get("content"):
-                    response["content"] = "\n".join(errors[:3])
-            return PolicyCheckResult(modified=True, response=response, error_type="\n".join(errors))
+                    response["content"] = "\n\n".join(errors[:3])
+            return PolicyCheckResult(modified=True, response=response, error_type="\n\n".join(errors))
 
         return PolicyCheckResult(modified=False, response=current_response, error_type=None)

@@ -121,12 +121,18 @@ def _classify_tool(tool_name: str, args_dict: Dict[str, Any]) -> str:
 def _friendly_taint_message(tool_name: str, kind: str, trust: str, required_level: str) -> str:
     if kind == "input":
         return (
-            f"已拦截工具 `{tool_name}`：当前指令的可信级别为 `{trust}`，"
-            f"低于读取该信息所需的级别 `{required_level}`。"
+            f"我没有执行工具 `{tool_name}`。\n"
+            f"这一步属于“读取/获取信息”类操作。\n"
+            f"当前请求的可信级别为 `{trust}`，而执行这一步至少需要 `{required_level}`。\n"
+            "原因：当前请求的可信级别不足以读取这类信息。\n"
+            "如果你希望继续，请改为访问更低敏感度的信息，或先经过更高权限/确认流程。"
         )
     return (
-        f"已拦截工具 `{tool_name}`：当前指令的可信级别为 `{trust}`，"
-        f"低于执行该输出操作所需的级别 `{required_level}`。"
+        f"我没有执行工具 `{tool_name}`。\n"
+        f"这一步属于“输出/修改/外发”类操作。\n"
+        f"当前请求的可信级别为 `{trust}`，而执行这一步至少需要 `{required_level}`。\n"
+        "原因：当前请求的可信级别不足以进行这类输出或副作用操作。\n"
+        "如果你希望继续，请降低操作敏感度，或先完成所需的确认/授权步骤。"
     )
 
 
@@ -223,9 +229,9 @@ class TaintPolicy(Policy):
             if not kept:
                 response["function_call"] = None
                 if not isinstance(response.get("content"), str) or not response.get("content"):
-                    response["content"] = "\n".join(errors[:3])
+                    response["content"] = "\n\n".join(errors[:3])
             return PolicyCheckResult(
-                modified=True, response=response, error_type="\n".join(errors)
+                modified=True, response=response, error_type="\n\n".join(errors)
             )
 
         return PolicyCheckResult(modified=False, response=current_response, error_type=None)

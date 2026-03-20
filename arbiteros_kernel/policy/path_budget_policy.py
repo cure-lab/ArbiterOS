@@ -13,15 +13,33 @@ def _friendly_path_budget_reason(tool_name: str, reason: str | None) -> str:
     lower = text.lower()
 
     if "path" in lower or "prefix" in lower or "workspace" in lower:
-        base = f"已拦截工具 `{tool_name}`：访问路径不在当前策略允许的范围内。"
-    elif "length" in lower or "too long" in lower or "max_str_len" in lower:
-        base = f"已拦截工具 `{tool_name}`：参数内容过长，超过了当前策略允许的长度。"
-    else:
-        base = f"已拦截工具 `{tool_name}`：参数或路径未通过检查。"
+        lines = [
+            f"我没有执行工具 `{tool_name}`。",
+            "原因：这次请求访问的路径不在当前策略允许的范围内。",
+        ]
+        if text:
+            lines.append(f"补充说明：{text}")
+        lines.append("请改用允许访问的目录或文件路径后再试。")
+        return "\n".join(lines)
 
+    if "length" in lower or "too long" in lower or "max_str_len" in lower:
+        lines = [
+            f"我没有执行工具 `{tool_name}`。",
+            "原因：这次请求中的参数内容过长，超过了当前策略允许的长度限制。",
+        ]
+        if text:
+            lines.append(f"补充说明：{text}")
+        lines.append("请缩短输入内容，或把操作拆成更小的几步后再试。")
+        return "\n".join(lines)
+
+    lines = [
+        f"我没有执行工具 `{tool_name}`。",
+        "原因：这次请求的参数或路径未通过当前策略检查。"
+    ]
     if text:
-        return f"{base} 详情：{text}"
-    return base
+        lines.append(f"补充说明：{text}")
+    lines.append("请检查路径是否可访问、参数是否过长，然后再重试。")
+    return "\n".join(lines)
 
 
 class PathBudgetPolicy(Policy):
@@ -77,8 +95,8 @@ class PathBudgetPolicy(Policy):
             if not kept:
                 response["function_call"] = None
                 if not isinstance(response.get("content"), str) or not response.get("content"):
-                    response["content"] = "\n".join(errors[:3])
-            return PolicyCheckResult(modified=True, response=response, error_type="\n".join(errors))
+                    response["content"] = "\n\n".join(errors[:3])
+            return PolicyCheckResult(modified=True, response=response, error_type="\n\n".join(errors))
 
         # ✅ no errors, but we still want to write back canonicalized args
         if changed:
