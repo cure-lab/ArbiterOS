@@ -2,7 +2,7 @@
   "audit": { "log_allow": true },
 
   "allow": {
-    "tools": ["read", "write", "exec", "gmail_read", "web_fetch","web_search"],
+    "tools": ["read", "write", "exec", "gmail_read", "web_fetch", "web_search", "session_status"],
     "instruction_types": [],
     "categories": []
   },
@@ -19,8 +19,8 @@
       "/Windows", "/System32"
     ],
     "allow_prefixes": [
-      "/home/cstributer/.openclaw/workspace",
-      "/home/cstributer/.openclaw/canvas",
+      "re:^/home/[^/]+/.openclaw/workspace",
+      "re:^/home/[^/]+/.openclaw/canvas",
       "canvas",
       "workspace"
     ]
@@ -78,8 +78,8 @@
       "output_tools": ["edit", "write", "exec", "message", "sessions_send", "sessions_spawn", "tts", "gateway"],
       "tools_by_action": {
         "browser": {
-          "input_actions": ["status", "start", "stop", "profiles", "tabs", "snapshot", "screenshot", "console", "pdf"],
-          "output_actions": ["open", "focus", "close", "navigate", "upload", "dialog", "act"]
+          "input_actions": ["status", "start", "stop", "profiles", "tabs", "snapshot", "screenshot", "console", "pdf", "open"],
+          "output_actions": ["focus", "close", "navigate", "upload", "dialog", "act"]
         },
         "process": {
           "input_actions": ["list", "poll", "log"],

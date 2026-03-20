@@ -666,6 +666,10 @@ class KernelPolicyRuntime:
     ) -> Tuple[bool, str]:
         path_cfg = self.cfg.get("paths", {}) or {}
 
+        def _to_fs(p: str) -> str:
+            """Normalize path to forward slashes for consistent matching (Windows compat)."""
+            return (p or "").replace("\\", "/")
+
         def _norm_prefixes(xs: Any) -> List[str]:
             out: List[str] = []
             if not isinstance(xs, list):
@@ -673,7 +677,7 @@ class KernelPolicyRuntime:
             for x in xs:
                 if not isinstance(x, str) or not x.strip():
                     continue
-                out.append(normalize_path(_expand_home(x.strip())))
+                out.append(_to_fs(normalize_path(_expand_home(x.strip()))))
             seen = set()
             dedup: List[str] = []
             for p in out:
@@ -682,8 +686,37 @@ class KernelPolicyRuntime:
                     dedup.append(p)
             return dedup
 
+        def _split_allow(raw: Any) -> Tuple[List[str], List[str]]:
+            """Split allow_prefixes into literal prefixes and regex patterns (re:...)."""
+            prefixes: List[str] = []
+            regex_patterns: List[str] = []
+            if not isinstance(raw, list):
+                return prefixes, regex_patterns
+            for x in raw:
+                if not isinstance(x, str) or not x.strip():
+                    continue
+                s = x.strip()
+                if s.startswith("re:"):
+                    pat = s[3:].strip()
+                    if pat and pat not in regex_patterns:
+                        regex_patterns.append(pat)
+                else:
+                    p = _to_fs(normalize_path(_expand_home(s)))
+                    if p and p not in prefixes:
+                        prefixes.append(p)
+            return prefixes, regex_patterns
+
         deny_prefixes = _norm_prefixes(path_cfg.get("deny_prefixes", []))
-        allow_prefixes = _norm_prefixes(path_cfg.get("allow_prefixes", []))
+        allow_prefixes, allow_regex = _split_allow(path_cfg.get("allow_prefixes", []))
+        allow_has_any = bool(allow_prefixes or allow_regex)
+
+        # Compile regex patterns once
+        allow_re_compiled: List[re.Pattern[str]] = []
+        for pat in allow_regex:
+            try:
+                allow_re_compiled.append(re.compile(pat))
+            except re.error:
+                pass  # skip invalid patterns
 
         def _prefix_match(p: str, pref: str) -> bool:
             if not pref:
@@ -692,23 +725,43 @@ class KernelPolicyRuntime:
                 return True
             return p.startswith(pref.rstrip("/") + "/")
 
-        def _longest_hit(p: str, prefixes: List[str]) -> Optional[str]:
-            hits = [pref for pref in prefixes if _prefix_match(p, pref)]
-            return max(hits, key=len) if hits else None
+        def _longest_prefix_hit(p: str, prefixes: List[str]) -> Optional[Tuple[str, int]]:
+            hits = [(pref, len(pref)) for pref in prefixes if _prefix_match(p, pref)]
+            return max(hits, key=lambda x: x[1]) if hits else None
+
+        def _longest_regex_hit(p: str, patterns: List[re.Pattern[str]]) -> Optional[Tuple[str, int]]:
+            best: Optional[Tuple[str, int]] = None
+            for rx in patterns:
+                m = rx.match(p)
+                if m:
+                    span_len = m.end()
+                    if best is None or span_len > best[1]:
+                        best = (rx.pattern, span_len)
+            return best
 
         paths = _collect_paths_from_args(args)
 
         for p in paths:
-            allow_hit = _longest_hit(p, allow_prefixes) if allow_prefixes else None
-            deny_hit = _longest_hit(p, deny_prefixes) if deny_prefixes else None
+            p_fs = _to_fs(p)
+            prefix_hit = _longest_prefix_hit(p_fs, allow_prefixes) if allow_prefixes else None
+            regex_hit = _longest_regex_hit(p_fs, allow_re_compiled) if allow_re_compiled else None
+            allow_hit: Optional[Tuple[str, int]] = None
+            if prefix_hit and regex_hit:
+                allow_hit = prefix_hit if prefix_hit[1] >= regex_hit[1] else regex_hit
+            elif prefix_hit:
+                allow_hit = prefix_hit
+            elif regex_hit:
+                allow_hit = regex_hit
 
-            # 1) allowlist 非空：必须命中 allow
-            if allow_prefixes and not allow_hit:
+            deny_hit = _longest_prefix_hit(p_fs, deny_prefixes) if deny_prefixes else None
+
+            # 1) allowlist non-empty: path must match at least one allow
+            if allow_has_any and not allow_hit:
                 return False, f"path not in allow_prefixes: {p}"
 
-            # 2) 同时命中 deny/allow：最具体前缀胜出（长度相等时 deny 胜出）
+            # 2) Both deny and allow match: more specific wins (deny wins on tie)
             if deny_hit:
-                if (not allow_hit) or (len(deny_hit) >= len(allow_hit)):
+                if (not allow_hit) or (deny_hit[1] >= allow_hit[1]):
                     return False, f"path denied by prefix: {p}"
 
         in_budget = self.cfg.get("input_budget", {}) or {}
