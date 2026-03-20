@@ -279,6 +279,10 @@ def register_file_taint(
     """
     global _FILE_CONF_DIRTY, _FILE_TRUST_DIRTY
 
+    if not path.startswith("/"):
+        logger.debug("register_file_taint: skipping non-absolute path %r", path)
+        return
+
     # Source-layer classification for the path
     source_conf: SecurityLevel = next(
         (
