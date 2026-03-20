@@ -3,7 +3,7 @@ name: arbiteros-stack
 services:
   # --- Langfuse (self-host, docker compose) ---
   langfuse-worker:
-    image: ${LANGFUSE_WORKER_IMAGE:-docker.io/xywen22/arbiteros-langfuse-worker:latest}
+    image: ${LANGFUSE_WORKER_IMAGE:-docker.io/xywen22/arbiteros-langfuse-worker:${LANGFUSE_WORKER_IMAGE_TAG:-3.155.0}}
     restart: unless-stopped
     env_file:
       - ./stack.env
@@ -70,7 +70,7 @@ services:
       SMTP_CONNECTION_URL: ${SMTP_CONNECTION_URL:-}
 
   langfuse-web:
-    image: ${LANGFUSE_WEB_IMAGE:-docker.io/xywen22/arbiteros-langfuse-web:latest}
+    image: ${LANGFUSE_WEB_IMAGE:-docker.io/xywen22/arbiteros-langfuse-web:${LANGFUSE_WEB_IMAGE_TAG:-3.155.0}}
     restart: unless-stopped
     env_file:
       - ./stack.env
@@ -159,7 +159,7 @@ services:
   arbiteros-kernel:
     # Default: pull a prebuilt image for fast, reliable one-command setup.
     # Override with `compose.dev.yaml` when developing locally.
-    image: ${ARBITEROS_KERNEL_IMAGE:-docker.io/xywen22/arbiteros-kernel:latest}
+    image: ${ARBITEROS_KERNEL_IMAGE:-docker.io/xywen22/arbiteros-kernel:${ARBITEROS_KERNEL_IMAGE_TAG:-0.1.0}}
     restart: unless-stopped
     env_file:
       - ./stack.env

@@ -80,17 +80,20 @@ chmod +x ./scripts/generate-stack-env.sh
 默认情况下，`compose.yaml` 会拉取作者在 Docker Hub 上构建好的镜像：
 
 - Langfuse：
-  - `docker.io/xywen22/arbiteros-langfuse-web:latest`
-  - `docker.io/xywen22/arbiteros-langfuse-worker:latest`
+  - `docker.io/xywen22/arbiteros-langfuse-web:${LANGFUSE_WEB_IMAGE_TAG:-3.155.0}`
+  - `docker.io/xywen22/arbiteros-langfuse-worker:${LANGFUSE_WORKER_IMAGE_TAG:-3.155.0}`
 - ArbiterOS Kernel：
-  - `docker.io/xywen22/arbiteros-kernel:latest`
+  - `docker.io/xywen22/arbiteros-kernel:${ARBITEROS_KERNEL_IMAGE_TAG:-0.1.0}`
 
-如果你希望改用其他仓库中的 Langfuse 镜像，可以在 `stack.env` 里覆盖镜像名（或在 shell 中 `export`）：
+如果你希望切换到你自己发布的版本 tag（也可选地改 repo），可以在 `stack.env` 里直接改：
 
 ```env
-LANGFUSE_WEB_IMAGE=docker.io/<your_dockerhub>/arbiteros-langfuse-web:latest
-LANGFUSE_WORKER_IMAGE=docker.io/<your_dockerhub>/arbiteros-langfuse-worker:latest
+LANGFUSE_WEB_IMAGE_TAG=<your_langfuse_tag>
+LANGFUSE_WORKER_IMAGE_TAG=<your_langfuse_tag>
+ARBITEROS_KERNEL_IMAGE_TAG=<your_kernel_tag>
 ```
+
+如果你还需要换镜像仓库（repo），可以直接覆盖 `LANGFUSE_WEB_IMAGE` / `LANGFUSE_WORKER_IMAGE` / `ARBITEROS_KERNEL_IMAGE`（完整包含 tag）。
 
 然后在仓库根目录执行：
 
