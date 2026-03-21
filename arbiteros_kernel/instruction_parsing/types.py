@@ -187,3 +187,81 @@ def compute_taint_status_from_instructions(
         raw_conf = "LOW"
 
     return TaintStatus(trustworthiness=raw_trust, confidentiality=raw_conf)
+
+
+def compute_prop_taint_for_instruction(
+    instructions: List[Dict[str, Any]],
+    instr: Dict[str, Any],
+) -> TaintStatus:
+    """Compute prop_confidentiality and prop_trustworthiness for a single instruction.
+
+    - Pure text (no tool_name): use own confidentiality and trustworthiness.
+    - Tool call: aggregate own conf/trust + all instructions whose tool_call_id
+      equals this one or any reference_tool_id. trust=min, conf=max.
+    """
+    st = instr.get("security_type")
+    if not isinstance(st, dict):
+        return TaintStatus(trustworthiness="MID", confidentiality="LOW")
+
+    def _safe_level(v: Any) -> str:
+        s = v if isinstance(v, str) else "UNKNOWN"
+        return (s or "UNKNOWN").strip() or "UNKNOWN"
+
+    own_conf = _safe_level(st.get("confidentiality"))
+    own_trust = _safe_level(st.get("trustworthiness"))
+
+    content = instr.get("content")
+    if not isinstance(content, dict) or "tool_name" not in content:
+        # Pure text: use own values
+        return TaintStatus(
+            trustworthiness=own_trust if own_trust in LEVEL_ORDER else "MID",
+            confidentiality=own_conf if own_conf in LEVEL_ORDER else "LOW",
+        )
+
+    # Tool call: collect tool_call_ids to include (self + reference_tool_id)
+    tc_id = content.get("tool_call_id")
+    ref_ids = content.get("arguments", {}).get("reference_tool_id") or []
+    ids_to_include: set[str] = set()
+    if isinstance(tc_id, str) and tc_id.strip():
+        ids_to_include.add(tc_id.strip())
+    for r in ref_ids if isinstance(ref_ids, list) else []:
+        if isinstance(r, str) and r.strip():
+            ids_to_include.add(r.strip())
+
+    trust_vals: List[str] = [own_trust]
+    conf_vals: List[str] = [own_conf]
+
+    for other in instructions or []:
+        if other is instr:
+            continue
+        oc = other.get("content")
+        if not isinstance(oc, dict):
+            continue
+        o_tc = oc.get("tool_call_id")
+        if not isinstance(o_tc, str) or o_tc.strip() not in ids_to_include:
+            continue
+        ost = other.get("security_type")
+        if not isinstance(ost, dict):
+            continue
+        prop_conf = ost.get("prop_confidentiality") or ost.get("confidentiality")
+        prop_trust = ost.get("prop_trustworthiness") or ost.get("trustworthiness")
+        if isinstance(prop_conf, str) and prop_conf.strip() in LEVEL_ORDER:
+            conf_vals.append(prop_conf.strip())
+        if isinstance(prop_trust, str) and prop_trust.strip() in LEVEL_ORDER:
+            trust_vals.append(prop_trust.strip())
+
+    raw_trust = (
+        min(trust_vals, key=lambda v: LEVEL_ORDER[v])
+        if trust_vals
+        else "UNKNOWN"
+    )
+    raw_conf = (
+        max(conf_vals, key=lambda v: LEVEL_ORDER[v])
+        if conf_vals
+        else "UNKNOWN"
+    )
+    if raw_trust == "UNKNOWN":
+        raw_trust = "MID"
+    if raw_conf == "UNKNOWN":
+        raw_conf = "LOW"
+    return TaintStatus(trustworthiness=raw_trust, confidentiality=raw_conf)
