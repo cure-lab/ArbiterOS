@@ -69,6 +69,7 @@ load_dotenv(override=False)
 _NO_WRAP_SENTINEL = "__arbiteros_no_wrap__"
 _stripped_categories_by_trace: dict[str, list[str]] = {}
 _stripped_topics_by_trace: dict[str, list[Optional[str]]] = {}
+_stripped_reference_tool_ids_by_trace: dict[str, dict[str, list[str]]] = {}
 _stripped_categories_lock = threading.Lock()
 _MAX_STRIPPED_CATEGORIES = 1000
 
@@ -562,6 +563,82 @@ def _save_langfuse_node_json(data: dict) -> None:
         json.dump(entry, f, ensure_ascii=False, default=str)
         f.write("\n")
         f.flush()
+
+
+def _collect_prior_tool_call_ids_from_messages(messages: Any) -> list[str]:
+    """Collect tool_call_ids from prior assistant tool_calls and role=tool messages."""
+    out: list[str] = []
+    seen: set[str] = set()
+    if not isinstance(messages, list):
+        return out
+    for msg in messages:
+        if not isinstance(msg, dict):
+            continue
+        if msg.get("role") == "tool":
+            tc_id = msg.get("tool_call_id")
+            if isinstance(tc_id, str) and tc_id.strip() and tc_id.strip() not in seen:
+                s = tc_id.strip()
+                seen.add(s)
+                out.append(s)
+        elif msg.get("role") == "assistant":
+            for tc in msg.get("tool_calls") or []:
+                if not isinstance(tc, dict):
+                    continue
+                tc_id = tc.get("id") or tc.get("tool_call_id")
+                if isinstance(tc_id, str) and tc_id.strip() and tc_id.strip() not in seen:
+                    s = tc_id.strip()
+                    seen.add(s)
+                    out.append(s)
+    return out
+
+
+def _inject_reference_tool_id_into_tools(data: dict) -> None:
+    """为 tools 中每个 function tool 的 parameters 添加 required 的 reference_tool_id。"""
+    tools = data.get("tools")
+    if not isinstance(tools, list):
+        return
+    prior_ids = _collect_prior_tool_call_ids_from_messages(data.get("messages"))
+    base_desc = (
+        "List the tool_call_id values (NOT tool names) from prior role='tool' messages whose "
+        "results you used for this call's arguments. Each tool message has a 'tool_call_id' "
+        "property—copy that exact string. Examples: edit/write path from read/listdir/grep; "
+        "oldText/newText from read; exec command from prior exec; process sessionId from "
+        "process list. Wrong: ['read']. Right: ['call_xxx']. Use [] when no prior tool output."
+    )
+    if prior_ids:
+        ids_str = ", ".join(prior_ids)
+        base_desc += f" Valid IDs in this conversation (copy exactly): {ids_str}."
+    _REFERENCE_TOOL_ID_SCHEMA = {
+        "type": "array",
+        "items": {"type": "string"},
+        "description": base_desc,
+    }
+    for tool in tools:
+        if not isinstance(tool, dict) or tool.get("type") != "function":
+            continue
+        fn = tool.get("function")
+        if not isinstance(fn, dict):
+            continue
+        params = fn.get("parameters")
+        if not isinstance(params, dict):
+            fn["parameters"] = {
+                "type": "object",
+                "required": ["reference_tool_id"],
+                "properties": {"reference_tool_id": _REFERENCE_TOOL_ID_SCHEMA},
+            }
+            continue
+        if params.get("type") != "object":
+            params["type"] = "object"
+        props = params.get("properties")
+        if not isinstance(props, dict):
+            params["properties"] = {"reference_tool_id": _REFERENCE_TOOL_ID_SCHEMA}
+        else:
+            props["reference_tool_id"] = _REFERENCE_TOOL_ID_SCHEMA
+        required = params.get("required")
+        if not isinstance(required, list):
+            params["required"] = ["reference_tool_id"]
+        elif "reference_tool_id" not in required:
+            params["required"] = [*required, "reference_tool_id"]
 
 
 def _save_precall_to_log(data: dict) -> None:
@@ -2031,12 +2108,19 @@ def _add_instructions_from_modified_response(
         return 0
     count_before = len(getattr(builder, "instructions", []) or [])
     tc_details = _extract_tool_call_details_from_response(modified_response)
+    trace_id = getattr(builder, "trace_id", None)
     for tc_detail in tc_details:
         try:
+            args = tc_detail.get("arguments") or {}
+            args = _ensure_reference_tool_id_in_arguments(
+                args,
+                tc_detail.get("tool_call_id"),
+                trace_id,
+            )
             builder.add_from_tool_call(
                 tool_name=tc_detail["tool_name"],
                 tool_call_id=tc_detail["tool_call_id"],
-                arguments=tc_detail.get("arguments") or {},
+                arguments=args,
                 result=None,
             )
         except Exception:
@@ -2078,12 +2162,19 @@ def _replace_instructions_from_modified_response(
 
     # 3. 根据 modified_response 重新添加 instructions（tool_calls 先，再 content）
     tc_details = _extract_tool_call_details_from_response(modified_response)
+    trace_id = getattr(builder, "trace_id", None)
     for tc_detail in tc_details:
         try:
+            args = tc_detail.get("arguments") or {}
+            args = _ensure_reference_tool_id_in_arguments(
+                args,
+                tc_detail.get("tool_call_id"),
+                trace_id,
+            )
             builder.add_from_tool_call(
                 tool_name=tc_detail["tool_name"],
                 tool_call_id=tc_detail["tool_call_id"],
-                arguments=tc_detail.get("arguments") or {},
+                arguments=args,
                 result=None,
             )
         except Exception:
@@ -2596,10 +2687,15 @@ def _emit_tool_result_nodes_if_needed(request_data: dict, state: _TraceState) ->
             builder = _get_instruction_builder_for_trace(state.trace_id)
             if builder is not None:
                 try:
+                    args = _ensure_reference_tool_id_in_arguments(
+                        tool_arguments or {},
+                        tool_call_id,
+                        state.trace_id,
+                    )
                     instr = builder.add_from_tool_call(
                         tool_name=tool_name,
                         tool_call_id=tool_call_id,
-                        arguments=tool_arguments or {},
+                        arguments=args,
                         result=parsed_result,
                     )
                     instruction_for_metadata = (
@@ -3714,6 +3810,33 @@ def _clear_stripped_categories_for_trace(trace_id: Optional[str]) -> None:
     with _stripped_categories_lock:
         _stripped_categories_by_trace.pop(trace_id.strip(), None)
         _stripped_topics_by_trace.pop(trace_id.strip(), None)
+        _stripped_reference_tool_ids_by_trace.pop(trace_id.strip(), None)
+
+
+def _ensure_reference_tool_id_in_arguments(
+    arguments: dict,
+    tool_call_id: Optional[str],
+    trace_id: Optional[str],
+) -> dict:
+    """若 arguments 缺少 reference_tool_id，则从 _stripped_reference_tool_ids_by_trace 查并补入。"""
+    if "reference_tool_id" in arguments:
+        return arguments
+    if not isinstance(tool_call_id, str) or not tool_call_id.strip():
+        return arguments
+    if not isinstance(trace_id, str) or not trace_id.strip():
+        return arguments
+    tid = trace_id.strip()
+    tc_id = tool_call_id.strip()
+    with _stripped_categories_lock:
+        by_trace = _stripped_reference_tool_ids_by_trace.get(tid)
+        if not by_trace:
+            return arguments
+        ref_list = by_trace.get(tc_id)
+        if ref_list is None:
+            return arguments
+    out = dict(arguments)
+    out["reference_tool_id"] = ref_list
+    return out
 
 
 def _add_policy_protected_category_topic(trace_id: Optional[str]) -> None:
@@ -3899,9 +4022,60 @@ def _is_strict_topic_category_content(obj: dict) -> bool:
     return set(obj.keys()) == {"topic", "category", "content"}
 
 
+def _strip_and_record_reference_tool_ids_from_message(
+    message_dict: dict, data: dict
+) -> None:
+    """从 tool_calls 的 arguments 中剥去 reference_tool_id 并存入 trace 字典，原地修改 message_dict。"""
+    tool_calls = message_dict.get("tool_calls")
+    if not isinstance(tool_calls, list):
+        return
+    trace_id = None
+    if isinstance(data, dict):
+        meta = data.get("metadata")
+        if isinstance(meta, dict):
+            trace_id = meta.get("arbiteros_trace_id")
+    if not isinstance(trace_id, str) or not trace_id.strip():
+        return
+    tid = trace_id.strip()
+    modified = False
+    for tc in tool_calls:
+        if not isinstance(tc, dict):
+            continue
+        tc_id = tc.get("id") or tc.get("tool_call_id")
+        if not isinstance(tc_id, str) or not tc_id.strip():
+            continue
+        fn = tc.get("function")
+        if not isinstance(fn, dict):
+            continue
+        raw_args = fn.get("arguments")
+        if isinstance(raw_args, str):
+            args = _safe_json_loads(raw_args)
+        elif isinstance(raw_args, dict):
+            args = dict(raw_args)
+        else:
+            args = {}
+        if not isinstance(args, dict):
+            continue
+        ref_list = args.pop("reference_tool_id", _NO_WRAP_SENTINEL)
+        if ref_list is _NO_WRAP_SENTINEL:
+            continue
+        if not isinstance(ref_list, list):
+            ref_list = []
+        with _stripped_categories_lock:
+            by_trace = _stripped_reference_tool_ids_by_trace.setdefault(tid, {})
+            by_trace[tc_id.strip()] = [str(x) for x in ref_list if x is not None]
+        modified = True
+        fn_copy = dict(fn)
+        fn_copy["arguments"] = json.dumps(args, ensure_ascii=False) if args else "{}"
+        tc["function"] = fn_copy
+    if modified:
+        message_dict["tool_calls"] = tool_calls
+
+
 def _response_transform_content_only(data: dict, message_dict: dict) -> Optional[dict]:
     """没 content 才忽略；有 content 且为严格的 topic/category/content 结构则剥 structure，否则不操作但记录 NO_WRAP。
     支持 content 为字符串或列表 [{"type":"text","text":"..."}]。"""
+    _strip_and_record_reference_tool_ids_from_message(message_dict, data)
     raw_content = message_dict.get("content")
     content: str
     inner: Optional[dict] = None
@@ -4098,6 +4272,57 @@ def _inject_topic_summary_hint(
         return {**data, "instructions": new_instructions}
 
     return data
+
+
+def _wrap_reference_tool_ids_into_messages(
+    data: dict, *, trace_id: Optional[str] = None
+) -> dict:
+    """把 history 里 assistant 的 tool_calls 按 trace 记录的 reference_tool_id 包回 arguments。"""
+    if not isinstance(trace_id, str) or not trace_id.strip():
+        return data
+    tid = trace_id.strip()
+    with _stripped_categories_lock:
+        by_trace = _stripped_reference_tool_ids_by_trace.get(tid)
+    if not by_trace:
+        return data
+    messages = data.get("messages")
+    if not isinstance(messages, list):
+        return data
+    messages = list(messages)
+    modified = False
+    for msg in messages:
+        if not isinstance(msg, dict) or msg.get("role") != "assistant":
+            continue
+        tool_calls = msg.get("tool_calls")
+        if not isinstance(tool_calls, list):
+            continue
+        for tc in tool_calls:
+            if not isinstance(tc, dict):
+                continue
+            tc_id = tc.get("id") or tc.get("tool_call_id")
+            if not isinstance(tc_id, str) or not tc_id.strip():
+                continue
+            ref_list = by_trace.get(tc_id.strip())
+            if ref_list is None:
+                continue
+            fn = tc.get("function")
+            if not isinstance(fn, dict):
+                continue
+            raw_args = fn.get("arguments")
+            if isinstance(raw_args, str):
+                args = _safe_json_loads(raw_args) or {}
+            elif isinstance(raw_args, dict):
+                args = dict(raw_args)
+            else:
+                args = {}
+            if not isinstance(args, dict):
+                continue
+            args["reference_tool_id"] = ref_list
+            fn_copy = dict(fn)
+            fn_copy["arguments"] = json.dumps(args, ensure_ascii=False)
+            tc["function"] = fn_copy
+            modified = True
+    return {**data, "messages": messages} if modified else data
 
 
 # 与 litellm_config.yaml 中 instruction_output 一致的 base schema，content 将被 agent 的 schema 替换
@@ -4359,6 +4584,7 @@ class MyCustomHandler(CustomLogger):
             _clear_stripped_categories_for_trace(trace_id_for_cache)
         # 把 history 里 assistant 的 content 按当前 trace 记录的 category 从后往前包回结构，再请求
         data = _wrap_messages_with_categories(data, trace_id=trace_id_for_cache)
+        data = _wrap_reference_tool_ids_into_messages(data, trace_id=trace_id_for_cache)
         data = _inject_taint_watermarks_into_messages(data, trace_id=trace_id_for_cache)
 
         # Clean up any previously persisted noisy topic summaries so future traces
@@ -4561,6 +4787,7 @@ class MyCustomHandler(CustomLogger):
                 )
             )
             _save_json("pre_call", {"call_type": call_type, "incoming": filtered_data})
+        _inject_reference_tool_id_into_tools(data)
         _save_precall_to_log(data)
         return data
 
@@ -4710,12 +4937,18 @@ class MyCustomHandler(CustomLogger):
             if isinstance(trace_id_tc, str) and trace_id_tc.strip():
                 for tc_detail in _extract_tool_call_details_from_response(raw_msg_dict):
                     try:
+                        args = tc_detail.get("arguments") or {}
+                        args = _ensure_reference_tool_id_in_arguments(
+                            args,
+                            tc_detail.get("tool_call_id"),
+                            trace_id_tc,
+                        )
                         builder = _get_instruction_builder_for_trace(trace_id_tc)
                         if builder is not None:
                             builder.add_from_tool_call(
                                 tool_name=tc_detail["tool_name"],
                                 tool_call_id=tc_detail["tool_call_id"],
-                                arguments=tc_detail.get("arguments") or {},
+                                arguments=args,
                                 result=None,
                             )
                             _save_instructions_to_trace_file(trace_id_tc, builder)
@@ -5221,12 +5454,18 @@ class MyCustomHandler(CustomLogger):
             if isinstance(trace_id, str) and trace_id.strip():
                 for tc_detail in _extract_tool_call_details_from_response(msg_dict):
                     try:
+                        args = tc_detail.get("arguments") or {}
+                        args = _ensure_reference_tool_id_in_arguments(
+                            args,
+                            tc_detail.get("tool_call_id"),
+                            trace_id,
+                        )
                         builder = _get_instruction_builder_for_trace(trace_id)
                         if builder is not None:
                             builder.add_from_tool_call(
                                 tool_name=tc_detail["tool_name"],
                                 tool_call_id=tc_detail["tool_call_id"],
-                                arguments=tc_detail.get("arguments") or {},
+                                arguments=args,
                                 result=None,
                             )
                             _save_instructions_to_trace_file(trace_id, builder)
