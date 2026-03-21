@@ -21,6 +21,7 @@ from .types import (
     RuleType,
     SecurityType,
     TaintStatus,
+    compute_prop_taint_for_instruction,
     compute_taint_status_from_instructions,
     make_security_type,
 )
@@ -89,8 +90,9 @@ class InstructionBuilder:
         self._last_instruction_id = instr["id"]
         self.instructions.append(instr)
 
-        # Cumulative taint from start to this instruction (inclusive)
-        taint = compute_taint_status_from_instructions(self.instructions)
+        # prop_*: tool call = aggregate self + reference_tool_ids (all entries);
+        # pure text = own conf/trust only
+        taint = compute_prop_taint_for_instruction(self.instructions, instr)
         st = instr.get("security_type")
         if isinstance(st, dict):
             st["prop_confidentiality"] = taint.confidentiality
