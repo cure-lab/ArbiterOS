@@ -78,22 +78,19 @@ def _is_memory_file(args: Dict[str, Any]) -> bool:
     return parent == _MEMORY_DIR_NAME and basename.endswith(".md")
 
 
-def _make_write_result(
-    args: Dict[str, Any], taint_status: Optional[TaintStatus]
-) -> ToolParseResult:
+def _make_write_result(args: Dict[str, Any]) -> ToolParseResult:
     """Shared body for edit and write when not targeting a memory file.
 
-    Registers the file path in the user registry (using taint_status or an
-    UNKNOWN/UNKNOWN fallback when no taint context is available) and resolves
-    confidentiality/trustworthiness via linux_registry.
+    Confidentiality and trustworthiness come from path-based classification
+    (linux_registry) only; not influenced by session taint. The resolved values
+    are then registered for consistency.
     """
     raw = str(args.get("path") or args.get("file_path") or "")
     paths = [raw] if raw else []
-    if raw:
-        taint = taint_status or TaintStatus(trustworthiness="UNKNOWN", confidentiality="UNKNOWN")
-        register_file_taint(raw, taint.trustworthiness, taint.confidentiality)
     confidentiality = classify_confidentiality(paths) if paths else "UNKNOWN"
     trustworthiness = classify_trustworthiness(paths) if paths else "UNKNOWN"
+    if raw:
+        register_file_taint(raw, trustworthiness, confidentiality)
     logger.debug(
         "_make_write_result: path=%r → confidentiality=%s trustworthiness=%s",
         raw, confidentiality, trustworthiness,
@@ -170,7 +167,7 @@ def _parse_edit(
                 authority="UNKNOWN",
             ),
         )
-    return _make_write_result(args, taint_status)
+    return _make_write_result(args)
 
 
 def _parse_write(
@@ -193,7 +190,7 @@ def _parse_write(
                 authority="UNKNOWN",
             ),
         )
-    return _make_write_result(args, taint_status)
+    return _make_write_result(args)
 
 # ---------------------------------------------------------------------------
 # Process / shell execution
