@@ -15,6 +15,7 @@ from .rate_limit_policy import RateLimitPolicy
 from .security_label_policy import SecurityLabelPolicy
 from .taint_policy import TaintPolicy
 from .exec_composite_policy import ExecCompositePolicy
+from .delete_policy import DeletePolicy
 if TYPE_CHECKING:
     from .policy import Policy
 
@@ -45,6 +46,7 @@ POLICY_CLASS_MAP: dict[str, type["Policy"]] = {
     "OutputBudgetPolicy": OutputBudgetPolicy,
     "SecurityLabelPolicy": SecurityLabelPolicy,
     "ExecCompositePolicy": ExecCompositePolicy,
+    "DeletePolicy": DeletePolicy,
 }
 
 
@@ -106,6 +108,11 @@ def _default_registry_data() -> list[dict[str, object]]:
             "name": "ExecCompositePolicy",
             "enabled": True,
             "description": "Handles multi-segment exec commands using Kernel coarse parse metadata.",
+        },
+        {
+            "name": "DeletePolicy",
+            "enabled": True,
+            "description": "Blocks delete-like operations and leaves further continuation to kernel approval flow.",
         },
     ]
 

@@ -2,7 +2,24 @@
   "audit": { "log_allow": true },
 
   "allow": {
-    "tools": ["read", "write", "exec", "gmail_read", "web_fetch", "web_search", "session_status"],
+    "tools": [
+  "read",
+  "write",
+  "edit",
+  "exec",
+  "process",
+  "web_fetch",
+  "web_search",
+  "session_status",
+  "sessions_list",
+  "sessions_history",
+  "sessions_send",
+  "sessions_spawn",
+  "memory_get",
+  "memory_search",
+  "image",
+  "browser"
+],
     "instruction_types": [],
     "categories": []
   },
@@ -14,15 +31,10 @@
   },
 
   "paths": {
+    "allow_prefixes": [],
     "deny_prefixes": [
       "/proc", "/sys", "/dev", "/run",
       "/Windows", "/System32"
-    ],
-    "allow_prefixes": [
-      "re:^/home/[^/]+/.openclaw/workspace",
-      "re:^/home/[^/]+/.openclaw/canvas",
-      "canvas",
-      "workspace"
     ]
   },
 
@@ -30,9 +42,9 @@
   "output_budget": { "max_chars": 500 },
 
   "rate_limit": {
-    "max_consecutive_same_tool": 10,
+    "max_consecutive_same_tool": 20,
     "window_seconds": 10,
-    "max_calls_per_window": 20
+    "max_calls_per_window": 30
   },
 
   "user_aggregate": {
@@ -102,10 +114,15 @@
   },
   "exec_composite_policy": {
   "enabled": true,
-  "allow_multi_read_only": false,
+  "allow_multi_read_only": true,
   "block_if_any_write": true,
   "block_if_any_exec": true
 },
+
+  "delete_policy": {
+    "enabled": true
+  },
+
   "efsm": {
   "enabled": true,
   "initial": "IDLE",
