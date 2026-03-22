@@ -2905,6 +2905,7 @@ def _emit_response_nodes(
     policy_confirmation_state: Optional[str] = None,
     policy_confirmation_accepted: Optional[bool] = None,
     policy_confirmation_rejected: Optional[bool] = None,
+    inactivate_error_type: Optional[str] = None,
 ) -> None:
     incoming = request_data if isinstance(request_data, dict) else {}
     context = _build_device_context(incoming)
@@ -2971,6 +2972,10 @@ def _emit_response_nodes(
     if isinstance(policy_confirmation_rejected, bool):
         policy_confirmation_metadata["policy_confirmation_rejected"] = (
             policy_confirmation_rejected
+        )
+    if isinstance(inactivate_error_type, str) and inactivate_error_type.strip():
+        policy_confirmation_metadata["inactivate_error_type"] = (
+            inactivate_error_type.strip()
         )
     policy_confirmation_extra_metadata: dict[str, Any] = {
         **policy_extra_metadata,
@@ -5034,6 +5039,7 @@ class MyCustomHandler(CustomLogger):
         policy_confirmation_state_for_langfuse: Optional[str] = None
         policy_confirmation_accepted_for_langfuse: Optional[bool] = None
         policy_confirmation_rejected_for_langfuse: Optional[bool] = None
+        inactivate_error_type_for_langfuse: Optional[str] = None
         if apply_info is not None:
             policy_confirmation_state = apply_info.get("policy_confirmation_state")
             if (
@@ -5096,6 +5102,10 @@ class MyCustomHandler(CustomLogger):
                     current_response=final_msg_dict,
                     latest_instructions=latest_instructions,
                 )
+                if not policy_result.modified:
+                    _ia_policy = policy_result.inactivate_error_type
+                    if isinstance(_ia_policy, str) and _ia_policy.strip():
+                        inactivate_error_type_for_langfuse = _ia_policy.strip()
                 if policy_result.modified:
                     error_type_str = (policy_result.error_type or "").strip()
                     # Defer: store state, return confirmation message, don't emit Langfuse violation
@@ -5204,6 +5214,7 @@ class MyCustomHandler(CustomLogger):
             policy_confirmation_state=policy_confirmation_state_for_langfuse,
             policy_confirmation_accepted=policy_confirmation_accepted_for_langfuse,
             policy_confirmation_rejected=policy_confirmation_rejected_for_langfuse,
+            inactivate_error_type=inactivate_error_type_for_langfuse,
         )
         return response
 
@@ -5500,6 +5511,7 @@ class MyCustomHandler(CustomLogger):
         policy_confirmation_state_for_langfuse: Optional[str] = None
         policy_confirmation_accepted_for_langfuse: Optional[bool] = None
         policy_confirmation_rejected_for_langfuse: Optional[bool] = None
+        inactivate_error_type_for_langfuse: Optional[str] = None
         trace_id = trace_id_stream
         if apply_info_stream is not None:
             policy_confirmation_state = apply_info_stream.get(
@@ -5571,6 +5583,10 @@ class MyCustomHandler(CustomLogger):
                     current_response=msg_dict,
                     latest_instructions=latest_instructions,
                 )
+                if not policy_result.modified:
+                    _ia_policy = policy_result.inactivate_error_type
+                    if isinstance(_ia_policy, str) and _ia_policy.strip():
+                        inactivate_error_type_for_langfuse = _ia_policy.strip()
                 if policy_result.modified:
                     error_type_str = (policy_result.error_type or "").strip()
                     # Defer: store state, return confirmation message, don't emit Langfuse violation
@@ -5657,6 +5673,7 @@ class MyCustomHandler(CustomLogger):
             policy_confirmation_state=policy_confirmation_state_for_langfuse,
             policy_confirmation_accepted=policy_confirmation_accepted_for_langfuse,
             policy_confirmation_rejected=policy_confirmation_rejected_for_langfuse,
+            inactivate_error_type=inactivate_error_type_for_langfuse,
         )
 
         if apply_transform and msg_dict is not None:
