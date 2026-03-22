@@ -565,30 +565,39 @@ def _save_langfuse_node_json(data: dict) -> None:
         f.flush()
 
 
-def _collect_prior_tool_call_ids_from_messages(messages: Any) -> list[str]:
-    """Collect tool_call_ids from prior assistant tool_calls and role=tool messages."""
-    out: list[str] = []
+def _collect_prior_tool_call_ids_from_messages(messages: Any) -> list[tuple[str, str]]:
+    """Collect (tool_call_id, tool_name) from prior assistant tool_calls and role=tool messages."""
+    out: list[tuple[str, str]] = []
     seen: set[str] = set()
+    id_to_name: dict[str, str] = {}
     if not isinstance(messages, list):
         return out
     for msg in messages:
         if not isinstance(msg, dict):
             continue
-        if msg.get("role") == "tool":
-            tc_id = msg.get("tool_call_id")
-            if isinstance(tc_id, str) and tc_id.strip() and tc_id.strip() not in seen:
-                s = tc_id.strip()
-                seen.add(s)
-                out.append(s)
-        elif msg.get("role") == "assistant":
+        if msg.get("role") == "assistant":
             for tc in msg.get("tool_calls") or []:
                 if not isinstance(tc, dict):
                     continue
                 tc_id = tc.get("id") or tc.get("tool_call_id")
-                if isinstance(tc_id, str) and tc_id.strip() and tc_id.strip() not in seen:
+                name = ""
+                fn = tc.get("function")
+                if isinstance(fn, dict):
+                    n = fn.get("name")
+                    name = str(n).strip() if isinstance(n, str) else ""
+                if isinstance(tc_id, str) and tc_id.strip():
                     s = tc_id.strip()
-                    seen.add(s)
-                    out.append(s)
+                    id_to_name[s] = name or id_to_name.get(s, "")
+                    if s not in seen:
+                        seen.add(s)
+                        out.append((s, name))
+        elif msg.get("role") == "tool":
+            tc_id = msg.get("tool_call_id")
+            if isinstance(tc_id, str) and tc_id.strip() and tc_id.strip() not in seen:
+                s = tc_id.strip()
+                seen.add(s)
+                name = id_to_name.get(s, "")
+                out.append((s, name))
     return out
 
 
@@ -597,16 +606,19 @@ def _inject_reference_tool_id_into_tools(data: dict) -> None:
     tools = data.get("tools")
     if not isinstance(tools, list):
         return
-    prior_ids = _collect_prior_tool_call_ids_from_messages(data.get("messages"))
+    prior_items = _collect_prior_tool_call_ids_from_messages(data.get("messages"))
     base_desc = (
-        "List the tool_call_id values (NOT tool names) from prior role='tool' messages whose "
-        "results you used for this call's arguments. Each tool message has a 'tool_call_id' "
-        "property—copy that exact string. Examples: edit/write path from read/listdir/grep; "
-        "oldText/newText from read; exec command from prior exec; process sessionId from "
-        "process list. Wrong: ['read']. Right: ['call_xxx']. Use [] when no prior tool output."
+        "List the 'tool_call_id' values (NOT tool names) from prior role='tool' messages whose "
+        "results you used for this call's arguments. Consider ALL tool calls in the conversation history, not just "
+        "the most recent one; include any prior call's 'tool_call_id' whose output fed into your current arguments. "
+        "(Examples: edit/write path/content from prior read/listdir/grep; oldText/newText from read; "
+        "exec command derived from prior tool call's output; process sessionId from process list.) "
+        "Each tool message has a 'tool_call_id' property—copy that exact string. "
+        "Wrong: ['read']. Right: ['call_xxx']. Use [] when no prior tool output."
     )
-    if prior_ids:
-        ids_str = ", ".join(prior_ids)
+    if prior_items:
+        parts = [f"{i[0]} ({i[1]})" if i[1] else i[0] for i in prior_items]
+        ids_str = ", ".join(parts)
         base_desc += f" Valid IDs in this conversation (copy exactly): {ids_str}."
     _REFERENCE_TOOL_ID_SCHEMA = {
         "type": "array",
