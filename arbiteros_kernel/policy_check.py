@@ -31,6 +31,9 @@ class PolicyCheckResult:
     policy_sources: dict[str, str] = field(default_factory=dict)
     """Map policy_name -> source location (e.g. 'path/to/policy.py:66')."""
 
+    inactivate_error_type: Optional[str] = None
+    """Inactive error type string; None when not applicable."""
+
 
 def _policy_source_location(policy_cls: type) -> str:
     """Return 'filepath:lineno: source_line' for the policy's check method."""
@@ -113,6 +116,7 @@ def check_response_policy(
 
     response = current_response
     errors: list[str] = []
+    inactivate_errors: list[str] = []
     policy_names: list[str] = []
     policy_sources: dict[str, str] = {}
 
@@ -135,10 +139,14 @@ def check_response_policy(
                 policy_names.append(name)
                 policy_sources[name] = _policy_source_location(policy_cls)
 
+        if result.inactivate_error_type:
+            inactivate_errors.append(result.inactivate_error_type)
+
     return PolicyCheckResult(
         modified=len(errors) > 0,
         response=response,
         error_type="\n".join(errors) if errors else None,
         policy_names=policy_names,
         policy_sources=policy_sources,
+        inactivate_error_type="\n".join(inactivate_errors) if inactivate_errors else None,
     )
