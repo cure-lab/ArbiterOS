@@ -44,6 +44,7 @@ from rich.pretty import Pretty
 from arbiteros_kernel.langfuse_env import ensure_langfuse_env_compat
 from arbiteros_kernel.policy.defaults import get_policy_descriptions
 from arbiteros_kernel.policy_check import check_response_policy
+from arbiteros_kernel.user_approval import apply_user_approval_preprocessing
 from arbiteros_kernel.policy_runtime import get_runtime
 
 _console = Console()
@@ -5101,6 +5102,14 @@ class MyCustomHandler(CustomLogger):
                                 policy_violation_reason_for_langfuse or ""
                             )
                         _save_instructions_to_trace_file(trace_id, builder)
+            elif apply_info.get("policy_confirmation_rejected"):
+                # 用户选 No（放行）：本次 post_call 已通过 4942 块加入了 original 的 instructions
+                builder = _get_instruction_builder_for_trace(trace_id)
+                if builder is not None:
+                    instrs = getattr(builder, "instructions", []) or []
+                    for instr in instrs[_policy_instruction_count_before:]:
+                        instr["user_approved"] = True
+                    _save_instructions_to_trace_file(trace_id, builder)
         elif not skip_policy_check and isinstance(final_msg_dict, dict):
             if isinstance(trace_id, str) and trace_id.strip():
                 builder = _get_instruction_builder_for_trace(trace_id)
@@ -5108,11 +5117,17 @@ class MyCustomHandler(CustomLogger):
                     list(getattr(builder, "instructions", [])) if builder else []
                 )
                 latest_instructions = instructions[_policy_instruction_count_before:]
+                instructions_for_policy, latest_for_policy = (
+                    apply_user_approval_preprocessing(
+                        instructions=instructions,
+                        latest_instructions=latest_instructions,
+                    )
+                )
                 policy_result = check_response_policy(
                     trace_id=trace_id,
-                    instructions=instructions,
+                    instructions=instructions_for_policy,
                     current_response=final_msg_dict,
-                    latest_instructions=latest_instructions,
+                    latest_instructions=latest_for_policy,
                 )
                 if not policy_result.modified:
                     _ia_policy = policy_result.inactivate_error_type
@@ -5580,6 +5595,15 @@ class MyCustomHandler(CustomLogger):
                                 policy_violation_reason_for_langfuse or ""
                             )
                         _save_instructions_to_trace_file(trace_id, builder)
+            elif apply_info_stream.get("policy_confirmation_rejected"):
+                builder = _get_instruction_builder_for_trace(trace_id)
+                if builder is not None:
+                    instrs = getattr(builder, "instructions", []) or []
+                    for instr in instrs[
+                        _policy_instruction_count_before_stream:
+                    ]:
+                        instr["user_approved"] = True
+                    _save_instructions_to_trace_file(trace_id, builder)
         elif not skip_policy_check_stream and isinstance(msg_dict, dict):
             if isinstance(trace_id, str) and trace_id.strip():
                 builder = _get_instruction_builder_for_trace(trace_id)
@@ -5589,11 +5613,17 @@ class MyCustomHandler(CustomLogger):
                 latest_instructions = instructions[
                     _policy_instruction_count_before_stream:
                 ]
+                instructions_for_policy, latest_for_policy = (
+                    apply_user_approval_preprocessing(
+                        instructions=instructions,
+                        latest_instructions=latest_instructions,
+                    )
+                )
                 policy_result = check_response_policy(
                     trace_id=trace_id,
-                    instructions=instructions,
+                    instructions=instructions_for_policy,
                     current_response=msg_dict,
-                    latest_instructions=latest_instructions,
+                    latest_instructions=latest_for_policy,
                 )
                 if not policy_result.modified:
                     _ia_policy = policy_result.inactivate_error_type
