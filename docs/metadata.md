@@ -41,12 +41,11 @@ Rating whether the **source** of information can be trusted. The primary defence
 
 | Value     | Meaning                                                                                                                                                                                 |
 | --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `HIGH`    | Source is system-controlled or package-manager-verified (e.g. local filesystem under `/usr/`, agent's own memory files). Content can be used directly.                                  |
-| `MID`     | Source is user-controlled or partially trusted (e.g. general home directory, remote devices, other agent sessions). Content should be treated with caution.                             |
+| `HIGH`    | Source is system-controlled or package-manager-verified (e.g. local filesystem under `/usr/`, `/etc/`, agent's own memory files). Content can be used directly.                         |
+| `UNKNOWN` | Source path does not match any entry in the trustworthiness registry, or no path information is available. Neither confirmed trusted nor confirmed untrusted; treat with caution.       |
 | `LOW`     | Source is external and unverified (e.g. web pages, downloaded files, camera/screen captures from third-party nodes, external URLs). Content must be treated as potentially adversarial. |
-| `UNKNOWN` | Trust level has not yet been determined (default before runtime evaluation).                                                                                                            |
 
-> **Resolution rule (worst-case):** When multiple paths or sources are involved, the *lowest* trustworthiness value among them is used.
+> **Ordering: `LOW < UNKNOWN < HIGH`** (worst-case wins). When multiple paths or sources are involved, the *lowest* trustworthiness value among them is used.
 
 ---
 
@@ -54,12 +53,13 @@ Rating whether the **source** of information can be trusted. The primary defence
 
 Rating the agent's own certainty in the plan, memory recall, or decision that produced this instruction. Distinct from trustworthiness: an agent can be highly confident in information from an untrusted source (and still be wrong or manipulated).
 
-| Value     | Meaning                                                                                                         |
-| --------- | --------------------------------------------------------------------------------------------------------------- |
-| `HIGH`    | Agent has strong evidence or direct recall supporting this action.                                              |
-| `MID`     | Agent has partial evidence; some inference or assumption was required.                                          |
-| `LOW`     | Agent is uncertain; the action is speculative or based on weak signals.                                         |
-| `UNKNOWN` | Confidence has not been evaluated (typical for tool-call parse time, before the agent's reasoning is assessed). |
+| Value     | Meaning                                                                                                                                              |
+| --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `HIGH`    | Agent has strong evidence or direct recall supporting this action.                                                                                   |
+| `UNKNOWN` | Confidence has not been evaluated, or the agent has partial evidence with some inference required. Default at tool-call parse time.                   |
+| `LOW`     | Agent is uncertain; the action is speculative or based on weak signals.                                                                              |
+
+> **Ordering: `LOW < UNKNOWN < HIGH`**
 
 ---
 
@@ -83,11 +83,10 @@ Rating the sensitivity of the data **produced or accessed** by this instruction.
 | Value     | Meaning                                                                                                                                                                                   |
 | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `HIGH`    | Data is highly sensitive and must not be stored or transmitted without explicit approval (e.g. private keys, credentials, `/etc/shadow`, conversation history, camera/location captures). |
-| `MID`     | Data is moderately sensitive; treat with care and limit exposure (e.g. general config files, system logs, user home directories, message content).                                        |
-| `LOW`     | Data carries no significant sensitivity; safe to log and forward (e.g. public documentation, write-operation acknowledgements, cron schedules).                                           |
-| `UNKNOWN` | Sensitivity has not yet been classified.                                                                                                                                                  |
+| `UNKNOWN` | Data sensitivity has not been classified; treat conservatively.                                                                                                                           |
+| `LOW`     | Data carries no significant sensitivity; safe to log and forward (e.g. public documentation, system binaries, `/tmp` files, source code).                                                |
 
-> **Resolution rule (highest-wins):** When multiple paths or sources are involved, the *highest* confidentiality value among them is used.
+> **Ordering: `LOW < UNKNOWN < HIGH`** (highest-wins). When multiple paths or sources are involved, the *highest* confidentiality value among them is used.
 
 ---
 
@@ -98,8 +97,8 @@ Rating the inherent danger of **executing** this instruction, independent of wha
 | Value     | Meaning                                                                                                                                                                          |
 | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `HIGH`    | Command is known to cause irreversible damage or destructive side-effects (e.g. `rm`, `dd`, `shutdown`, `kill`, `git clean`). Requires explicit approval before execution.       |
-| `LOW`     | Command is explicitly known to be safe and read-only with no side effects (e.g. `ls`, `echo`, `cd`, `pwd`, `whoami`). Can be executed with minimal scrutiny.                    |
 | `UNKNOWN` | Command is not listed in the risk registry — neither confirmed safe nor confirmed dangerous (e.g. `cat`, `python`, `git commit`). Apply default policy scrutiny.                 |
+| `LOW`     | Command is explicitly known to be safe and read-only with no side effects (e.g. `ls`, `echo`, `cd`, `pwd`, `whoami`). Can be executed with minimal scrutiny.                    |
 
 > **Resolution rule (highest-wins across pipeline):** A single `HIGH`-risk segment in a pipeline taints the entire command to `HIGH`. `LOW` only applies when every segment resolves to `LOW` and none resolve to `HIGH` or `UNKNOWN`.
 >

@@ -171,21 +171,21 @@ class TestClassifyConfidentiality:
     def test_high_confidentiality_ssh_key(self):
         assert _classify_confidentiality(["~/.ssh/id_rsa"]) == "HIGH"
 
-    def test_mid_confidentiality_etc_generic(self):
-        # /etc/hostname is NOT matched by any HIGH pattern, falls to MID (/etc/*)
-        assert _classify_confidentiality(["/etc/hostname"]) == "MID"
+    def test_high_confidentiality_etc_generic(self):
+        # /etc/hostname matches /etc/* → HIGH
+        assert _classify_confidentiality(["/etc/hostname"]) == "HIGH"
 
-    def test_mid_confidentiality_home_general(self):
-        # A regular file in /home, not matching any HIGH pattern
-        assert _classify_confidentiality(["/home/user/notes.txt"]) == "MID"
+    def test_high_confidentiality_home_general(self):
+        # A regular file in /home matches /home/** → HIGH
+        assert _classify_confidentiality(["/home/user/notes.txt"]) == "HIGH"
 
-    def test_mid_confidentiality_yaml_extension(self):
-        # *.yaml is in MID
-        assert _classify_confidentiality(["/home/user/config.yaml"]) == "MID"
+    def test_high_confidentiality_yaml_extension(self):
+        # *.yaml is in HIGH
+        assert _classify_confidentiality(["/home/user/config.yaml"]) == "HIGH"
 
-    def test_unknown_confidentiality_unmatched(self):
-        # A path that doesn't match any pattern
-        assert _classify_confidentiality(["/proc/version"]) == "MID"
+    def test_low_confidentiality_proc(self):
+        # /proc/* is in LOW (virtual kernel fs)
+        assert _classify_confidentiality(["/proc/version"]) == "LOW"
 
     def test_high_wins_when_mixed(self):
         # Mix of low-confidentiality and high-confidentiality paths
@@ -210,12 +210,12 @@ class TestClassifyTrustworthiness:
     def test_low_trust_downloads_dir(self):
         assert _classify_trustworthiness(["/home/user/Downloads/malware.sh"]) == "LOW"
 
-    def test_mid_trust_tmp(self):
-        assert _classify_trustworthiness(["/tmp/scratch.sh"]) == "MID"
+    def test_low_trust_tmp(self):
+        assert _classify_trustworthiness(["/tmp/scratch.sh"]) == "LOW"
 
-    def test_mid_trust_home_general(self):
-        # /home/user/file.txt matches /home/* → MID
-        assert _classify_trustworthiness(["/home/user/script.py"]) == "MID"
+    def test_low_trust_home_general(self):
+        # /home/user/file.txt matches /home/* → LOW
+        assert _classify_trustworthiness(["/home/user/script.py"]) == "LOW"
 
     def test_high_trust_system_binary(self):
         assert _classify_trustworthiness(["/usr/bin/python3"]) == "HIGH"
@@ -553,6 +553,7 @@ class TestParseExec:
     def test_write_command_rm(self):
         r = parse_tool_instruction("exec", {"command": "rm -rf /tmp/old"})
         assert r.instruction_type == "WRITE"
+        assert r.security_type["reversible"] is True
 
     def test_empty_command_defaults_exec(self):
         r = parse_tool_instruction("exec", {"command": ""})
@@ -676,12 +677,11 @@ class TestParseExec:
     def test_redirect_output_bare_file_traced(self):
         """A redirect target must be traced for security classification.
 
-        /tmp/* is MID confidentiality in the source registry.
         """
         r = parse_tool_instruction("exec", {"command": "python test.py > /tmp/out.txt"})
         assert r.instruction_type == "EXEC"
         assert r.security_type is not None
-        assert r.security_type["confidentiality"] == "MID"  # /tmp/* → MID
+        assert r.security_type["confidentiality"] == "LOW"  # /tmp/* → LOW
 
     def test_redirect_output_absolute_path_high_conf(self):
         """Absolute-path redirect targets pick up registry-based confidentiality."""
@@ -694,22 +694,22 @@ class TestParseExec:
         """The >> append operator also causes its target to be traced."""
         r = parse_tool_instruction("exec", {"command": "python run.py >> /tmp/log.txt"})
         assert r.security_type is not None
-        assert r.security_type["confidentiality"] == "MID"  # /tmp/* → MID
+        assert r.security_type["confidentiality"] == "LOW"  # /tmp/* → LOW
 
     def test_redirect_stdin_bare_file_traced(self):
         """The < stdin redirect target is traced as a file path."""
         r = parse_tool_instruction("exec", {"command": "python process.py < /tmp/input.txt"})
         assert r.security_type is not None
-        assert r.security_type["confidentiality"] == "MID"  # /tmp/* → MID
+        assert r.security_type["confidentiality"] == "LOW"  # /tmp/* → LOW
 
     def test_redirect_target_tmp_path_conf_and_trust(self):
-        """Redirect to /tmp/ is classified as MID conf and MID trust."""
+        """Redirect to /tmp/ is classified as LOW conf and LOW trust."""
         r = parse_tool_instruction(
             "exec", {"command": "python run.py > /tmp/output.log"}
         )
         assert r.security_type is not None
-        assert r.security_type["confidentiality"] == "MID"  # /tmp/* → MID
-        assert r.security_type["trustworthiness"] == "MID"  # /tmp/* → MID
+        assert r.security_type["confidentiality"] == "LOW"  # /tmp/* → LOW
+        assert r.security_type["trustworthiness"] == "LOW"  # /tmp/* → LOW
 
     def test_redirect_with_low_trust_url_in_pipeline(self):
         """Combining a low-trust URL source with a redirect target propagates LOW trust."""
@@ -734,8 +734,8 @@ class TestParseExec:
         )
         assert r.instruction_type == "EXEC"
         assert r.security_type is not None
-        # Both /tmp/*.txt files are MID confidentiality via /tmp/* pattern.
-        assert r.security_type["confidentiality"] == "MID"
+        # Both /tmp/*.txt files are LOW confidentiality via /tmp/* pattern.
+        assert r.security_type["confidentiality"] == "LOW"
 
         # Only the output file should appear in the user registry.
         all_registered = get_user_registered_paths()
@@ -753,8 +753,8 @@ class TestParseExec:
         )
         assert r.instruction_type == "EXEC"
         assert r.security_type is not None
-        # Both /tmp/*.txt files are MID confidentiality via /tmp/* pattern.
-        assert r.security_type["confidentiality"] == "MID"
+        # Both /tmp/*.txt files are LOW confidentiality via /tmp/* pattern.
+        assert r.security_type["confidentiality"] == "LOW"
 
         # Only the tee output file should appear in the user registry.
         all_registered = get_user_registered_paths()
@@ -896,11 +896,11 @@ class TestParseCanvas:
 
 class TestParseNodes:
     @pytest.mark.parametrize("action", ["status", "describe", "pending", "camera_list"])
-    def test_mid_read_actions(self, action):
+    def test_high_conf_info_actions(self, action):
         r = parse_tool_instruction("nodes", {"action": action})
         assert r.instruction_type == "READ"
         assert r.security_type is not None
-        assert r.security_type["confidentiality"] == "MID"
+        assert r.security_type["confidentiality"] == "HIGH"
 
     @pytest.mark.parametrize(
         "action", ["camera_snap", "camera_clip", "screen_record", "location_get"]
@@ -944,7 +944,7 @@ class TestParseMessage:
         assert r.instruction_type == "WRITE"
         assert r.security_type is not None
         assert r.security_type["reversible"] is True
-        assert r.security_type["confidentiality"] == "MID"
+        assert r.security_type["confidentiality"] == "HIGH"
 
     @pytest.mark.parametrize("action", ["send", "broadcast", "react", "delete", ""])
     def test_other_actions_are_exec(self, action):
@@ -968,7 +968,7 @@ class TestParseGateway:
         r = parse_tool_instruction("gateway", {"action": action})
         assert r.instruction_type == "READ"
         assert r.security_type is not None
-        assert r.security_type["confidentiality"] == "MID"
+        assert r.security_type["confidentiality"] == "HIGH"
 
     @pytest.mark.parametrize("action", ["config.apply", "config.patch"])
     def test_write_actions(self, action):
@@ -1043,15 +1043,15 @@ class TestParseImage:
     def test_local_path_uses_registry(self):
         r = parse_tool_instruction("image", {"image": "/home/user/photo.png"})
         assert r.instruction_type == "READ"
-        # /home/user/photo.png → MID trust (matches /home/*)
+        # /home/user/photo.png → LOW trust (matches /home/*)
         assert r.security_type is not None
-        assert r.security_type["trustworthiness"] == "MID"
+        assert r.security_type["trustworthiness"] == "LOW"
 
-    def test_no_image_uses_mid_default(self):
+    def test_no_image_uses_high_default(self):
         r = parse_tool_instruction("image", {})
         assert r.instruction_type == "READ"
         assert r.security_type is not None
-        assert r.security_type["confidentiality"] == "MID"
+        assert r.security_type["confidentiality"] == "HIGH"
 
 
 class TestParseMemory:

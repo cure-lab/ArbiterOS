@@ -17,7 +17,7 @@ SecurityType = Dict[str, Any]
 RuleType = Dict[str, Any]
 Instruction = Dict[str, Any]
 
-SecurityLevel = Literal["LOW", "MID", "HIGH", "UNKNOWN"]
+SecurityLevel = Literal["LOW", "HIGH", "UNKNOWN"]
 AuthorityLevel = Literal[
     "HUMAN_APPROVED",
     "POLICY_APPROVED",
@@ -116,12 +116,11 @@ INSTRUCTION_TYPE_TO_CATEGORY: Dict[str, str] = {
 # ---------------------------------------------------------------------------
 
 
-# LOW(0) < UNKNOWN(0.5) < MID(1) < HIGH(2); UNKNOWN stays as UNKNOWN in output
+# LOW(0) < UNKNOWN(10) < HIGH(20); UNKNOWN is the middle sentinel
 LEVEL_ORDER: Dict[str, float] = {
     "LOW": 0,
-    "UNKNOWN": 0.5,
-    "MID": 1,
-    "HIGH": 2,
+    "UNKNOWN": 10,
+    "HIGH": 20,
 }
 
 # All concrete (non-sentinel) levels sorted low → high.
@@ -153,26 +152,21 @@ def compute_taint_status_from_instructions(
 
     Aggregation rules:
     - trustworthiness: minimum across all instructions (least trusted wins)
-    - confidentiality:  maximum across all instructions (most sensitive wins)
+    - confidentiality: maximum across all instructions (most sensitive wins)
 
-    UNKNOWN semantics (registry does not define UNKNOWN):
-    - trustworthiness: UNKNOWN participates with score 0.5; when UNKNOWN wins, normalised to MID.
-    - confidentiality: UNKNOWN participates with score 0.5; when UNKNOWN wins, normalised to LOW.
-    - Final output is always LOW, MID, or HIGH — never UNKNOWN.
+    - Output is LOW, HIGH, or UNKNOWN.
     """
     trust_vals = collect_levels(instructions, "trustworthiness")
     conf_vals = collect_levels(instructions, "confidentiality")
 
-    # UNKNOWN participates in min/max (LEVEL_ORDER has UNKNOWN=0.5)
-    raw_trust = (
-        min(trust_vals, key=lambda v: LEVEL_ORDER[v])
-        if trust_vals
-        else "UNKNOWN"
+    # UNKNOWN participates in min/max (LEVEL_ORDER has UNKNOWN=10)
+    raw_trust: SecurityLevel = cast(
+        SecurityLevel,
+        min(trust_vals, key=lambda v: LEVEL_ORDER[v]) if trust_vals else "UNKNOWN",
     )
-    raw_conf = (
-        max(conf_vals, key=lambda v: LEVEL_ORDER[v])
-        if conf_vals
-        else "UNKNOWN"
+    raw_conf: SecurityLevel = cast(
+        SecurityLevel,
+        max(conf_vals, key=lambda v: LEVEL_ORDER[v]) if conf_vals else "UNKNOWN",
     )
 
     if raw_trust == "UNKNOWN":
@@ -180,13 +174,11 @@ def compute_taint_status_from_instructions(
             "compute_taint_status_from_instructions: trustworthiness resolved to "
             "UNKNOWN (no concrete level found); keeping as UNKNOWN."
         )
-        raw_trust = "MID"
     if raw_conf == "UNKNOWN":
         logger.warning(
             "compute_taint_status_from_instructions: confidentiality resolved to "
-            "UNKNOWN (no concrete level found); normalised to LOW."
+            "UNKNOWN (no concrete level found); keeping as UNKNOWN."
         )
-        raw_conf = "LOW"
 
     return TaintStatus(trustworthiness=raw_trust, confidentiality=raw_conf)
 
@@ -203,7 +195,7 @@ def compute_prop_taint_for_instruction(
     """
     st = instr.get("security_type")
     if not isinstance(st, dict):
-        return TaintStatus(trustworthiness="MID", confidentiality="LOW")
+        return TaintStatus(trustworthiness="UNKNOWN", confidentiality="UNKNOWN")
 
     def _safe_level(v: Any) -> str:
         s = v if isinstance(v, str) else "UNKNOWN"
@@ -216,8 +208,8 @@ def compute_prop_taint_for_instruction(
     if not isinstance(content, dict) or "tool_name" not in content:
         # Pure text: use own values
         return TaintStatus(
-            trustworthiness=own_trust if own_trust in LEVEL_ORDER else "MID",
-            confidentiality=own_conf if own_conf in LEVEL_ORDER else "LOW",
+            trustworthiness=own_trust if own_trust in LEVEL_ORDER else "UNKNOWN",
+            confidentiality=own_conf if own_conf in LEVEL_ORDER else "UNKNOWN",
         )
 
     # Tool call: collect tool_call_ids to include (self + reference_tool_id)
@@ -252,18 +244,12 @@ def compute_prop_taint_for_instruction(
         if isinstance(prop_trust, str) and prop_trust.strip() in LEVEL_ORDER:
             trust_vals.append(prop_trust.strip())
 
-    raw_trust = (
-        min(trust_vals, key=lambda v: LEVEL_ORDER[v])
-        if trust_vals
-        else "UNKNOWN"
+    raw_trust: SecurityLevel = cast(
+        SecurityLevel,
+        min(trust_vals, key=lambda v: LEVEL_ORDER[v]) if trust_vals else "UNKNOWN",
     )
-    raw_conf = (
-        max(conf_vals, key=lambda v: LEVEL_ORDER[v])
-        if conf_vals
-        else "UNKNOWN"
+    raw_conf: SecurityLevel = cast(
+        SecurityLevel,
+        max(conf_vals, key=lambda v: LEVEL_ORDER[v]) if conf_vals else "UNKNOWN",
     )
-    if raw_trust == "UNKNOWN":
-        raw_trust = "MID"
-    if raw_conf == "UNKNOWN":
-        raw_conf = "LOW"
     return TaintStatus(trustworthiness=raw_trust, confidentiality=raw_conf)

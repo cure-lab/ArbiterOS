@@ -202,11 +202,123 @@ def _parse_exec(
     args: Dict[str, Any], taint_status: Optional[TaintStatus] = None
 ) -> ToolParseResult:
     """
-    exec: classify the shell command using linux_registry.
+    Classify a shell command string and attach a security_type to it.
 
-    In addition to the folded instruction_type/security_type, expose the
-    coarse split result in security_type.custom["exec_parse"] so upper-layer
-    policy can inspect per-segment classification without re-parsing.
+    ## What this does
+
+    The classification pipeline has three stages:
+
+    1. **Pipeline splitting** — `split_pipeline()` tokenises the command string
+       into segments separated by shell operators (``|``, ``&&``, ``;``, ``&``,
+       newline).  This step is quote-aware so that ``sed 's|a|b|'`` is not
+       split at the ``|`` inside the substitution.
+
+    2. **Per-segment classification** — each segment is independently
+       classified for:
+       - *instruction type* (READ / WRITE / EXEC) via the exe registry
+       - *risk* (HIGH / UNKNOWN / LOW) via the exe-risk registry
+       - *path tokens* — path-like arguments and redirect targets extracted
+         from the segment's AST
+
+    3. **Folding** — results across all segments are combined conservatively:
+       - instruction type: highest priority wins (EXEC > WRITE > READ)
+       - risk: highest level wins (HIGH > UNKNOWN > LOW)
+       - confidentiality / trustworthiness: registry lookup over all path
+         tokens; highest confidentiality wins, lowest trustworthiness wins
+
+    Write targets (redirect destinations, ``tee`` arguments) are registered
+    in the user file-taint registry so that future reads of those files
+    inherit the correct security classification.
+
+    The full per-segment breakdown is stored in
+    ``security_type.custom["exec_parse"]`` for upper-layer policy inspection.
+
+    ## Current limitations and known weaknesses
+
+    This parser operates entirely on the **static text** of the command string
+    before execution.  This design has several fundamental limitations:
+
+    ### 1. AST-level shell parsing is incomplete
+
+    The bash grammar is not fully implemented here.  Edge cases that can fool
+    the parser include:
+
+    - *Variable expansion*: ``cmd $SENSITIVE_PATH`` — the path token is
+      ``$SENSITIVE_PATH``, which is not classifiable until the shell expands
+      it at runtime.  The parser will miss the real path entirely.
+    - *Command substitution*: ``cat $(find /etc -name '*.key')`` — the
+      subshell result is opaque at parse time.
+    - *Here-documents and here-strings*: ``bash <<'EOF' ... EOF`` — the
+      embedded script is not recursively parsed.
+    - *Aliases and shell functions*: a seemingly harmless alias
+      ``ll='rm -rf'`` makes ``ll /important`` appear safe.
+    - *Dynamic path construction*: ``path=/etc; cat ${path}/shadow`` — the
+      concatenated path is invisible to the static tokeniser.
+    - *Obfuscated pipelines*: ``base64 -d <<< 'cm0gLXJm...' | bash`` encodes
+      a dangerous command that the risk classifier cannot see.
+
+    ### 2. Path-token heuristics are imprecise
+
+    Whether an argument is a "path" is decided by ``is_path_like()``, which
+    checks for leading ``/``, ``~``, ``./``, ``../``, or URL schemes.  A
+    bare relative filename (``shadow``, ``config``) is not treated as a path
+    even if it resolves to a sensitive file in the current working directory.
+    Similarly, there is no way to know which arguments to an unknown binary
+    are input paths vs. output paths vs. flags.
+
+    ### 3. All metadata fields are registry-bound
+
+    Every security field on the resulting instruction is derived from a
+    statically curated YAML registry — not from runtime observation:
+
+    - ``instruction_type`` / ``reversible`` — ``exe_registry.yaml``
+      (READ / WRITE / EXEC per executable and subcommand)
+    - ``risk``            — ``exe_risk.yaml``
+      (HIGH / UNKNOWN / LOW per executable and subcommand)
+    - ``confidentiality`` — ``file_confidentiality.yaml``
+      (path-pattern → HIGH / UNKNOWN / LOW)
+    - ``trustworthiness`` — ``file_trustworthiness.yaml``
+      (path-pattern → HIGH / UNKNOWN / LOW)
+
+    All four registries are manually curated and will inevitably lag behind
+    new tools, custom executables, and unusual filesystem layouts.  An
+    unknown executable defaults to EXEC / UNKNOWN rather than being blocked,
+    and an unrecognised path defaults to UNKNOWN rather than being treated
+    as sensitive.
+
+    ### 4. No runtime enforcement
+
+    All classifications are advisory metadata attached to the instruction
+    before it is dispatched.  The kernel never observes what the command
+    actually does after execution starts.  A command classified as READ /
+    LOW-risk could still perform destructive I/O that the static analyser
+    failed to predict.
+
+    ## Future direction: syscall-level interception
+
+    The only reliable way to enforce the security classifications computed
+    here is to intercept the kernel system calls made by the process at
+    runtime.  Possible approaches, in increasing order of depth:
+
+    - **eBPF / seccomp-bpf**: attach a BPF program to ``openat``, ``unlinkat``,
+      ``execve``, etc. and enforce allow/deny policies based on the
+      pre-computed security_type.  This gives per-syscall visibility without
+      modifying the process.
+    - **ptrace sandbox**: trace every syscall with ``ptrace(PTRACE_SYSCALL)``
+      and compare opened paths against the confidentiality / trustworthiness
+      registries in real time.  More flexible but higher overhead.
+    - **Linux namespaces + overlay FS**: run the command in a mount namespace
+      with an overlay that makes sensitive paths read-only or invisible,
+      enforcing access control structurally rather than via classification.
+    - **Landlock LSM** (kernel ≥ 5.13): grant only the minimal set of
+      filesystem access rights required for the expected instruction type, and
+      deny everything else without needing a kernel module or root.
+
+    Until syscall-level interception is in place, the classifications produced
+    here should be treated as **best-effort heuristics**, not security
+    guarantees.  Policy decisions (blocking, human-approval gates) based on
+    these fields remain valuable as defence-in-depth but cannot be considered
+    tamper-proof.
     """
     command = str(args.get("command", ""))
 
@@ -278,7 +390,7 @@ def _parse_exec(
         )
     else:
         confidentiality = "LOW"
-        trustworthiness = "MID" if itype == "WRITE" else "HIGH"
+        trustworthiness = "HIGH"
         logger.debug(
             "_parse_exec: no path tokens → confidentiality=%s trustworthiness=%s"
             " (itype=%s fallback)",
@@ -288,7 +400,7 @@ def _parse_exec(
     for write_target in write_targets:
         register_file_taint(write_target, trustworthiness, confidentiality)
 
-    reversible = itype == "READ"
+    reversible = itype != "EXEC"
 
     return ToolParseResult(
         itype,
@@ -321,7 +433,7 @@ def _parse_process(
     if action in {"list", "log"}:
         itype = "READ"
         sec = make_security_type(
-            confidentiality="MID",
+            confidentiality="HIGH",
             trustworthiness="HIGH",
             confidence="UNKNOWN",
             reversible=True,
@@ -339,8 +451,8 @@ def _parse_process(
     else:
         itype = "EXEC"
         sec = make_security_type(
-            confidentiality="MID",
-            trustworthiness="MID",
+            confidentiality="LOW",
+            trustworthiness="HIGH",
             confidence="UNKNOWN",
             reversible=False,
             authority="UNKNOWN",
@@ -372,7 +484,7 @@ def _parse_browser(
     if action in _BROWSER_READ_ACTIONS:
         itype = "READ"
         sec = make_security_type(
-            confidentiality="MID",  # page content may include personal/session data
+            confidentiality="HIGH",  # page content may include personal/session data
             trustworthiness="LOW",  # web content is external and may contain injections
             confidence="UNKNOWN",
             reversible=True,
@@ -437,7 +549,7 @@ def _parse_canvas(
 # ---------------------------------------------------------------------------
 
 # READ actions with moderate confidentiality (device metadata)
-_NODES_READ_ACTIONS_MID = {"status", "describe", "pending", "camera_list"}
+_NODES_INFO_ACTIONS = {"status", "describe", "pending", "camera_list"}
 # READ actions capturing private sensor data — higher confidentiality
 _NODES_READ_ACTIONS_HIGH = {
     "camera_snap",
@@ -456,12 +568,12 @@ def _parse_nodes(
     confidentiality because captured data is inherently privacy-sensitive.
     """
     action = args.get("action", "")
-    if action in _NODES_READ_ACTIONS_MID:
+    if action in _NODES_INFO_ACTIONS:
         return ToolParseResult(
             "READ",
             make_security_type(
-                confidentiality="MID",  # device metadata
-                trustworthiness="MID",  # remote, partially trusted device
+                confidentiality="HIGH",  # device metadata
+                trustworthiness="LOW",  # remote, partially trusted device
                 confidence="UNKNOWN",
                 reversible=True,
                 authority="UNKNOWN",
@@ -472,7 +584,7 @@ def _parse_nodes(
             "READ",
             make_security_type(
                 confidentiality="HIGH",  # camera / screen / location data is private
-                trustworthiness="MID",  # remote device, partially trusted
+                trustworthiness="LOW",  # remote device, partially trusted
                 confidence="UNKNOWN",
                 reversible=True,
                 authority="UNKNOWN",
@@ -482,7 +594,7 @@ def _parse_nodes(
         "EXEC",
         make_security_type(
             confidentiality="LOW",
-            trustworthiness="MID",
+            trustworthiness="LOW",  # remote, partially trusted device
             confidence="UNKNOWN",
             reversible=False,
             authority="UNKNOWN",
@@ -548,7 +660,7 @@ def _parse_message(
         return ToolParseResult(
             "WRITE",
             make_security_type(
-                confidentiality="MID",  # message content may be sensitive
+                confidentiality="HIGH",  # message content may be sensitive
                 trustworthiness="HIGH",
                 confidence="UNKNOWN",
                 reversible=True,  # edits can be reverted
@@ -602,7 +714,7 @@ def _parse_gateway(
         return ToolParseResult(
             "READ",
             make_security_type(
-                confidentiality="MID",  # config may contain keys/secrets
+                confidentiality="HIGH",  # config may contain keys/secrets
                 trustworthiness="HIGH",
                 confidence="UNKNOWN",
                 reversible=True,
@@ -689,13 +801,13 @@ def _make_delegate_result() -> ToolParseResult:
     """Shared result for cross-session DELEGATE operations (send/spawn).
 
     Both actions dispatch a task to another agent session that is only
-    partially trusted, hence MID trustworthiness.
+    partially trusted, hence LOW trustworthiness.
     """
     return ToolParseResult(
         "DELEGATE",
         make_security_type(
-            confidentiality="MID",
-            trustworthiness="MID",  # another agent session, partially trusted
+            confidentiality="HIGH",
+            trustworthiness="LOW",  # another agent session, partially trusted
             confidence="UNKNOWN",
             reversible=False,
             authority="UNKNOWN",
@@ -781,14 +893,14 @@ def _parse_image(
     """image: image analysis (perception) → READ.
 
     Trustworthiness is resolved via file_trustworthiness.yaml — external
-    URLs (http://, https://, …) are classified LOW there, local paths MID.
+    URLs (http://, https://, …) are classified LOW there, local paths also LOW.
     """
     image_src = str(args.get("image", ""))
-    trustworthiness = classify_trustworthiness([image_src]) if image_src else "MID"
+    trustworthiness = classify_trustworthiness([image_src]) if image_src else "LOW"
     return ToolParseResult(
         "READ",
         make_security_type(
-            confidentiality="MID",  # images may contain sensitive visual info
+            confidentiality="HIGH",  # images may contain sensitive visual info
             trustworthiness=trustworthiness,
             confidence="UNKNOWN",
             reversible=True,
@@ -806,12 +918,12 @@ def _make_memory_retrieve_result() -> ToolParseResult:
     """Shared result for agent memory retrieval (search/get).
 
     Both operations read from the agent's own memory store, which is
-    inherently trusted (HIGH) and may contain sensitive experience (MID conf).
+    inherently trusted (HIGH) and may contain sensitive experience (HIGH conf).
     """
     return ToolParseResult(
         "RETRIEVE",
         make_security_type(
-            confidentiality="MID",  # agent memory may contain sensitive experience
+            confidentiality="HIGH",  # agent memory may contain sensitive experience
             trustworthiness="HIGH",  # agent's own memory
             confidence="UNKNOWN",
             reversible=True,

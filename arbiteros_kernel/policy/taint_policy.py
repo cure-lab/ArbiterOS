@@ -44,7 +44,7 @@ _DEFAULT_TOOLS_BY_ACTION: Dict[str, Dict[str, List[str]]] = {
 
 
 def _level_at_least(a: Optional[str], b: Optional[str]) -> bool:
-    """Return True iff level a >= level b. Ordering: LOW < UNKNOWN < MID < HIGH."""
+    """Return True iff level a >= level b. Ordering: LOW < UNKNOWN < HIGH."""
     rank_a = LEVEL_ORDER.get((a or "UNKNOWN").strip(), 0.5)
     rank_b = LEVEL_ORDER.get((b or "UNKNOWN").strip(), 0.5)
     return rank_a >= rank_b
@@ -141,7 +141,7 @@ class TaintPolicy(Policy):
     Taint analysis policy: gates tool calls based on trustworthiness vs confidentiality.
     - Input tools: pass iff trustworthiness >= confidentiality
     - Output tools: pass iff trustworthiness >= prop_confidentiality
-    - Level ordering: LOW < UNKNOWN < MID < HIGH
+    - Level ordering: LOW < UNKNOWN < HIGH
     """
 
     def check(
