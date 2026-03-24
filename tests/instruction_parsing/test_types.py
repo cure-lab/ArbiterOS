@@ -29,8 +29,41 @@ class TestMakeSecurityType:
             "confidence",
             "reversible",
             "authority",
+            "risk",
             "custom",
         }
+
+    def test_risk_defaults_to_low(self):
+        sec = make_security_type(
+            confidentiality="HIGH",
+            trustworthiness="LOW",
+            confidence="UNKNOWN",
+            reversible=False,
+            authority="UNKNOWN",
+        )
+        assert sec["risk"] == "LOW"
+
+    def test_risk_can_be_overridden(self):
+        sec = make_security_type(
+            confidentiality="LOW",
+            trustworthiness="HIGH",
+            confidence="UNKNOWN",
+            reversible=False,
+            authority="UNKNOWN",
+            risk="HIGH",
+        )
+        assert sec["risk"] == "HIGH"
+
+    def test_risk_unknown(self):
+        sec = make_security_type(
+            confidentiality="LOW",
+            trustworthiness="HIGH",
+            confidence="UNKNOWN",
+            reversible=False,
+            authority="UNKNOWN",
+            risk="UNKNOWN",
+        )
+        assert sec["risk"] == "UNKNOWN"
 
     def test_values_passed_through(self):
         sec = make_security_type(

@@ -18,6 +18,7 @@ from typing import Any, Dict, Optional
 from ..helpers.shell import (
     _ITYPE_PRIORITY,
     classify_segment,
+    classify_segment_risk,
     collect_exec_path_tokens,
     split_pipeline,
 )
@@ -221,6 +222,7 @@ def _parse_exec(
                 confidence="UNKNOWN",
                 reversible=False,
                 authority="UNKNOWN",
+                risk="UNKNOWN",
                 custom={
                     "exec_parse": {
                         "command": command,
@@ -251,6 +253,14 @@ def _parse_exec(
     # Instruction type = maximum priority across all segments
     itypes = [classify_segment(s) for s in seg_strings]
     itype = max(itypes, key=lambda t: _ITYPE_PRIORITY.get(t, 0))
+
+    # Risk = highest level across all segments: HIGH > LOW > UNKNOWN
+    risks = [classify_segment_risk(s) for s in seg_strings]
+    risk: str = "HIGH" if "HIGH" in risks else "LOW" if "LOW" in risks else "UNKNOWN"
+    logger.debug(
+        "_parse_exec: segment_risks=%r → risk=%s",
+        risks, risk,
+    )
 
     # Collect file-path tokens and write targets from all pipeline segments.
     # operators is passed so shell.py can resolve relative paths under cd context.
@@ -285,6 +295,7 @@ def _parse_exec(
             confidence="UNKNOWN",
             reversible=reversible,
             authority="UNKNOWN",
+            risk=risk,
             custom={
                 "exec_parse": {
                     "command": command,

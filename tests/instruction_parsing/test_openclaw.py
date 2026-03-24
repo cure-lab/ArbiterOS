@@ -13,6 +13,9 @@ from arbiteros_kernel.instruction_parsing.tool_parsers.linux_registry import (
     classify_exe as _classify_exe,
 )
 from arbiteros_kernel.instruction_parsing.tool_parsers.linux_registry import (
+    classify_exe_risk as _classify_exe_risk,
+)
+from arbiteros_kernel.instruction_parsing.tool_parsers.linux_registry import (
     classify_trustworthiness as _classify_trustworthiness,
 )
 from arbiteros_kernel.instruction_parsing.tool_parsers.linux_registry import (
@@ -20,6 +23,7 @@ from arbiteros_kernel.instruction_parsing.tool_parsers.linux_registry import (
 )
 from arbiteros_kernel.instruction_parsing.helpers.shell import (
     classify_segment as _classify_segment,
+    classify_segment_risk as _classify_segment_risk,
     is_path_like as _is_path_like,
     split_pipeline_str as _split_pipeline_str,
 )
@@ -334,6 +338,121 @@ class TestClassifySegment:
 
 
 # ---------------------------------------------------------------------------
+# _classify_exe_risk
+# ---------------------------------------------------------------------------
+
+
+class TestClassifyExeRisk:
+    # HIGH-risk bare commands
+    @pytest.mark.parametrize(
+        "exe",
+        ["rm", "shred", "wipe", "rmdir", "dd", "mkfs", "fdisk", "parted",
+         "shutdown", "reboot", "halt", "poweroff", "kill", "pkill",
+         "killall", "truncate"],
+    )
+    def test_high_risk_commands(self, exe):
+        assert _classify_exe_risk(exe, None) == "HIGH"
+
+    # HIGH-risk subcommand patterns
+    def test_git_clean_is_high(self):
+        assert _classify_exe_risk("git", "clean") == "HIGH"
+
+    def test_git_reset_is_high(self):
+        assert _classify_exe_risk("git", "reset") == "HIGH"
+
+    # LOW-risk commands
+    @pytest.mark.parametrize(
+        "exe",
+        ["ls", "ll", "dir", "cd", "pwd", "echo", "printf", "which", "whereis",
+         "date", "uname", "uptime", "id", "whoami", "env", "printenv", "true", "false"],
+    )
+    def test_low_risk_commands(self, exe):
+        assert _classify_exe_risk(exe, None) == "LOW"
+
+    # Safe commands that are not explicitly listed default to UNKNOWN
+    @pytest.mark.parametrize(
+        "exe",
+        ["cat", "grep", "python", "bash", "cp", "mv", "chmod"],
+    )
+    def test_safe_commands_return_unknown(self, exe):
+        assert _classify_exe_risk(exe, None) == "UNKNOWN"
+
+    def test_git_log_returns_unknown(self):
+        assert _classify_exe_risk("git", "log") == "UNKNOWN"
+
+    def test_unknown_exe_returns_unknown(self):
+        assert _classify_exe_risk("somecustomtool", None) == "UNKNOWN"
+
+    def test_subcommand_checked_before_bare_exe(self):
+        # "git" alone is UNKNOWN; "git clean" should be HIGH
+        assert _classify_exe_risk("git", "log") == "UNKNOWN"
+        assert _classify_exe_risk("git", "clean") == "HIGH"
+
+    def test_flag_subcommand_ignored(self):
+        # second token starts with - → treated as flag, not subcommand
+        # classify_exe_risk receives subcommand=None when caller detects flag
+        assert _classify_exe_risk("rm", None) == "HIGH"
+
+
+# ---------------------------------------------------------------------------
+# _classify_segment_risk
+# ---------------------------------------------------------------------------
+
+
+class TestClassifySegmentRisk:
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            "rm -rf /tmp/old",
+            "shred /var/log/secure",
+            "dd if=/dev/zero of=/dev/sda",
+            "shutdown -h now",
+            "kill -9 1234",
+            "truncate -s 0 /tmp/big.log",
+            "git clean -fdx",
+            "git reset --hard HEAD",
+        ],
+    )
+    def test_high_risk_segments(self, cmd):
+        assert _classify_segment_risk(cmd) == "HIGH"
+
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            "ls -la",
+            "echo hello",
+            "cd /tmp",
+            "pwd",
+        ],
+    )
+    def test_low_risk_segments(self, cmd):
+        assert _classify_segment_risk(cmd) == "LOW"
+
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            "cat /etc/hosts",
+            "grep root /etc/passwd",
+            "python run.py",
+            "git log --oneline",
+            "git commit -m 'fix'",
+        ],
+    )
+    def test_unknown_risk_segments(self, cmd):
+        assert _classify_segment_risk(cmd) == "UNKNOWN"
+
+    def test_empty_segment_returns_unknown(self):
+        assert _classify_segment_risk("") == "UNKNOWN"
+
+    def test_subshell_rm_returns_high(self):
+        assert _classify_segment_risk("(rm -rf /tmp/junk") == "HIGH"
+
+    def test_multi_command_segment_highest_risk_wins(self):
+        """When a segment contains both HIGH-risk and LOW-risk commands, HIGH wins."""
+        assert _classify_segment_risk("rm /old && ls /tmp") == "HIGH"
+
+
+# ---------------------------------------------------------------------------
 # parse_tool_instruction — individual tool parsers
 # ---------------------------------------------------------------------------
 
@@ -633,6 +752,65 @@ class TestParseExec:
         all_registered = get_user_registered_paths()
         assert "/tmp/output.txt" in all_registered
         assert "/tmp/input.txt" not in all_registered
+
+    # --- Risk classification ---
+
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            "rm -rf /tmp/old",
+            "shred /var/log/auth.log",
+            "dd if=/dev/zero of=/dev/sda",
+            "shutdown -h now",
+            "kill -9 1234",
+            "truncate -s 0 bigfile",
+            "git clean -fdx",
+        ],
+    )
+    def test_exec_high_risk_commands(self, cmd):
+        r = parse_tool_instruction("exec", {"command": cmd})
+        assert r.security_type is not None
+        assert r.security_type["risk"] == "HIGH"
+
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            "ls -la",
+            "echo hello",
+            "cd /tmp",
+            "pwd",
+        ],
+    )
+    def test_exec_low_risk_commands(self, cmd):
+        r = parse_tool_instruction("exec", {"command": cmd})
+        assert r.security_type is not None
+        assert r.security_type["risk"] == "LOW"
+
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            "cat /etc/hosts",
+            "python run.py",
+            "git log --oneline",
+        ],
+    )
+    def test_exec_unknown_risk_commands(self, cmd):
+        r = parse_tool_instruction("exec", {"command": cmd})
+        assert r.security_type is not None
+        assert r.security_type["risk"] == "UNKNOWN"
+
+    def test_exec_risk_high_if_any_segment_is_high(self):
+        """A pipeline with one HIGH-risk segment → overall risk is HIGH."""
+        r = parse_tool_instruction(
+            "exec", {"command": "cat /tmp/data.txt | rm -rf /tmp/old"}
+        )
+        assert r.security_type is not None
+        assert r.security_type["risk"] == "HIGH"
+
+    def test_exec_empty_command_risk_unknown(self):
+        r = parse_tool_instruction("exec", {"command": ""})
+        assert r.security_type is not None
+        assert r.security_type["risk"] == "UNKNOWN"
 
 
 class TestParseProcess:
@@ -992,3 +1170,39 @@ class TestToolParserRegistry:
     def test_unknown_tool_none_args(self):
         r = parse_tool_instruction("not_registered", None)
         assert r.instruction_type == "EXEC"
+
+    # --- All non-exec tools should have risk=LOW by default ---
+
+    @pytest.mark.parametrize(
+        "tool, args",
+        [
+            ("read", {"path": "/tmp/file.txt"}),
+            ("edit", {"path": "/tmp/file.txt"}),
+            ("write", {"path": "/tmp/file.txt"}),
+            ("process", {"action": "list"}),
+            ("browser", {"action": "navigate"}),
+            ("canvas", {"action": "snapshot"}),
+            ("nodes", {"action": "status"}),
+            ("cron", {"action": "add"}),
+            ("message", {"action": "send"}),
+            ("tts", {}),
+            ("gateway", {"action": "restart"}),
+            ("agents_list", {}),
+            ("sessions_list", {}),
+            ("sessions_history", {}),
+            ("sessions_send", {}),
+            ("sessions_spawn", {}),
+            ("session_status", {}),
+            ("web_search", {"query": "test"}),
+            ("web_fetch", {"url": "https://example.com"}),
+            ("image", {"image": "https://example.com/img.jpg"}),
+            ("memory_search", {"query": "test"}),
+            ("memory_get", {"path": "experience/2026"}),
+        ],
+    )
+    def test_non_exec_tools_have_low_risk(self, tool, args):
+        r = parse_tool_instruction(tool, args)
+        assert r.security_type is not None
+        assert r.security_type["risk"] == "LOW", (
+            f"Expected risk=LOW for tool={tool!r}, got {r.security_type['risk']!r}"
+        )

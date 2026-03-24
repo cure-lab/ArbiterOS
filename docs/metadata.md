@@ -91,6 +91,22 @@ Rating the sensitivity of the data **produced or accessed** by this instruction.
 
 ---
 
+#### `RISK` — Execution Danger
+
+Rating the inherent danger of **executing** this instruction, independent of what data it touches. Derived from `exe_risk.yaml` by scanning all pipeline segments; the highest level across all segments wins.
+
+| Value     | Meaning                                                                                                                                                                          |
+| --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `HIGH`    | Command is known to cause irreversible damage or destructive side-effects (e.g. `rm`, `dd`, `shutdown`, `kill`, `git clean`). Requires explicit approval before execution.       |
+| `LOW`     | Command is explicitly known to be safe and read-only with no side effects (e.g. `ls`, `echo`, `cd`, `pwd`, `whoami`). Can be executed with minimal scrutiny.                    |
+| `UNKNOWN` | Command is not listed in the risk registry — neither confirmed safe nor confirmed dangerous (e.g. `cat`, `python`, `git commit`). Apply default policy scrutiny.                 |
+
+> **Resolution rule (highest-wins across pipeline):** A single `HIGH`-risk segment in a pipeline taints the entire command to `HIGH`. `LOW` only applies when every segment resolves to `LOW` and none resolve to `HIGH` or `UNKNOWN`.
+>
+> **Scope:** `RISK` applies only to `exec` tool calls. All other tools (file I/O, browser, agents, etc.) default to `LOW` because their danger is already captured by `REVERSIBLE` and the tool-specific policy.
+
+---
+
 #### `AUTHORITY` — Permission Level
 
 Records the approval state of this instruction relative to human oversight and policy enforcement. Set by the policy engine after evaluation; tool parsers emit `UNKNOWN` as the initial value.

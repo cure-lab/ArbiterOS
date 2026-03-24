@@ -62,6 +62,7 @@ _USER_REGISTRY_DIR = os.environ.get(
 _EXE_SOURCE: Optional[Dict[str, List[str]]] = None
 _FILE_CONF_SOURCE: Optional[Dict[str, List[str]]] = None
 _FILE_TRUST_SOURCE: Optional[Dict[str, List[str]]] = None
+_EXE_RISK_SOURCE: Optional[Dict[str, List[str]]] = None
 
 # ---------------------------------------------------------------------------
 # In-memory state — user layer (persisted on exit / explicit save)
@@ -70,10 +71,12 @@ _FILE_TRUST_SOURCE: Optional[Dict[str, List[str]]] = None
 _EXE_USER: Optional[Dict[str, List[str]]] = None
 _FILE_CONF_USER: Optional[Dict[str, List[str]]] = None
 _FILE_TRUST_USER: Optional[Dict[str, List[str]]] = None
+_EXE_RISK_USER: Optional[Dict[str, List[str]]] = None
 
 _EXE_DIRTY: bool = False
 _FILE_CONF_DIRTY: bool = False
 _FILE_TRUST_DIRTY: bool = False
+_EXE_RISK_DIRTY: bool = False
 
 # ---------------------------------------------------------------------------
 # I/O helpers
@@ -129,7 +132,7 @@ def _ensure_user_registry(path: str, keys: List[str]) -> None:
 
 def _atexit_save() -> None:
     """Flush dirty user registries to ~/.arbiteros/... on interpreter exit."""
-    global _EXE_DIRTY, _FILE_CONF_DIRTY, _FILE_TRUST_DIRTY
+    global _EXE_DIRTY, _FILE_CONF_DIRTY, _FILE_TRUST_DIRTY, _EXE_RISK_DIRTY
     if _EXE_DIRTY and _EXE_USER is not None:
         _save_yaml_registry(_user_path("exe_registry.yaml"), _EXE_USER)
         _EXE_DIRTY = False
@@ -139,6 +142,9 @@ def _atexit_save() -> None:
     if _FILE_TRUST_DIRTY and _FILE_TRUST_USER is not None:
         _save_yaml_registry(_user_path("file_trustworthiness.yaml"), _FILE_TRUST_USER)
         _FILE_TRUST_DIRTY = False
+    if _EXE_RISK_DIRTY and _EXE_RISK_USER is not None:
+        _save_yaml_registry(_user_path("exe_risk.yaml"), _EXE_RISK_USER)
+        _EXE_RISK_DIRTY = False
 
 
 atexit.register(_atexit_save)
@@ -153,6 +159,13 @@ def _get_exe_source() -> Dict[str, List[str]]:
     if _EXE_SOURCE is None:
         _EXE_SOURCE = _load_yaml_registry(_source_path("exe_registry.yaml"))
     return _EXE_SOURCE
+
+
+def _get_exe_risk_source() -> Dict[str, List[str]]:
+    global _EXE_RISK_SOURCE
+    if _EXE_RISK_SOURCE is None:
+        _EXE_RISK_SOURCE = _load_yaml_registry(_source_path("exe_risk.yaml"))
+    return _EXE_RISK_SOURCE
 
 
 def _get_conf_source() -> Dict[str, List[str]]:
@@ -184,6 +197,14 @@ def _get_exe_user() -> Dict[str, List[str]]:
         _ensure_user_registry(_user_path("exe_registry.yaml"), ["EXEC", "WRITE", "READ"])
         _EXE_USER = _load_yaml_registry(_user_path("exe_registry.yaml"))
     return _EXE_USER
+
+
+def _get_exe_risk_user() -> Dict[str, List[str]]:
+    global _EXE_RISK_USER
+    if _EXE_RISK_USER is None:
+        _ensure_user_registry(_user_path("exe_risk.yaml"), ["HIGH", "LOW"])
+        _EXE_RISK_USER = _load_yaml_registry(_user_path("exe_risk.yaml"))
+    return _EXE_RISK_USER
 
 
 def _get_conf_user() -> Dict[str, List[str]]:
@@ -362,6 +383,31 @@ def classify_exe(exe: str, subcommand: Optional[str]) -> str:
                 if candidate in reg.get(category, []):
                     return category
     return "EXEC"
+
+
+def classify_exe_risk(exe: str, subcommand: Optional[str]) -> SecurityLevel:
+    """Return risk level for *exe* based on exe_risk.yaml.
+
+    User registry is checked first; source registry is the fallback.
+    Level priority: HIGH > LOW > UNKNOWN (unmatched).
+    Within the same level, user layer overrides source layer.
+    """
+    candidates: List[str] = []
+    if subcommand:
+        candidates.append(f"{exe} {subcommand}")
+    candidates.append(exe)
+
+    for level in ("HIGH", "LOW"):
+        for layer, reg in (("user", _get_exe_risk_user()), ("source", _get_exe_risk_source())):
+            for candidate in candidates:
+                if candidate in reg.get(level, []):
+                    logger.debug(
+                        "classify_exe_risk: %r (sub=%r) → %s (layer=%s, matched=%r)",
+                        exe, subcommand, level, layer, candidate,
+                    )
+                    return level
+    logger.debug("classify_exe_risk: %r (sub=%r) → UNKNOWN (no match)", exe, subcommand)
+    return "UNKNOWN"
 
 
 def classify_confidentiality(paths: List[str]) -> SecurityLevel:
