@@ -286,14 +286,18 @@ def classify_segment_risk(seg_str: str) -> str:
         except ValueError:
             words_list = [raw.split()]
 
-    if not words_list or not any(words_list):
+    if not words_list:
         logger.debug("classify_segment_risk: no words in %r → UNKNOWN", seg_str)
         return "UNKNOWN"
 
-    result = "UNKNOWN"
+    # HIGH > UNKNOWN > LOW
+    # any UNKNOWN prevents a LOW result.
+    found_any = False
+    all_low = True
     for words in words_list:
         if not words:
             continue
+        found_any = True
         exe = os.path.basename(words[0])
         subcommand: Optional[str] = None
         if len(words) > 1 and not words[1].startswith("-"):
@@ -305,9 +309,13 @@ def classify_segment_risk(seg_str: str) -> str:
         )
         if cmd_risk == "HIGH":
             return "HIGH"
-        if cmd_risk == "LOW":
-            result = "LOW"
-    return result
+        if cmd_risk != "LOW":  # UNKNOWN taints: prevents LOW result
+            all_low = False
+
+    if not found_any:
+        logger.debug("classify_segment_risk: no words in %r → UNKNOWN", seg_str)
+        return "UNKNOWN"
+    return "LOW" if all_low else "UNKNOWN"
 
 
 def _parse_cd_dir(seg_str: str) -> Optional[str]:

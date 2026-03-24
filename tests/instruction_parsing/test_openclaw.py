@@ -448,8 +448,16 @@ class TestClassifySegmentRisk:
         assert _classify_segment_risk("(rm -rf /tmp/junk") == "HIGH"
 
     def test_multi_command_segment_highest_risk_wins(self):
-        """When a segment contains both HIGH-risk and LOW-risk commands, HIGH wins."""
+        """When a segment contains HIGH and LOW commands, HIGH wins."""
         assert _classify_segment_risk("rm /old && ls /tmp") == "HIGH"
+
+    def test_multi_command_segment_unknown_beats_low(self):
+        """UNKNOWN beats LOW: a segment with LOW+UNKNOWN commands yields UNKNOWN."""
+        assert _classify_segment_risk("echo hi && python run.py") == "UNKNOWN"
+
+    def test_multi_command_segment_all_low_yields_low(self):
+        """All LOW commands in a segment → LOW."""
+        assert _classify_segment_risk("echo hi && ls /tmp") == "LOW"
 
 
 # ---------------------------------------------------------------------------
@@ -806,6 +814,24 @@ class TestParseExec:
         )
         assert r.security_type is not None
         assert r.security_type["risk"] == "HIGH"
+
+    def test_exec_risk_low_plus_high_yields_high(self):
+        """LOW-risk segment followed by HIGH-risk segment → HIGH wins (LOW+HIGH=HIGH)."""
+        r = parse_tool_instruction("exec", {"command": "echo hello && rm -rf /tmp/old"})
+        assert r.security_type is not None
+        assert r.security_type["risk"] == "HIGH"
+
+    def test_exec_risk_low_plus_unknown_yields_unknown(self):
+        """LOW-risk + UNKNOWN-risk → UNKNOWN wins over LOW."""
+        r = parse_tool_instruction("exec", {"command": "echo hello && python run.py"})
+        assert r.security_type is not None
+        assert r.security_type["risk"] == "UNKNOWN"
+
+    def test_exec_risk_all_low_yields_low(self):
+        """All LOW-risk segments → overall risk is LOW."""
+        r = parse_tool_instruction("exec", {"command": "echo hi && ls /tmp && pwd"})
+        assert r.security_type is not None
+        assert r.security_type["risk"] == "LOW"
 
     def test_exec_empty_command_risk_unknown(self):
         r = parse_tool_instruction("exec", {"command": ""})

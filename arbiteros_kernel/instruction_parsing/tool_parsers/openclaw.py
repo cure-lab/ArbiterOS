@@ -254,9 +254,12 @@ def _parse_exec(
     itypes = [classify_segment(s) for s in seg_strings]
     itype = max(itypes, key=lambda t: _ITYPE_PRIORITY.get(t, 0))
 
-    # Risk = highest level across all segments: HIGH > LOW > UNKNOWN
+    # Risk folding: HIGH > UNKNOWN > LOW
+    # HIGH  — any segment is definitively dangerous
+    # UNKNOWN — any segment is unanalysed (beats LOW for conservative policy)
+    # LOW   — only when every segment is explicitly confirmed safe
     risks = [classify_segment_risk(s) for s in seg_strings]
-    risk: str = "HIGH" if "HIGH" in risks else "LOW" if "LOW" in risks else "UNKNOWN"
+    risk: str = "HIGH" if "HIGH" in risks else "UNKNOWN" if "UNKNOWN" in risks else "LOW"
     logger.debug(
         "_parse_exec: segment_risks=%r → risk=%s",
         risks, risk,
