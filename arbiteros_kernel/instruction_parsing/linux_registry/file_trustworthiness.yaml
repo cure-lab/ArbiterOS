@@ -1,17 +1,17 @@
 # File-path trustworthiness classification.
 #
-# Keys   : HIGH | MID | LOW
+# Keys   : HIGH | LOW
 # Values : glob patterns matched against individual path-like tokens extracted
 #          from shell commands (using fnmatch / PurePosixPath.match).
 #
 # Matching priority (worst-case / most conservative wins):
 #   LOW is checked first — if ANY path matches a LOW pattern the result is LOW.
-#   Then MID, then HIGH.  If nothing matches, the default is MID.
+#   Then HIGH.  If nothing matches, the default is UNKNOWN.
 #
 # Rationale
-#   LOW  — content received from external / untrusted sources; potential for
-#           prompt injection or malicious payloads.
-#   MID  — user-controlled or shared areas; trusted only within user context.
+#   LOW  — content received from external / untrusted sources, user-controlled
+#           areas, or shared/temporary directories; potential for prompt
+#           injection or malicious payloads.
 #   HIGH — system-managed or package-manager-installed paths; content is
 #           generally verified by the OS or a trusted build pipeline.
 
@@ -32,13 +32,6 @@ LOW:
   - ~/Downloads/**
   - ~/Download/*
 
-  # ── Web-served / uploaded content ───────────────────────────────────────────
-  - /var/www/html/*
-  - /var/www/uploads/*
-  - /var/www/upload/*
-  - /srv/http/*
-  - /srv/www/*
-
   # ── Upload / import staging directories ─────────────────────────────────────
   - /tmp/upload/*
   - /tmp/uploads/*
@@ -55,7 +48,6 @@ LOW:
   - /var/run/docker.sock
   - /run/docker.sock
 
-MID:
   # ── Shared temporary directories ─────────────────────────────────────────────
   - /tmp/*
   - /tmp/**
@@ -64,13 +56,7 @@ MID:
   - /run/*
   - /run/user/*
 
-  # ── Package / build caches ───────────────────────────────────────────────────
-  - /var/cache/*
-  - /var/cache/**
-  - ~/.cache/*
-  - ~/.cache/**
-
-  # ── General user home (user-controlled but not externally sourced) ───────────
+  # ── General user home (user-controlled, not explicitly verified) ──────────────
   - /home/*
   - /home/**
   - ~/.*
@@ -101,17 +87,6 @@ HIGH:
   - /etc/*
   - /etc/**
 
-  # ── Verified project workspace directories ────────────────────────────────────
-  - /home/*/projects/*
-  - /home/*/projects/**
-  - /home/*/workspace/*
-  - /home/*/workspace/**
-  - /home/*/src/*
-  - /home/*/src/**
-  - /home/*/dev/*
-  - /home/*/dev/**
-  - /root/projects/*
-
   # ── Installed application data ────────────────────────────────────────────────
   - /opt/*
   - /opt/**
@@ -119,17 +94,9 @@ HIGH:
   - /snap/**
 
   # ── OpenClaw managed resources ───────────────────────────────────────────────
-  # ~/.openclaw/skills/  — installed by the openclaw CLI update pipeline;
-  #   treated as package-manager-equivalent (verified before installation).
-  # ~/.openclaw/workspace/ (and workspace-*/) — the agent's own self-authored
-  #   memory; not externally sourced.
-  #   NOTE: trustworthiness uses worst-case resolution (LOW wins over MID over HIGH),
-  #   so these entries only take effect when no LOW/MID pattern matches first.
-  #   The general ~/.*/** MID catch-all means workspace paths resolve to MID
-  #   in practice, which correctly reflects that workspace is user-editable content.
   - ~/.openclaw/skills/**
   - ~/.openclaw/workspace/**
   - ~/.openclaw/workspace-*/**
 
-    # ── ArbiterOS kernel config ────────────────────────────────────────────────
+  # ── ArbiterOS kernel config ────────────────────────────────────────────────
   - ~/.arbiteros/*

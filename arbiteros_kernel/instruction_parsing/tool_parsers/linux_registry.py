@@ -156,8 +156,8 @@ atexit.register(_atexit_save)
 # exist, so existing user customisations are never overwritten.
 
 _ensure_user_registry(_user_path("exe_registry.yaml"), ["EXEC", "WRITE", "READ"])
-_ensure_user_registry(_user_path("file_confidentiality.yaml"), ["HIGH", "MID", "LOW"])
-_ensure_user_registry(_user_path("file_trustworthiness.yaml"), ["HIGH", "MID", "LOW"])
+_ensure_user_registry(_user_path("file_confidentiality.yaml"), ["HIGH", "LOW"])
+_ensure_user_registry(_user_path("file_trustworthiness.yaml"), ["HIGH", "LOW"])
 _ensure_user_registry(_user_path("exe_risk.yaml"), ["HIGH", "LOW"])
 
 # ---------------------------------------------------------------------------
@@ -222,7 +222,7 @@ def _get_conf_user() -> Dict[str, List[str]]:
     global _FILE_CONF_USER
     if _FILE_CONF_USER is None:
         _ensure_user_registry(
-            _user_path("file_confidentiality.yaml"), ["HIGH", "MID", "LOW"]
+            _user_path("file_confidentiality.yaml"), ["HIGH", "LOW"]
         )
         _FILE_CONF_USER = _load_yaml_registry(_user_path("file_confidentiality.yaml"))
     return _FILE_CONF_USER
@@ -232,7 +232,7 @@ def _get_trust_user() -> Dict[str, List[str]]:
     global _FILE_TRUST_USER
     if _FILE_TRUST_USER is None:
         _ensure_user_registry(
-            _user_path("file_trustworthiness.yaml"), ["HIGH", "MID", "LOW"]
+            _user_path("file_trustworthiness.yaml"), ["HIGH", "LOW"]
         )
         _FILE_TRUST_USER = _load_yaml_registry(_user_path("file_trustworthiness.yaml"))
     return _FILE_TRUST_USER
@@ -314,8 +314,8 @@ def register_file_taint(
 
     The effective label stored is the worst-case of the supplied taint and the
     source-layer classification for the path:
-      • confidentiality: higher level wins  (HIGH > MID > LOW > UNKNOWN)
-      • trustworthiness: lower  level wins  (LOW  < MID < HIGH < UNKNOWN)
+      • confidentiality: higher level wins  (HIGH > LOW > UNKNOWN)
+      • trustworthiness: lower  level wins  (LOW  < HIGH < UNKNOWN)
 
     This ensures that a file's inherent sensitivity (e.g. .env → HIGH conf in
     the source registry) is never downgraded by a low-taint write.
@@ -349,22 +349,23 @@ def register_file_taint(
     )
 
     # Worst-case: more restrictive of source and taint.
-    # UNKNOWN normalisation: confidentiality → LOW, trustworthiness → MID.
+    # UNKNOWN normalisation: confidentiality → UNKNOWN, trustworthiness → UNKNOWN.
     _raw_conf: SecurityLevel = max(
         confidentiality, source_conf, key=lambda v: LEVEL_ORDER.get(v, 1)
     )
-    effective_conf: SecurityLevel = "LOW" if _raw_conf == "UNKNOWN" else _raw_conf
+    effective_conf: SecurityLevel = _raw_conf
     _raw_trust: SecurityLevel = min(
         trustworthiness, source_trust, key=lambda v: LEVEL_ORDER.get(v, 1)
     )
-    effective_trust: SecurityLevel = "MID" if _raw_trust == "UNKNOWN" else _raw_trust
+    effective_trust: SecurityLevel = _raw_trust
 
     conf = _get_conf_user()
     for lvl in ALL_LEVELS:
         entries = conf.setdefault(lvl, [])
         if path in entries:
             entries.remove(path)
-    conf.setdefault(effective_conf, []).append(path)
+    if effective_conf != "UNKNOWN":
+        conf.setdefault(effective_conf, []).append(path)
     _FILE_CONF_DIRTY = True
 
     trust = _get_trust_user()
@@ -372,7 +373,8 @@ def register_file_taint(
         entries = trust.setdefault(lvl, [])
         if path in entries:
             entries.remove(path)
-    trust.setdefault(effective_trust, []).append(path)
+    if effective_trust != "UNKNOWN":
+        trust.setdefault(effective_trust, []).append(path)
     _FILE_TRUST_DIRTY = True
 
 
@@ -425,7 +427,7 @@ def classify_confidentiality(paths: List[str]) -> SecurityLevel:
     """Return highest confidentiality level matching any of *paths*.
 
     User registry is checked first; source registry is the fallback.
-    Priority: HIGH > MID > LOW; default UNKNOWN.
+    Priority: HIGH > LOW; default UNKNOWN.
     """
     if not paths:
         return "UNKNOWN"
@@ -456,7 +458,7 @@ def classify_trustworthiness(paths: List[str]) -> SecurityLevel:
     """Return lowest trustworthiness level matching any of *paths*.
 
     User registry is checked first; source registry is the fallback.
-    Priority: LOW > MID > HIGH (worst-case wins); default UNKNOWN.
+    Priority: LOW > HIGH (worst-case wins); default UNKNOWN.
     """
     if not paths:
         return "UNKNOWN"

@@ -278,7 +278,7 @@ def _parse_exec(
         )
     else:
         confidentiality = "LOW"
-        trustworthiness = "MID" if itype == "WRITE" else "HIGH"
+        trustworthiness = "HIGH"
         logger.debug(
             "_parse_exec: no path tokens → confidentiality=%s trustworthiness=%s"
             " (itype=%s fallback)",
@@ -288,7 +288,7 @@ def _parse_exec(
     for write_target in write_targets:
         register_file_taint(write_target, trustworthiness, confidentiality)
 
-    reversible = itype == "READ"
+    reversible = itype != "EXEC"
 
     return ToolParseResult(
         itype,
@@ -321,7 +321,7 @@ def _parse_process(
     if action in {"list", "log"}:
         itype = "READ"
         sec = make_security_type(
-            confidentiality="MID",
+            confidentiality="HIGH",
             trustworthiness="HIGH",
             confidence="UNKNOWN",
             reversible=True,
@@ -339,8 +339,8 @@ def _parse_process(
     else:
         itype = "EXEC"
         sec = make_security_type(
-            confidentiality="MID",
-            trustworthiness="MID",
+            confidentiality="LOW",
+            trustworthiness="HIGH",
             confidence="UNKNOWN",
             reversible=False,
             authority="UNKNOWN",
@@ -372,7 +372,7 @@ def _parse_browser(
     if action in _BROWSER_READ_ACTIONS:
         itype = "READ"
         sec = make_security_type(
-            confidentiality="MID",  # page content may include personal/session data
+            confidentiality="HIGH",  # page content may include personal/session data
             trustworthiness="LOW",  # web content is external and may contain injections
             confidence="UNKNOWN",
             reversible=True,
@@ -437,7 +437,7 @@ def _parse_canvas(
 # ---------------------------------------------------------------------------
 
 # READ actions with moderate confidentiality (device metadata)
-_NODES_READ_ACTIONS_MID = {"status", "describe", "pending", "camera_list"}
+_NODES_INFO_ACTIONS = {"status", "describe", "pending", "camera_list"}
 # READ actions capturing private sensor data — higher confidentiality
 _NODES_READ_ACTIONS_HIGH = {
     "camera_snap",
@@ -456,12 +456,12 @@ def _parse_nodes(
     confidentiality because captured data is inherently privacy-sensitive.
     """
     action = args.get("action", "")
-    if action in _NODES_READ_ACTIONS_MID:
+    if action in _NODES_INFO_ACTIONS:
         return ToolParseResult(
             "READ",
             make_security_type(
-                confidentiality="MID",  # device metadata
-                trustworthiness="MID",  # remote, partially trusted device
+                confidentiality="HIGH",  # device metadata
+                trustworthiness="LOW",  # remote, partially trusted device
                 confidence="UNKNOWN",
                 reversible=True,
                 authority="UNKNOWN",
@@ -472,7 +472,7 @@ def _parse_nodes(
             "READ",
             make_security_type(
                 confidentiality="HIGH",  # camera / screen / location data is private
-                trustworthiness="MID",  # remote device, partially trusted
+                trustworthiness="LOW",  # remote device, partially trusted
                 confidence="UNKNOWN",
                 reversible=True,
                 authority="UNKNOWN",
@@ -482,7 +482,7 @@ def _parse_nodes(
         "EXEC",
         make_security_type(
             confidentiality="LOW",
-            trustworthiness="MID",
+            trustworthiness="LOW",  # remote, partially trusted device
             confidence="UNKNOWN",
             reversible=False,
             authority="UNKNOWN",
@@ -548,7 +548,7 @@ def _parse_message(
         return ToolParseResult(
             "WRITE",
             make_security_type(
-                confidentiality="MID",  # message content may be sensitive
+                confidentiality="HIGH",  # message content may be sensitive
                 trustworthiness="HIGH",
                 confidence="UNKNOWN",
                 reversible=True,  # edits can be reverted
@@ -602,7 +602,7 @@ def _parse_gateway(
         return ToolParseResult(
             "READ",
             make_security_type(
-                confidentiality="MID",  # config may contain keys/secrets
+                confidentiality="HIGH",  # config may contain keys/secrets
                 trustworthiness="HIGH",
                 confidence="UNKNOWN",
                 reversible=True,
@@ -689,13 +689,13 @@ def _make_delegate_result() -> ToolParseResult:
     """Shared result for cross-session DELEGATE operations (send/spawn).
 
     Both actions dispatch a task to another agent session that is only
-    partially trusted, hence MID trustworthiness.
+    partially trusted, hence LOW trustworthiness.
     """
     return ToolParseResult(
         "DELEGATE",
         make_security_type(
-            confidentiality="MID",
-            trustworthiness="MID",  # another agent session, partially trusted
+            confidentiality="HIGH",
+            trustworthiness="LOW",  # another agent session, partially trusted
             confidence="UNKNOWN",
             reversible=False,
             authority="UNKNOWN",
@@ -781,14 +781,14 @@ def _parse_image(
     """image: image analysis (perception) → READ.
 
     Trustworthiness is resolved via file_trustworthiness.yaml — external
-    URLs (http://, https://, …) are classified LOW there, local paths MID.
+    URLs (http://, https://, …) are classified LOW there, local paths also LOW.
     """
     image_src = str(args.get("image", ""))
-    trustworthiness = classify_trustworthiness([image_src]) if image_src else "MID"
+    trustworthiness = classify_trustworthiness([image_src]) if image_src else "LOW"
     return ToolParseResult(
         "READ",
         make_security_type(
-            confidentiality="MID",  # images may contain sensitive visual info
+            confidentiality="HIGH",  # images may contain sensitive visual info
             trustworthiness=trustworthiness,
             confidence="UNKNOWN",
             reversible=True,
@@ -806,12 +806,12 @@ def _make_memory_retrieve_result() -> ToolParseResult:
     """Shared result for agent memory retrieval (search/get).
 
     Both operations read from the agent's own memory store, which is
-    inherently trusted (HIGH) and may contain sensitive experience (MID conf).
+    inherently trusted (HIGH) and may contain sensitive experience (HIGH conf).
     """
     return ToolParseResult(
         "RETRIEVE",
         make_security_type(
-            confidentiality="MID",  # agent memory may contain sensitive experience
+            confidentiality="HIGH",  # agent memory may contain sensitive experience
             trustworthiness="HIGH",  # agent's own memory
             confidence="UNKNOWN",
             reversible=True,

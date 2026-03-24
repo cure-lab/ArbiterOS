@@ -4492,14 +4492,14 @@ def _inject_taint_watermarks_into_messages(
             tc_id = msg.get("tool_call_id")
             if isinstance(tc_id, str) and tc_id.strip():
                 tc_id = tc_id.strip()
-                trust, conf = "MID", "MID"
+                trust, conf = "UNKNOWN", "UNKNOWN"
                 # 从 instruction 的 prop_* 读取累积 taint，不重新 parse，避免 register_file_taint 副作用
                 idx = tool_call_id_to_index.get(tc_id)
                 if idx is not None and idx < len(instructions):
                     st = instructions[idx].get("security_type")
                     if isinstance(st, dict):
-                        trust = st.get("prop_trustworthiness") or "MID"
-                        conf = st.get("prop_confidentiality") or "MID"
+                        trust = st.get("prop_trustworthiness") or "UNKNOWN"
+                        conf = st.get("prop_confidentiality") or "UNKNOWN"
 
                 watermark = (
                     f"[ARBITEROS_TAINT trustworthiness={trust} confidentiality={conf}]\n"

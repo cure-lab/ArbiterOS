@@ -1,12 +1,12 @@
 # File-path confidentiality classification.
 #
-# Keys   : HIGH | MID | LOW
+# Keys   : HIGH | LOW
 # Values : glob patterns matched against individual path-like tokens extracted
 #          from shell commands (using fnmatch / PurePosixPath.match).
 #
-# Matching priority: HIGH > MID > LOW.
+# Matching priority: HIGH > LOW.
 #   The resolver checks HIGH first; the first matching level wins.
-#   If nothing matches, the default is LOW.
+#   If nothing matches, the default is UNKNOWN.
 #
 # Notes
 #   - Patterns ending with /* match direct children only.
@@ -81,9 +81,6 @@ HIGH:
   - /var/log/btmp
 
   # ── OpenClaw credentials & session transcripts (must not be committed) ──────
-  # Sources: ~/.openclaw/credentials/ (OAuth tokens, API keys)
-  #          ~/.openclaw/agents/*/sessions/ (full session transcripts)
-  #          ~/.openclaw/openclaw.json (gateway config; may embed tokens)
   - ~/.openclaw/credentials/**
   - ~/.openclaw/agents/*/sessions/**
   - ~/.openclaw/openclaw.json
@@ -91,22 +88,29 @@ HIGH:
   # ── ArbiterOS kernel config ────────────────────────────────────────────────
   - ~/.arbiteros/*
 
-MID:
-  # ── System-wide configuration ────────────────────────────────────────────────
+  # ── System-wide configuration ─────────────────────────────────────────────
   - /etc/*
   - /etc/**
 
-  # ── User home directories (general) ─────────────────────────────────────────
+  # ── User home directories (general) ──────────────────────────────────────
   - /home/*
   - /home/*/.*
   - /home/**
 
-  # ── System logs ─────────────────────────────────────────────────────────────
+  # ── Sensitive /proc entries ───────────────────────────────────────────────
+  - /proc/*/environ
+  - /proc/self/environ
+  - /proc/self/mem
+  - /proc/kcore
+  - /proc/*/cmdline
+  - /proc/keys
+
+  # ── System logs ──────────────────────────────────────────────────────────
   - /var/log/*
   - /var/log/**
   - /run/log/*
 
-  # ── User config & local state ────────────────────────────────────────────────
+  # ── User config & local state ─────────────────────────────────────────────
   - ~/.config/*
   - ~/.config/**
   - ~/.local/*
@@ -117,54 +121,41 @@ MID:
   - ~/.zshrc
   - ~/.profile
 
-  # ── Temporary / shared directories ──────────────────────────────────────────
-  - /tmp/*
-  - /var/tmp/*
 
-  # ── Kernel / hardware / runtime interfaces ───────────────────────────────────
+  # ── OpenClaw workspace — agent memory & identity files ──────────────────
+  - ~/.openclaw/workspace/SOUL.md
+  - ~/.openclaw/workspace/MEMORY.md
+  - ~/.openclaw/workspace/AGENTS.md
+  - ~/.openclaw/workspace/USER.md
+  - ~/.openclaw/workspace/IDENTITY.md
+  - ~/.openclaw/workspace/HEARTBEAT.md
+  - ~/.openclaw/workspace/BOOT.md
+  - ~/.openclaw/workspace/memory/**
+  - ~/.openclaw/workspace-*/SOUL.md
+  - ~/.openclaw/workspace-*/MEMORY.md
+  - ~/.openclaw/workspace-*/AGENTS.md
+  - ~/.openclaw/workspace-*/USER.md
+  - ~/.openclaw/workspace-*/IDENTITY.md
+  - ~/.openclaw/workspace-*/HEARTBEAT.md
+  - ~/.openclaw/workspace-*/BOOT.md
+  - ~/.openclaw/workspace-*/memory/**
+
+  # ── OpenClaw managed skills ───────────────────────────────────────────────
+  - ~/.openclaw/skills/**
+
+LOW:
+  # ── Kernel / hardware / runtime virtual filesystems ──────────────────────
   - /proc/*
   - /proc/**
   - /sys/*
   - /sys/**
   - /dev/*
 
-  # ── Config / data file extensions ───────────────────────────────────────────
-  - "*.conf"
-  - "*.cfg"
-  - "*.ini"
-  - "*.toml"
-  - "*.yaml"
-  - "*.yml"
-  - "*.json"
-  - "*.xml"
-  - "*.properties"
-  - "*.env"
+  # ── Temporary / shared directories ───────────────────────────────────────
+  - /tmp/*
+  - /var/tmp/*
 
-  # ── Database files ───────────────────────────────────────────────────────────
-  - "*.db"
-  - "*.sqlite"
-  - "*.sqlite3"
-  - "*.mdb"
-
-  # ── TLS certificates (public part, still sensitive) ──────────────────────────
-  - "*.crt"
-  - "*.cer"
-
-  # ── OpenClaw general workspace & managed files ─────────────────────────────
-  # General workspace files (TOOLS.md, HEARTBEAT.md, BOOT.md, canvas/, etc.)
-  # are workspace-private but not identity-sensitive → MID.
-  # The HIGH rules above take precedence for specific identity/memory files.
-  - ~/.openclaw/workspace/**
-  - ~/.openclaw/workspace-*/**
-  # ~/.openclaw/skills/  — managed skill bundles installed by the openclaw CLI
-  - ~/.openclaw/skills/**
-  # ~/.openclaw/agents/**  — general per-agent state (excl. sessions/ already in HIGH)
-  - ~/.openclaw/agents/**
-  # Catch-all for any other openclaw config under ~/.openclaw/
-  - ~/.openclaw/**
-
-LOW:
-  # ── System binaries / libraries ──────────────────────────────────────────────
+  # ── System binaries / libraries ──────────────────────────────────────────
   - /usr/bin/*
   - /usr/lib/*
   - /usr/lib/**
@@ -180,54 +171,12 @@ LOW:
   - /opt/*
   - /opt/**
 
-  # ── Web-served / public content ─────────────────────────────────────────────
+  # ── Web-served / public content ──────────────────────────────────────────
   - /var/www/*
   - /var/www/**
   - /srv/http/*
   - /srv/www/*
 
-  # ── Plain-text source / documentation ───────────────────────────────────────
-  - "*.txt"
-  - "*.md"
-  - "*.docx"
-  - "*.xlsx"
-  - "*.pdf"
-  - "*.mp3"
-  - "*.mp4"
-  - "*.rst"
-  - "*.html"
-  - "*.htm"
-  - "*.css"
-  - "*.js"
-  - "*.ts"
-  - "*.py"
-  - "*.rb"
-  - "*.go"
-  - "*.rs"
-  - "*.c"
-  - "*.cpp"
-  - "*.h"
-  - "*.java"
-  - "*.sh"
-
-  # ── Log sinks that are already world-readable ────────────────────────────────
-  - /var/log/syslog
-  - /var/log/messages
-  - /var/log/dmesg
-  - /var/log/kern.log
-
-  # ── OpenClaw workspace — identity & persistent memory files ─────────────────
-  # Files loaded at every agent session; contain persona, user profile (PII)
-  # and curated long-term memory. Profile-specific workspace-<name>/ is also covered.
-  - ~/.openclaw/workspace/SOUL.md
-  - ~/.openclaw/workspace/MEMORY.md
-  - ~/.openclaw/workspace/AGENTS.md
-  - ~/.openclaw/workspace/USER.md
-  - ~/.openclaw/workspace/IDENTITY.md
-  - ~/.openclaw/workspace/memory/**
-  - ~/.openclaw/workspace-*/SOUL.md
-  - ~/.openclaw/workspace-*/MEMORY.md
-  - ~/.openclaw/workspace-*/AGENTS.md
-  - ~/.openclaw/workspace-*/USER.md
-  - ~/.openclaw/workspace-*/IDENTITY.md
-  - ~/.openclaw/workspace-*/memory/**
+  # ── TLS certificates (public part only) ──────────────────────────────────
+  - "*.crt"
+  - "*.cer"

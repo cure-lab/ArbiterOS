@@ -67,13 +67,13 @@ class TestMakeSecurityType:
 
     def test_values_passed_through(self):
         sec = make_security_type(
-            confidentiality="MID",
+            confidentiality="HIGH",
             trustworthiness="HIGH",
             confidence="LOW",
             reversible=True,
             authority="POLICY_BLOCKED",
         )
-        assert sec["confidentiality"] == "MID"
+        assert sec["confidentiality"] == "HIGH"
         assert sec["trustworthiness"] == "HIGH"
         assert sec["confidence"] == "LOW"
         assert sec["reversible"] is True
@@ -92,7 +92,7 @@ class TestMakeSecurityType:
     def test_custom_field_passed(self):
         sec = make_security_type(
             confidentiality="HIGH",
-            trustworthiness="MID",
+            trustworthiness="LOW",
             confidence="UNKNOWN",
             reversible=True,
             authority="UNKNOWN",
@@ -172,10 +172,11 @@ class TestInstructionTypeToCategory:
 
 
 class TestComputeTaintStatus:
-    """compute_taint_status_from_instructions must always return a concrete level.
+    """compute_taint_status_from_instructions returns LOW, HIGH, or UNKNOWN.
 
-    UNKNOWN may appear in individual instructions (parsing stage), but the
-    final aggregated result must be LOW, MID, or HIGH — never UNKNOWN.
+    UNKNOWN may appear in individual instructions (parsing stage) and also
+    in the aggregated result when no concrete level is present — UNKNOWN is
+    the explicit middle value between LOW and HIGH.
     """
 
     def _make_instr(self, trust: str, conf: str) -> dict:
@@ -193,17 +194,17 @@ class TestComputeTaintStatus:
         }
 
     # ------------------------------------------------------------------
-    # Empty / all-UNKNOWN → MID with a warning
+    # Empty / all-UNKNOWN → UNKNOWN with a warning
     # ------------------------------------------------------------------
 
-    def test_empty_list_returns_mid(self):
+    def test_empty_list_returns_unknown(self):
         from arbiteros_kernel.instruction_parsing.types import (
             compute_taint_status_from_instructions,
         )
 
         result = compute_taint_status_from_instructions([])
-        assert result.trustworthiness == "MID"
-        assert result.confidentiality == "LOW"
+        assert result.trustworthiness == "UNKNOWN"
+        assert result.confidentiality == "UNKNOWN"
 
     def test_empty_list_logs_warning(self):
         from arbiteros_kernel.instruction_parsing import types
@@ -218,15 +219,15 @@ class TestComputeTaintStatus:
         assert "trustworthiness" in joined
         assert "confidentiality" in joined
 
-    def test_all_unknown_instructions_returns_mid(self):
+    def test_all_unknown_instructions_returns_unknown(self):
         from arbiteros_kernel.instruction_parsing.types import (
             compute_taint_status_from_instructions,
         )
 
         instructions = [self._make_instr("UNKNOWN", "UNKNOWN")] * 3
         result = compute_taint_status_from_instructions(instructions)
-        assert result.trustworthiness == "MID"
-        assert result.confidentiality == "LOW"
+        assert result.trustworthiness == "UNKNOWN"
+        assert result.confidentiality == "UNKNOWN"
 
     def test_all_unknown_instructions_logs_warning(self):
         from arbiteros_kernel.instruction_parsing import types
@@ -267,7 +268,7 @@ class TestComputeTaintStatus:
         instructions = [
             self._make_instr("HIGH", "LOW"),
             self._make_instr("LOW", "LOW"),
-            self._make_instr("MID", "LOW"),
+            self._make_instr("HIGH", "LOW"),
         ]
         result = compute_taint_status_from_instructions(instructions)
         assert result.trustworthiness == "LOW"
@@ -280,7 +281,7 @@ class TestComputeTaintStatus:
         instructions = [
             self._make_instr("HIGH", "LOW"),
             self._make_instr("HIGH", "HIGH"),
-            self._make_instr("HIGH", "MID"),
+            self._make_instr("HIGH", "LOW"),
         ]
         result = compute_taint_status_from_instructions(instructions)
         assert result.confidentiality == "HIGH"
@@ -302,8 +303,8 @@ class TestComputeTaintStatus:
         result = compute_taint_status_from_instructions(instructions)
         assert result.trustworthiness == "LOW"
 
-    def test_unknown_trust_superseded_by_high_gives_mid(self):
-        """If the only concrete trust is HIGH, UNKNOWN (score 0.5) wins → normalised to MID."""
+    def test_unknown_trust_superseded_by_high_gives_unknown(self):
+        """If the only concrete trust is HIGH, UNKNOWN (score 0.5) wins → stays UNKNOWN."""
         from arbiteros_kernel.instruction_parsing import types
         from arbiteros_kernel.instruction_parsing.types import (
             compute_taint_status_from_instructions,
@@ -315,7 +316,7 @@ class TestComputeTaintStatus:
         ]
         with patch.object(types.logger, "warning") as mock_warn:
             result = compute_taint_status_from_instructions(instructions)
-        assert result.trustworthiness == "MID"
+        assert result.trustworthiness == "UNKNOWN"
         assert mock_warn.call_count >= 1
         joined = " ".join(str(c) for c in mock_warn.call_args_list)
         assert "trustworthiness" in joined
@@ -333,8 +334,8 @@ class TestComputeTaintStatus:
         result = compute_taint_status_from_instructions(instructions)
         assert result.confidentiality == "HIGH"
 
-    def test_unknown_conf_superseded_by_low_gives_low(self):
-        """If the only concrete conf is LOW, UNKNOWN (score 0.5) wins → normalised to LOW."""
+    def test_unknown_conf_superseded_by_low_gives_unknown(self):
+        """If the only concrete conf is LOW, UNKNOWN (score 0.5) wins → stays UNKNOWN."""
         from arbiteros_kernel.instruction_parsing import types
         from arbiteros_kernel.instruction_parsing.types import (
             compute_taint_status_from_instructions,
@@ -346,7 +347,7 @@ class TestComputeTaintStatus:
         ]
         with patch.object(types.logger, "warning") as mock_warn:
             result = compute_taint_status_from_instructions(instructions)
-        assert result.confidentiality == "LOW"
+        assert result.confidentiality == "UNKNOWN"
         assert mock_warn.call_count >= 1
         joined = " ".join(str(c) for c in mock_warn.call_args_list)
         assert "confidentiality" in joined
