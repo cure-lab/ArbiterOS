@@ -21,7 +21,7 @@ from typing import Any, List, Optional, Tuple
 
 import bashlex
 
-from ..tool_parsers.linux_registry import classify_exe
+from ..tool_parsers.linux_registry import classify_exe, classify_exe_risk
 
 logger = logging.getLogger(__name__)
 
@@ -251,6 +251,71 @@ def classify_segment(seg_str: str) -> str:
     if len(words) > 1 and not words[1].startswith("-"):
         subcommand = words[1]
     return classify_exe(exe, subcommand)
+
+
+def classify_segment_risk(seg_str: str) -> str:
+    """Return risk level (HIGH/LOW/UNKNOWN) for a single command string.
+
+    Parses *seg_str* with bashlex to locate all command nodes, then
+    delegates each to :func:`linux_registry.classify_exe_risk`.
+    Falls back to ``shlex.split`` when bashlex cannot parse the input.
+
+    When multiple commands are present in the segment (e.g. subshell groups
+    not split by :func:`split_pipeline`), the highest risk wins:
+    HIGH > LOW > UNKNOWN.
+    Returns "UNKNOWN" for empty or unparseable segments.
+    """
+    if not seg_str.strip():
+        return "UNKNOWN"
+
+    words_list: List[List[str]] = []
+    try:
+        parts = bashlex.parse(seg_str.strip())
+        cmd_nodes = _find_command_nodes(parts)
+        words_list = [
+            [p.word for p in node.parts if p.kind == "word"]
+            for node in cmd_nodes
+        ]
+    except Exception:
+        logger.debug(
+            "bashlex failed for segment %r (risk); falling back to shlex", seg_str
+        )
+        raw = seg_str.strip().strip("()")
+        try:
+            words_list = [shlex.split(raw)]
+        except ValueError:
+            words_list = [raw.split()]
+
+    if not words_list:
+        logger.debug("classify_segment_risk: no words in %r → UNKNOWN", seg_str)
+        return "UNKNOWN"
+
+    # HIGH > UNKNOWN > LOW
+    # any UNKNOWN prevents a LOW result.
+    found_any = False
+    all_low = True
+    for words in words_list:
+        if not words:
+            continue
+        found_any = True
+        exe = os.path.basename(words[0])
+        subcommand: Optional[str] = None
+        if len(words) > 1 and not words[1].startswith("-"):
+            subcommand = words[1]
+        cmd_risk = classify_exe_risk(exe, subcommand)
+        logger.debug(
+            "classify_segment_risk: segment=%r exe=%r sub=%r → %s",
+            seg_str, exe, subcommand, cmd_risk,
+        )
+        if cmd_risk == "HIGH":
+            return "HIGH"
+        if cmd_risk != "LOW":  # UNKNOWN taints: prevents LOW result
+            all_low = False
+
+    if not found_any:
+        logger.debug("classify_segment_risk: no words in %r → UNKNOWN", seg_str)
+        return "UNKNOWN"
+    return "LOW" if all_low else "UNKNOWN"
 
 
 def _parse_cd_dir(seg_str: str) -> Optional[str]:

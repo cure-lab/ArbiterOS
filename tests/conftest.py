@@ -18,8 +18,10 @@ def isolated_user_registry(tmp_path, monkeypatch):
     monkeypatch.setattr(lr, "_EXE_USER", None)
     monkeypatch.setattr(lr, "_FILE_CONF_USER", None)
     monkeypatch.setattr(lr, "_FILE_TRUST_USER", None)
+    monkeypatch.setattr(lr, "_EXE_RISK_USER", None)
     monkeypatch.setattr(lr, "_EXE_DIRTY", False)
     monkeypatch.setattr(lr, "_FILE_CONF_DIRTY", False)
     monkeypatch.setattr(lr, "_FILE_TRUST_DIRTY", False)
+    monkeypatch.setattr(lr, "_EXE_RISK_DIRTY", False)
 
     yield

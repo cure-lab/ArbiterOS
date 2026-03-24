@@ -39,6 +39,7 @@ def make_security_type(
     confidence: SecurityLevel,
     reversible: bool,
     authority: AuthorityLevel,
+    risk: SecurityLevel = "LOW",
     custom: Optional[Dict[str, Any]] = None,
 ) -> SecurityType:
     return {
@@ -47,6 +48,7 @@ def make_security_type(
         "confidence": confidence,
         "reversible": reversible,
         "authority": authority,
+        "risk": risk,
         "custom": custom or {},
     }
 
