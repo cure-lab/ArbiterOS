@@ -150,6 +150,17 @@ def _atexit_save() -> None:
 atexit.register(_atexit_save)
 
 # ---------------------------------------------------------------------------
+# Eager user-registry bootstrap — create all user config files on import
+# ---------------------------------------------------------------------------
+# Each file is created with empty-list values only when it does not already
+# exist, so existing user customisations are never overwritten.
+
+_ensure_user_registry(_user_path("exe_registry.yaml"), ["EXEC", "WRITE", "READ"])
+_ensure_user_registry(_user_path("file_confidentiality.yaml"), ["HIGH", "MID", "LOW"])
+_ensure_user_registry(_user_path("file_trustworthiness.yaml"), ["HIGH", "MID", "LOW"])
+_ensure_user_registry(_user_path("exe_risk.yaml"), ["HIGH", "LOW"])
+
+# ---------------------------------------------------------------------------
 # Lazy getters — source layer
 # ---------------------------------------------------------------------------
 
