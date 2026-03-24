@@ -314,8 +314,8 @@ def register_file_taint(
 
     The effective label stored is the worst-case of the supplied taint and the
     source-layer classification for the path:
-      • confidentiality: higher level wins  (HIGH > LOW > UNKNOWN)
-      • trustworthiness: lower  level wins  (LOW  < HIGH < UNKNOWN)
+      • confidentiality: higher level wins  (LOW < UNKNOWN < HIGH)
+      • trustworthiness: lower  level wins  (LOW < UNKNOWN < HIGH)
 
     This ensures that a file's inherent sensitivity (e.g. .env → HIGH conf in
     the source registry) is never downgraded by a low-taint write.
@@ -402,7 +402,7 @@ def classify_exe_risk(exe: str, subcommand: Optional[str]) -> SecurityLevel:
     """Return risk level for *exe* based on exe_risk.yaml.
 
     User registry is checked first; source registry is the fallback.
-    Level priority: HIGH > LOW > UNKNOWN (unmatched).
+    Level priority: HIGH > UNKNOWN > LOW; UNKNOWN is returned when no pattern matches.
     Within the same level, user layer overrides source layer.
     """
     candidates: List[str] = []

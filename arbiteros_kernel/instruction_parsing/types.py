@@ -152,11 +152,8 @@ def compute_taint_status_from_instructions(
 
     Aggregation rules:
     - trustworthiness: minimum across all instructions (least trusted wins)
-    - confidentiality:  maximum across all instructions (most sensitive wins)
+    - confidentiality: maximum across all instructions (most sensitive wins)
 
-    UNKNOWN semantics:
-    - trustworthiness: UNKNOWN participates with score 0.5; when UNKNOWN wins, returned as UNKNOWN.
-    - confidentiality: UNKNOWN participates with score 0.5; when UNKNOWN wins, returned as UNKNOWN.
     - Output is LOW, HIGH, or UNKNOWN.
     """
     trust_vals = collect_levels(instructions, "trustworthiness")
