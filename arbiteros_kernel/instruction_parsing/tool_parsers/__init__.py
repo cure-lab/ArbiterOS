@@ -28,7 +28,7 @@ def parse_tool_instruction(
     args = arguments or {}
     parser = TOOL_PARSER_REGISTRY.get(tool_name)
     if not parser:
-        logger.error(f"No parser registered for tool {tool_name}; falling back to EXEC")
+        logger.warning("No parser registered for tool %r; falling back to EXEC", tool_name)
         return ToolParseResult(
             "EXEC",
             make_security_type(
@@ -40,7 +40,7 @@ def parse_tool_instruction(
             ),
         )
     result = parser(args, taint_status)
-    logger.info(f"Parsed  tool call {tool_name}({args}): {result}")
+    logger.debug("Parsed tool call %r(%r): %r", tool_name, args, result)
     return result
 
 

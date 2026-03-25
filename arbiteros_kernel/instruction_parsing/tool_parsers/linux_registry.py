@@ -448,7 +448,7 @@ def classify_confidentiality(paths: List[str]) -> SecurityLevel:
                             path, level, layer, pat,
                         )
                         return level
-    logger.info(
+    logger.debug(
         "classify_confidentiality: no rule matched %s; returning UNKNOWN", abs_paths
     )
     return "UNKNOWN"
@@ -479,7 +479,7 @@ def classify_trustworthiness(paths: List[str]) -> SecurityLevel:
                             path, level, layer, pat,
                         )
                         return level
-    logger.info(
+    logger.debug(
         "classify_trustworthiness: no rule matched %s; returning UNKNOWN", abs_paths
     )
     return "UNKNOWN"

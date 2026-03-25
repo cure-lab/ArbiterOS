@@ -9,7 +9,6 @@ Supports two input paths:
 from __future__ import annotations
 
 import json
-import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -25,9 +24,6 @@ from .types import (
     compute_taint_status_from_instructions,
     make_security_type,
 )
-
-logger = logging.getLogger(__name__)
-
 
 class InstructionBuilder:
     """Accumulates Instructions for a single trace, ready to be serialised."""

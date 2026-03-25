@@ -313,7 +313,7 @@ def classify_segment_risk(seg_str: str) -> str:
             all_low = False
 
     if not found_any:
-        logger.debug("classify_segment_risk: no words in %r → UNKNOWN", seg_str)
+        logger.debug("classify_segment_risk: all word lists empty in %r → UNKNOWN", seg_str)
         return "UNKNOWN"
     return "LOW" if all_low else "UNKNOWN"
 

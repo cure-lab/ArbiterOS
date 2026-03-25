@@ -323,7 +323,7 @@ def _parse_exec(
     command = str(args.get("command", ""))
 
     if not command.strip():
-        logger.error(
+        logger.warning(
             "Empty command string in exec; defaulting to EXEC with UNKNOWN security"
         )
         return ToolParseResult(
@@ -351,7 +351,7 @@ def _parse_exec(
         )
 
     if "\n" in command:
-        logger.error(
+        logger.warning(
             "_parse_exec: multi-line command string received; newlines are treated "
             "as command separators: %r",
             command,
