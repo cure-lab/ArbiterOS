@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
@@ -480,6 +481,9 @@ def run_case(
     ]
     started = time.time()
     timed_out = False
+    isolated_registry_dir = render_dir.parent / "user_registry" / case["id"]
+    isolated_registry_dir.mkdir(parents=True, exist_ok=True)
+    case_env = {**os.environ, "ARBITEROS_USER_REGISTRY_DIR": str(isolated_registry_dir)}
     try:
         proc = subprocess.run(
             cmd,
@@ -487,6 +491,7 @@ def run_case(
             capture_output=True,
             text=True,
             timeout=case_timeout_s,
+            env=case_env,
         )
         stdout = proc.stdout or ""
         stderr = proc.stderr or ""
