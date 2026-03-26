@@ -92,11 +92,6 @@ HIGH:
   - /etc/*
   - /etc/**
 
-  # ── User home directories (general) ──────────────────────────────────────
-  - /home/*
-  - /home/*/.*
-  - /home/**
-
   # ── Sensitive /proc entries ───────────────────────────────────────────────
   - /proc/*/environ
   - /proc/self/environ
