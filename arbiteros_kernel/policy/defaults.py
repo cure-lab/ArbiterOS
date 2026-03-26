@@ -16,6 +16,8 @@ from .security_label_policy import SecurityLabelPolicy
 from .taint_policy import TaintPolicy
 from .exec_composite_policy import ExecCompositePolicy
 from .delete_policy import DeletePolicy
+from .unary_gate_policy import UnaryGatePolicy
+from .relational_policy import RelationalPolicy
 if TYPE_CHECKING:
     from .policy import Policy
 
@@ -47,6 +49,8 @@ POLICY_CLASS_MAP: dict[str, type["Policy"]] = {
     "SecurityLabelPolicy": SecurityLabelPolicy,
     "ExecCompositePolicy": ExecCompositePolicy,
     "DeletePolicy": DeletePolicy,
+    "UnaryGatePolicy": UnaryGatePolicy,
+    "RelationalPolicy": RelationalPolicy,
 }
 
 
@@ -113,6 +117,20 @@ def _default_registry_data() -> list[dict[str, object]]:
             "name": "DeletePolicy",
             "enabled": True,
             "description": "Blocks delete-like operations and leaves further continuation to kernel approval flow.",
+        },
+        {
+            "name": "RelationalPolicy",
+            "enabled": True,
+            "description": (
+                "Applies relational taint / propagated-security checks using kernel-lowered metadata."
+            ),
+        },
+        {
+            "name": "UnaryGatePolicy",
+            "enabled": True,
+            "description": (
+                "Applies declarative unary rules over instruction metadata and reports the matched rule."
+            ),
         },
     ]
 

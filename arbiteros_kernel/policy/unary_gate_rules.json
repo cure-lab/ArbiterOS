@@ -1,0 +1,217 @@
+{
+  "evaluation_mode": "first_match",
+  "source": "unary_gate_rules.json",
+  "rules": [
+    {
+      "id": "UG-001",
+      "title": "missing instruction metadata",
+      "description": "tool call must have kernel-lowered instruction metadata",
+      "scope": "tool",
+      "selector": {},
+      "predicate": {
+        "truthy": {
+          "var": "missing_instruction"
+        }
+      },
+      "effect": "BLOCK",
+      "message": "当前 tool_call 没有找到对应的 instruction metadata，策略无法安全判定。"
+    },
+    {
+      "id": "UG-002",
+      "title": "runtime allow deny compatibility",
+      "description": "respect legacy allow/deny result",
+      "scope": "any",
+      "selector": {},
+      "predicate": {
+        "not": {
+          "runtime_allow_deny": true
+        }
+      },
+      "effect": "BLOCK",
+      "message": "allow/deny policy does not permit this action."
+    },
+    {
+      "id": "UG-010",
+      "title": "argument string budget",
+      "description": "block tool call when total argument string length exceeds 4000",
+      "scope": "tool",
+      "selector": {},
+      "predicate": {
+        "gt": [
+          {
+            "var": "arg_total_str_len"
+          },
+          {
+            "const": 4000
+          }
+        ]
+      },
+      "effect": "BLOCK",
+      "message": "tool arguments are too large."
+    },
+    {
+      "id": "UG-020",
+      "title": "exec confidence gate",
+      "description": "EXEC requires confidence >= MID",
+      "scope": "tool",
+      "selector": {
+        "instruction_type": [
+          "EXEC"
+        ]
+      },
+      "predicate": {
+        "lt": [
+          {
+            "var": "confidence"
+          },
+          {
+            "const": "MID"
+          }
+        ]
+      },
+      "effect": "BLOCK",
+      "message": "EXEC requires confidence >= MID."
+    },
+    {
+      "id": "UG-021",
+      "title": "exec trust gate",
+      "description": "EXEC requires trustworthiness >= MID",
+      "scope": "tool",
+      "selector": {
+        "instruction_type": [
+          "EXEC"
+        ]
+      },
+      "predicate": {
+        "lt": [
+          {
+            "var": "trustworthiness"
+          },
+          {
+            "const": "MID"
+          }
+        ]
+      },
+      "effect": "BLOCK",
+      "message": "EXEC requires trustworthiness >= MID."
+    },
+    {
+      "id": "UG-030",
+      "title": "high risk exec",
+      "description": "exec with HIGH or CRITICAL risk is blocked",
+      "scope": "tool",
+      "selector": {
+        "tool": [
+          "exec"
+        ]
+      },
+      "predicate": {
+        "in": [
+          {
+            "var": "risk"
+          },
+          {
+            "const": [
+              "HIGH",
+              "CRITICAL"
+            ]
+          }
+        ]
+      },
+      "effect": "BLOCK",
+      "message": "高风险 exec 不允许直接执行。"
+    },
+    {
+      "id": "UG-031",
+      "title": "approval required block",
+      "description": "actions explicitly marked approval_required are blocked here",
+      "scope": "tool",
+      "selector": {
+        "tool": [
+          "exec",
+          "write"
+        ]
+      },
+      "predicate": {
+        "truthy": {
+          "var": "approval_required"
+        }
+      },
+      "effect": "BLOCK",
+      "message": "kernel metadata marks this action as approval_required."
+    },
+    {
+      "id": "UG-032",
+      "title": "destructive must be reversible",
+      "description": "destructive action must be reversible",
+      "scope": "tool",
+      "selector": {
+        "tool": [
+          "exec",
+          "write"
+        ]
+      },
+      "predicate": {
+        "all": [
+          {
+            "truthy": {
+              "var": "destructive"
+            }
+          },
+          {
+            "falsy": {
+              "var": "reversible"
+            }
+          }
+        ]
+      },
+      "effect": "BLOCK",
+      "message": "破坏性操作必须满足 reversible=true。"
+    },
+    {
+      "id": "UG-040",
+      "title": "blocked secret like tags",
+      "description": "block actions tagged SECRET_LIKE or HIGH_RISK",
+      "scope": "tool",
+      "selector": {},
+      "predicate": {
+        "intersects": [
+          {
+            "var": "tags"
+          },
+          {
+            "const": [
+              "SECRET_LIKE",
+              "HIGH_RISK"
+            ]
+          }
+        ]
+      },
+      "effect": "BLOCK",
+      "message": "blocked tag hit."
+    },
+    {
+      "id": "UG-050",
+      "title": "respond prop confidentiality",
+      "description": "RESPOND must keep propagated confidentiality <= MID",
+      "scope": "respond",
+      "selector": {
+        "instruction_type": [
+          "RESPOND"
+        ]
+      },
+      "predicate": {
+        "gt": [
+          {
+            "var": "prop_confidentiality"
+          },
+          {
+            "const": "MID"
+          }
+        ]
+      },
+      "effect": "BLOCK",
+      "message": "当前响应的传播保密级别过高。"
+    }
+  ]
+}
