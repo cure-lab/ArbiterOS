@@ -28,5 +28,9 @@ run.parallel = ["mlflow", "litellm"]
 cmd = "uv run python -m arbiteros_kernel.langfuse_replay --input log/api_calls.jsonl ${replay_args}"
 args = [{ name = "replay_args", positional = true, multiple = true }]
 
+[tool.poe.tasks.policy-test]
+cmd = "uv run python -m arbiteros_kernel.policy_test_harness ${spec_file}"
+args = [{ name = "spec_file", positional = true }]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -56,13 +56,6 @@ LOW:
   - /run/*
   - /run/user/*
 
-  # ── General user home (user-controlled, not explicitly verified) ──────────────
-  - /home/*
-  - /home/**
-  - ~/.*
-  - ~/.*/**
-  - ~/*
-
   # ── External storage (non-removable) ─────────────────────────────────────────
   - /media/*
   - /mnt/*

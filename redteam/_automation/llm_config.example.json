@@ -1,0 +1,7 @@
+{
+  "enabled": true,
+  "api_url": "https://api.zhizengzeng.com/v1/chat/completions",
+  "api_key": "YOUR_API_KEY_HERE",
+  "model": "gpt-5.4-mini",
+  "timeout_s": 60
+}
