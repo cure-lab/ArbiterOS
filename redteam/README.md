@@ -19,7 +19,7 @@
 ## 1. 目录结构
 
 - [`case/`](case)
-  正式测试 case
+  正式测试 case，按场景目录组织
 - [`workspace/`](workspace)
   供工作区类 case 引用的固定夹具文件
 - [`_automation/`](_automation)
@@ -28,6 +28,10 @@
   harness 输入格式参考
 - [`case_json_construction_guide.md`](case_json_construction_guide.md)
   case 编写指导
+- [`case_request_template.md`](case_request_template.md)
+  协作新增 case 的自然语言模板
+- [`case_scenario_drafts.md`](case_scenario_drafts.md)
+  按场景整理的自然语言 case 草案库，适合先审核再批量转 JSON
 - [`policy_test_sample.json`](policy_test_sample.json)
   approval 链路示例
 - [`policy_test_read_password.json`](policy_test_read_password.json)
@@ -37,10 +41,14 @@
 
 ### case
 
-正式 case 放在：
+正式 case 现在按场景目录组织，例如：
 
-- [`case/safe`](case/safe)
-- [`case/unsafe`](case/unsafe)
+- [`case/file_handling`](case/file_handling)
+- [`case/message`](case/message)
+- [`case/document`](case/document)
+- [`case/code_management`](case/code_management)
+- [`case/mail`](case/mail)
+- [`case/ops_diagnostics`](case/ops_diagnostics)
 
 case JSON 是测试输入，描述的是：
 
@@ -80,6 +88,7 @@ case 的测试预期放在：
 - 哪条是 `unsafe`
 - 是否启用
 - 某条 `unsafe` 希望命中哪些 policy
+- 当前 manifest 默认只登记一部分“批跑子集”，不是 `case/` 下全部文件
 
 所以要分清：
 
@@ -205,13 +214,15 @@ runner 会自动从自己的位置反推出：
    了解 harness 接受什么结构
 2. 再看 [`case_json_construction_guide.md`](case_json_construction_guide.md)
    了解 `prior` / `current`、tool call 成对出现、`tag` 等写法
-3. 再参考现有 case
-   - safe 在 [`case/safe`](case/safe)
-   - unsafe 在 [`case/unsafe`](case/unsafe)
+3. 如果你只是想用自然语言给我提需求，直接填 [`case_request_template.md`](case_request_template.md)
+   我会按模板把它落成正式 JSON case
+4. 再参考现有 case
+   - 现在统一在 `case/<scenario>/`
+   - 文件名里会继续体现 `safe` / `unsafe` 或保留既有基线 id
 
 ## 7. 日常维护的最小工作流
 
-1. 把新 case 放进 `case/safe` 或 `case/unsafe`
+1. 把新 case 放进合适的 `case/<scenario>/`
 2. 在 [`_automation/case_manifest.json`](_automation/case_manifest.json) 里登记它
 3. 运行：
 
@@ -222,7 +233,13 @@ uv run python redteam/_automation/run_cases.py --kind all --analyze-failures
 
 4. 看：
 
-- `redteam/_automation/runs/.../summary.json`或者`results/<case_id>.json`,`summary.json`其实主要是`results/<case_id>.json`文件的拼接
+- `redteam/_automation/runs/.../summary.json`
+- `redteam/_automation/runs/.../results/<case_id>.json`
+
+其中：
+
+- `summary.json` 适合看整批结果
+- `results/<case_id>.json` 适合看单条 case 的最终解释
 
 ## 8. 下一层文档
 
@@ -231,3 +248,5 @@ uv run python redteam/_automation/run_cases.py --kind all --analyze-failures
 - 自动化 runner 细节：[`_automation/README.md`](_automation/README.md)
 - harness 输入格式：[`policy_test_harness.md`](policy_test_harness.md)
 - case 编写规则：[`case_json_construction_guide.md`](case_json_construction_guide.md)
+- 自然语言协作模板：[`case_request_template.md`](case_request_template.md)
+- 场景化草案库：[`case_scenario_drafts.md`](case_scenario_drafts.md)
