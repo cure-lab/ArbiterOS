@@ -73,6 +73,14 @@ HIGH:
   - vault.yaml
   - vault.json
 
+  # ── Password / credential / token files (name-based wildcards) ──────────
+  - "*password*"
+  - "*credentials*"
+  - "*apikey*"
+  - "*api_key*"
+  - "*secret_key*"
+  - "*private_key*"
+
   # ── Authentication / security logs ──────────────────────────────────────────
   - /var/log/auth.log
   - /var/log/secure
