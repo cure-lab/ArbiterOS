@@ -289,10 +289,12 @@ def iter_policy_registry(*, force_reload: bool = False) -> Iterator[PolicyEntry]
 
 def get_default_policy_classes(*, force_reload: bool = False) -> list[type["Policy"]]:
     """
-    Return currently enabled policy classes.
+    Return policy classes whose registry entry has ``enabled: true``.
 
-    This should be used by policy_check.py so that editing
-    policy_registry.json takes effect on the next request.
+    Note: ``check_response_policy`` uses ``get_policy_registry()`` and runs
+    **all** registered policies; each entry's ``enabled`` is applied only in
+    ``apply_policy_enforcement_mode`` (observe-only vs enforce). This helper
+    remains for callers that only need the enforced subset.
     """
     return [
         entry.policy
