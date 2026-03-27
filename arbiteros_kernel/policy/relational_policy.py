@@ -354,8 +354,6 @@ class RelationalPolicy(Policy):
         current_taint_status: Any = None,
         **kwargs: Any,
     ) -> PolicyCheckResult:
-        policy_enabled = bool(kwargs.get("policy_enabled", True))
-
         response = dict(current_response)
         tool_calls = RUNTIME.extract_tool_calls(response)
 
@@ -371,7 +369,6 @@ class RelationalPolicy(Policy):
                 instr_by_tool_call_id[tcid] = ins
 
         errors: List[str] = []
-        inactive_errors: List[str] = []
         kept: List[Dict[str, Any]] = []
 
         # -------------------------------------------------------------------
@@ -403,7 +400,7 @@ class RelationalPolicy(Policy):
                     phase="policy.relational",
                     trace_id=trace_id,
                     tool=tool_name,
-                    decision="BLOCK" if policy_enabled else "INACTIVE",
+                    decision="BLOCK",
                     reason=reason,
                     args=args_dict,
                     extra={
@@ -421,11 +418,7 @@ class RelationalPolicy(Policy):
                         "custom": sec["custom"],
                     },
                 )
-                if policy_enabled:
-                    errors.append(user_message)
-                else:
-                    inactive_errors.append(user_message)
-                    kept.append(RUNTIME.write_back_tool_args(tc, args_dict, was_json_str))
+                errors.append(user_message)
                 continue
 
             trust = sec["trustworthiness"]
@@ -457,7 +450,7 @@ class RelationalPolicy(Policy):
                 phase="policy.relational",
                 trace_id=trace_id,
                 tool=tool_name,
-                decision="BLOCK" if policy_enabled else "INACTIVE",
+                decision="BLOCK",
                 reason=reason or "relational taint check failed",
                 args=args_dict,
                 extra={
@@ -475,11 +468,7 @@ class RelationalPolicy(Policy):
                     "custom": sec["custom"],
                 },
             )
-            if policy_enabled:
-                errors.append(user_message)
-            else:
-                inactive_errors.append(user_message)
-                kept.append(RUNTIME.write_back_tool_args(tc, args_dict, was_json_str))
+            errors.append(user_message)
 
         if errors:
             response["tool_calls"] = kept if kept else None
@@ -524,7 +513,7 @@ class RelationalPolicy(Policy):
                     phase="policy.relational",
                     trace_id=trace_id,
                     tool="@instruction",
-                    decision="BLOCK" if policy_enabled else "INACTIVE",
+                    decision="BLOCK",
                     reason=reason,
                     args={},
                     extra={
@@ -541,15 +530,13 @@ class RelationalPolicy(Policy):
                         "custom": sec["custom"],
                     },
                 )
-                if policy_enabled:
-                    response["content"] = user_msg
-                    return PolicyCheckResult(
-                        modified=True,
-                        response=response,
-                        error_type=user_msg,
-                        inactivate_error_type=None,
-                    )
-                inactive_errors.append(user_msg)
+                response["content"] = user_msg
+                return PolicyCheckResult(
+                    modified=True,
+                    response=response,
+                    error_type=user_msg,
+                    inactivate_error_type=None,
+                )
             else:
                 ok = _level_at_least(trust, prop_conf)
                 if not ok:
@@ -559,7 +546,7 @@ class RelationalPolicy(Policy):
                         phase="policy.relational",
                         trace_id=trace_id,
                         tool="@instruction",
-                        decision="BLOCK" if policy_enabled else "INACTIVE",
+                        decision="BLOCK",
                         reason=reason,
                         args={},
                         extra={
@@ -576,23 +563,13 @@ class RelationalPolicy(Policy):
                             "custom": sec["custom"],
                         },
                     )
-                    if policy_enabled:
-                        response["content"] = user_msg
-                        return PolicyCheckResult(
-                            modified=True,
-                            response=response,
-                            error_type=user_msg,
-                            inactivate_error_type=None,
-                        )
-                    inactive_errors.append(user_msg)
-
-        if inactive_errors:
-            return PolicyCheckResult(
-                modified=False,
-                response=current_response,
-                error_type=None,
-                inactivate_error_type="\n\n".join(inactive_errors),
-            )
+                    response["content"] = user_msg
+                    return PolicyCheckResult(
+                        modified=True,
+                        response=response,
+                        error_type=user_msg,
+                        inactivate_error_type=None,
+                    )
 
         return PolicyCheckResult(
             modified=False,
