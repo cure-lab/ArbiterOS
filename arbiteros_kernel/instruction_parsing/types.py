@@ -145,43 +145,6 @@ def collect_levels(instructions: List[Dict[str, Any]], key: str) -> List[str]:
     return result
 
 
-def compute_taint_status_from_instructions(
-    instructions: List[Dict[str, Any]],
-) -> TaintStatus:
-    """Compute the taint status of the current session from its instruction history.
-
-    Aggregation rules:
-    - trustworthiness: minimum across all instructions (least trusted wins)
-    - confidentiality: maximum across all instructions (most sensitive wins)
-
-    - Output is LOW, HIGH, or UNKNOWN.
-    """
-    trust_vals = collect_levels(instructions, "trustworthiness")
-    conf_vals = collect_levels(instructions, "confidentiality")
-
-    # UNKNOWN participates in min/max (LEVEL_ORDER has UNKNOWN=10)
-    raw_trust: SecurityLevel = cast(
-        SecurityLevel,
-        min(trust_vals, key=lambda v: LEVEL_ORDER[v]) if trust_vals else "UNKNOWN",
-    )
-    raw_conf: SecurityLevel = cast(
-        SecurityLevel,
-        max(conf_vals, key=lambda v: LEVEL_ORDER[v]) if conf_vals else "UNKNOWN",
-    )
-
-    if raw_trust == "UNKNOWN":
-        logger.warning(
-            "compute_taint_status_from_instructions: trustworthiness resolved to "
-            "UNKNOWN (no concrete level found); keeping as UNKNOWN."
-        )
-    if raw_conf == "UNKNOWN":
-        logger.warning(
-            "compute_taint_status_from_instructions: confidentiality resolved to "
-            "UNKNOWN (no concrete level found); keeping as UNKNOWN."
-        )
-
-    return TaintStatus(trustworthiness=raw_trust, confidentiality=raw_conf)
-
 
 def compute_prop_taint_for_instruction(
     instructions: List[Dict[str, Any]],

@@ -21,7 +21,6 @@ from .types import (
     SecurityType,
     TaintStatus,
     compute_prop_taint_for_instruction,
-    compute_taint_status_from_instructions,
     make_security_type,
 )
 
@@ -98,7 +97,7 @@ class InstructionBuilder:
 
     def get_taint_status(self) -> TaintStatus:
         """Return the taint status (min trustworthiness/confidentiality) across all accumulated instructions."""
-        return compute_taint_status_from_instructions(self.instructions)
+        return compute_prop_taint_for_instruction(self.instructions, self.instructions[-1] if self.instructions else {})
 
     # ------------------------------------------------------------------
     # Public API
