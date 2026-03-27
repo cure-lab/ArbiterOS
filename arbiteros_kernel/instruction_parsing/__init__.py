@@ -1,22 +1,27 @@
 """Instruction parsing for ArbiterOS Kernel."""
 
 import logging
-
-from rich.logging import RichHandler
+import sys
 
 from .builder import InstructionBuilder
 
 __all__ = ["InstructionBuilder"]
 
 # ---------------------------------------------------------------------------
-# Configure RichHandler for the entire instruction_parsing package.
-# Sub-module loggers (getLogger(__name__)) are all children of this logger
-# and inherit its handler automatically.
-# propagate=False prevents duplicate output if the root logger has handlers.
+# Configure Standard Logging for the entire instruction_parsing package.
 # ---------------------------------------------------------------------------
 _pkg_logger = logging.getLogger(__name__)
-if not _pkg_logger.handlers:
-    _pkg_logger.addHandler(RichHandler(rich_tracebacks=True, show_path=True, level=logging.DEBUG))
-    _pkg_logger.propagate = False
 
-_pkg_logger.setLevel(logging.DEBUG)
+if not _pkg_logger.handlers:
+    handler = logging.StreamHandler()
+
+    fmt_str = "[%(asctime)s] %(levelname)-8s [%(name)s] [%(filename)s:%(lineno)d] - %(message)s"
+    date_fmt = "%Y-%m-%d %H:%M:%S"
+
+    formatter = logging.Formatter(fmt_str, datefmt=date_fmt)
+    handler.setFormatter(formatter)
+
+    _pkg_logger.addHandler(handler)
+    _pkg_logger.setLevel(logging.DEBUG)
+
+    _pkg_logger.propagate = False
