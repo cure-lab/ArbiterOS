@@ -87,9 +87,10 @@ HIGH:
   - /snap/**
 
   # ── OpenClaw managed resources ───────────────────────────────────────────────
-  - ~/.openclaw/skills/**
-  - ~/.openclaw/workspace/**
-  - ~/.openclaw/workspace-*/**
+  - ".openclaw/openclaw.json"
+  - ".openclaw/skills/**"
+  - ".openclaw/workspace/**"
+  - ".openclaw/workspace-*/**"
 
   # ── ArbiterOS kernel config ────────────────────────────────────────────────
   - ~/.arbiteros/*

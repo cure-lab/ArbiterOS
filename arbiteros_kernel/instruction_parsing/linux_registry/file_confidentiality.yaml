@@ -89,9 +89,9 @@ HIGH:
   - /var/log/btmp
 
   # ── OpenClaw credentials & session transcripts (must not be committed) ──────
-  - ~/.openclaw/credentials/**
-  - ~/.openclaw/agents/*/sessions/**
-  - ~/.openclaw/openclaw.json
+  - ".openclaw/openclaw.json"
+  - ".openclaw/credentials/**"
+  - ".openclaw/agents/*/sessions/**"
 
   # ── ArbiterOS kernel config ────────────────────────────────────────────────
   - ~/.arbiteros/*

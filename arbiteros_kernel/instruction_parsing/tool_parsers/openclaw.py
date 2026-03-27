@@ -484,7 +484,7 @@ def _parse_browser(
     if action in _BROWSER_READ_ACTIONS:
         itype = "READ"
         sec = make_security_type(
-            confidentiality="HIGH",  # page content may include personal/session data
+            confidentiality="UNKNOWN",  # content sensitivity unknown at parse time; external public pages are not HIGH
             trustworthiness="LOW",  # web content is external and may contain injections
             confidence="UNKNOWN",
             reversible=True,
