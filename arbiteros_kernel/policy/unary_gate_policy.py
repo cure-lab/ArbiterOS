@@ -1215,7 +1215,6 @@ class UnaryGatePolicy(Policy):
         trace_id: str,
         **kwargs: Any,
     ) -> PolicyCheckResult:
-        policy_enabled = bool(kwargs.get("policy_enabled", True))
         response = dict(current_response)
         tool_calls = RUNTIME.extract_tool_calls(response)
         latest_idx = _latest_tool_instr_index(latest_instructions)
@@ -1224,7 +1223,6 @@ class UnaryGatePolicy(Policy):
         rules = rules if isinstance(rules, list) else []
 
         errors: List[str] = []
-        inactive_errors: List[str] = []
         kept: List[Dict[str, Any]] = []
         changed = False
 
@@ -1259,7 +1257,7 @@ class UnaryGatePolicy(Policy):
                 phase="policy.unary_gate",
                 trace_id=trace_id,
                 tool=tool_name,
-                decision=decision.effect if policy_enabled else "INACTIVE",
+                decision=decision.effect,
                 reason=(
                     f"rule#{decision.index} {decision.rule_id}: "
                     f"{decision.message or decision.description or decision.title}"
@@ -1297,11 +1295,7 @@ class UnaryGatePolicy(Policy):
                 },
             )
 
-            if policy_enabled:
-                errors.append(user_msg)
-            else:
-                inactive_errors.append(user_msg)
-                kept.append(new_tc)
+            errors.append(user_msg)
 
         if errors:
             response["tool_calls"] = kept if kept else None
@@ -1332,7 +1326,7 @@ class UnaryGatePolicy(Policy):
                         phase="policy.unary_gate",
                         trace_id=trace_id,
                         tool="@instruction",
-                        decision=decision.effect if policy_enabled else "INACTIVE",
+                        decision=decision.effect,
                         reason=(
                             f"rule#{decision.index} {decision.rule_id}: "
                             f"{decision.message or decision.description or decision.title}"
@@ -1367,25 +1361,15 @@ class UnaryGatePolicy(Policy):
                             },
                         },
                     )
-                    if policy_enabled:
-                        response["content"] = user_msg
-                        return PolicyCheckResult(
-                            modified=True,
-                            response=response,
-                            error_type=user_msg,
-                            inactivate_error_type=None,
-                        )
-                    inactive_errors.append(user_msg)
+                    response["content"] = user_msg
+                    return PolicyCheckResult(
+                        modified=True,
+                        response=response,
+                        error_type=user_msg,
+                        inactivate_error_type=None,
+                    )
 
-        if inactive_errors:
-            return PolicyCheckResult(
-                modified=False,
-                response=current_response,
-                error_type=None,
-                inactivate_error_type="\n\n".join(inactive_errors),
-            )
-
-        if changed and policy_enabled:
+        if changed:
             response["tool_calls"] = kept
             return PolicyCheckResult(
                 modified=True,
