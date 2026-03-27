@@ -96,7 +96,7 @@ class InstructionBuilder:
         return instr
 
     def get_taint_status(self) -> TaintStatus:
-        """Return the taint status (min trustworthiness/confidentiality) across all accumulated instructions."""
+        """Return the taint status across all accumulated instructions."""
         return compute_prop_taint_for_instruction(self.instructions, self.instructions[-1] if self.instructions else {})
 
     # ------------------------------------------------------------------
