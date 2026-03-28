@@ -1108,6 +1108,59 @@ def _build_tool_context(
         instruction_type
     )
 
+    custom = md.get("custom") if isinstance(md.get("custom"), dict) else {}
+    exec_parse = (
+        custom.get("exec_parse")
+        if isinstance(custom.get("exec_parse"), dict)
+        else {}
+    )
+
+    action = _safe_upper(args_dict.get("action"), "")
+
+    path_hint = _safe_str(
+        args_dict.get("path")
+        or args_dict.get("file_path")
+        or args_dict.get("target_path")
+        or args_dict.get("destination_path")
+        or args_dict.get("output_path")
+        or args_dict.get("dest_path")
+        or args_dict.get("dst")
+        or ""
+    )
+    path_hint_upper = path_hint.upper() if path_hint else ""
+    path_basename = os.path.basename(path_hint).upper() if path_hint else ""
+    path_dirname = os.path.dirname(path_hint).upper() if path_hint else ""
+
+    direct_target_basenames = sorted({path_basename} if path_basename else set())
+
+    exec_path_tokens = sorted(
+        {
+            str(x).upper()
+            for x in (exec_parse.get("path_tokens") or [])
+            if isinstance(x, str) and x.strip()
+        }
+    )
+    exec_write_targets = sorted(
+        {
+            str(x).upper()
+            for x in (exec_parse.get("write_targets") or [])
+            if isinstance(x, str) and x.strip()
+        }
+    )
+    exec_write_target_basenames = sorted(
+        {
+            os.path.basename(x).upper()
+            for x in (exec_parse.get("write_targets") or [])
+            if isinstance(x, str) and x.strip()
+        }
+    )
+
+    arg_text_upper = _safe_upper(
+        json.dumps(args_dict, ensure_ascii=False, sort_keys=True),
+        "",
+    )
+    has_external_url = ("HTTP://" in arg_text_upper) or ("HTTPS://" in arg_text_upper)
+
     return {
         "scope": "tool",
         "tool_name": tool_name,
@@ -1116,9 +1169,25 @@ def _build_tool_context(
         "instruction_category": category,
         "missing_instruction": not isinstance(ins, dict),
         "arg_total_str_len": _estimate_argument_string_budget(args_dict),
-        **md,
-    }
 
+        # existing metadata view
+        **md,
+
+        # shallow, rule-friendly fields
+        "action": action,
+        "path_hint": path_hint_upper,
+        "path_basename": path_basename,
+        "path_dirname": path_dirname,
+        "direct_target_basenames": direct_target_basenames,
+        "exec_path_tokens": exec_path_tokens,
+        "exec_write_targets": exec_write_targets,
+        "exec_write_target_basenames": exec_write_target_basenames,
+        "arg_text_upper": arg_text_upper,
+        "has_external_url": has_external_url,
+        "custom_io_kind": _safe_upper(custom.get("io_kind"), ""),
+        "custom_flow_role": _safe_upper(custom.get("flow_role"), ""),
+        "custom_taint_role": _safe_upper(custom.get("taint_role"), ""),
+    }
 
 def _build_respond_context(ins: Dict[str, Any]) -> Dict[str, Any]:
     md = _extract_metadata_view(ins)

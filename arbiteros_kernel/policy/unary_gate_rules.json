@@ -17,20 +17,6 @@
       "message": "当前 tool_call 没有找到对应的 instruction metadata，策略无法安全判定。"
     },
     {
-      "id": "UG-002",
-      "title": "runtime allow deny compatibility",
-      "description": "respect legacy allow/deny result",
-      "scope": "any",
-      "selector": {},
-      "predicate": {
-        "not": {
-          "runtime_allow_deny": true
-        }
-      },
-      "effect": "BLOCK",
-      "message": "allow/deny policy does not permit this action."
-    },
-    {
       "id": "UG-010",
       "title": "argument string budget",
       "description": "block tool call when total argument string length exceeds 4000",
@@ -190,6 +176,280 @@
       "effect": "BLOCK",
       "message": "blocked tag hit."
     },
+
+    {
+      "id": "UG-060",
+      "title": "protected identity or control file direct mutation",
+      "description": "block direct write or edit to protected identity/control files",
+      "scope": "tool",
+      "selector": {
+        "tool": [
+          "write",
+          "edit"
+        ]
+      },
+      "predicate": {
+        "intersects": [
+          {
+            "var": "direct_target_basenames"
+          },
+          {
+            "const": [
+              "SOUL.MD",
+              "AGENTS.MD",
+              "IDENTITY.MD"
+            ]
+          }
+        ]
+      },
+      "effect": "BLOCK",
+      "message": "protected identity/control files cannot be directly modified."
+    },
+    {
+      "id": "UG-061",
+      "title": "protected identity or control file exec write target",
+      "description": "block exec or process writes targeting protected identity/control files",
+      "scope": "tool",
+      "selector": {
+        "tool": [
+          "exec",
+          "process"
+        ]
+      },
+      "predicate": {
+        "intersects": [
+          {
+            "var": "exec_write_target_basenames"
+          },
+          {
+            "const": [
+              "SOUL.MD",
+              "AGENTS.MD",
+              "IDENTITY.MD"
+            ]
+          }
+        ]
+      },
+      "effect": "BLOCK",
+      "message": "exec or process may not write protected identity/control files."
+    },
+    {
+      "id": "UG-062",
+      "title": "protected identity or control file mutation instruction",
+      "description": "block outbound or delegated content that explicitly instructs mutation of protected identity/control files",
+      "scope": "tool",
+      "selector": {
+        "tool": [
+          "message",
+          "sessions_send",
+          "sessions_spawn"
+        ]
+      },
+      "predicate": {
+        "all": [
+          {
+            "any": [
+              {
+                "contains": [
+                  {
+                    "var": "arg_text_upper"
+                  },
+                  {
+                    "const": "SOUL.MD"
+                  }
+                ]
+              },
+              {
+                "contains": [
+                  {
+                    "var": "arg_text_upper"
+                  },
+                  {
+                    "const": "AGENTS.MD"
+                  }
+                ]
+              },
+              {
+                "contains": [
+                  {
+                    "var": "arg_text_upper"
+                  },
+                  {
+                    "const": "IDENTITY.MD"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "any": [
+              {
+                "contains": [
+                  {
+                    "var": "arg_text_upper"
+                  },
+                  {
+                    "const": "WRITE"
+                  }
+                ]
+              },
+              {
+                "contains": [
+                  {
+                    "var": "arg_text_upper"
+                  },
+                  {
+                    "const": "EDIT"
+                  }
+                ]
+              },
+              {
+                "contains": [
+                  {
+                    "var": "arg_text_upper"
+                  },
+                  {
+                    "const": "MODIFY"
+                  }
+                ]
+              },
+              {
+                "contains": [
+                  {
+                    "var": "arg_text_upper"
+                  },
+                  {
+                    "const": "PATCH"
+                  }
+                ]
+              },
+              {
+                "contains": [
+                  {
+                    "var": "arg_text_upper"
+                  },
+                  {
+                    "const": "REPLACE"
+                  }
+                ]
+              },
+              {
+                "contains": [
+                  {
+                    "var": "arg_text_upper"
+                  },
+                  {
+                    "const": "OVERRIDE"
+                  }
+                ]
+              },
+              {
+                "contains": [
+                  {
+                    "var": "arg_text_upper"
+                  },
+                  {
+                    "const": "INJECT"
+                  }
+                ]
+              },
+              {
+                "contains": [
+                  {
+                    "var": "arg_text_upper"
+                  },
+                  {
+                    "const": "APPEND"
+                  }
+                ]
+              },
+              {
+                "contains": [
+                  {
+                    "var": "arg_text_upper"
+                  },
+                  {
+                    "const": "DELETE"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "effect": "BLOCK",
+      "message": "outbound or delegated content must not instruct mutation of protected identity/control files."
+    },
+    {
+      "id": "UG-070",
+      "title": "suspicious gateway external redirection patch",
+      "description": "block gateway config patch or apply that introduces external proxy or upstream redirection",
+      "scope": "tool",
+      "selector": {
+        "tool": [
+          "gateway"
+        ]
+      },
+      "predicate": {
+        "all": [
+          {
+            "in": [
+              {
+                "var": "action"
+              },
+              {
+                "const": [
+                  "CONFIG.PATCH",
+                  "CONFIG.APPLY"
+                ]
+              }
+            ]
+          },
+          {
+            "truthy": {
+              "var": "has_external_url"
+            }
+          },
+          {
+            "any": [
+              {
+                "contains": [
+                  {
+                    "var": "arg_text_upper"
+                  },
+                  {
+                    "const": "PROXY"
+                  }
+                ]
+              },
+              {
+                "contains": [
+                  {
+                    "var": "arg_text_upper"
+                  },
+                  {
+                    "const": "UPSTREAM"
+                  }
+                ]
+              },
+              {
+                "contains": [
+                  {
+                    "var": "arg_text_upper"
+                  },
+                  {
+                    "const": "BASE_URL"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "effect": "BLOCK",
+      "message": "gateway config patch or apply must not introduce external proxy or upstream redirection without stronger review."
+    },
+
     {
       "id": "UG-050",
       "title": "respond prop confidentiality",
