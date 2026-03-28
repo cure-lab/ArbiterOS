@@ -151,6 +151,27 @@ def skill_name_under_root(path: str, skills_root: str) -> Optional[str]:
     return first if first else None
 
 
+def list_skill_packages(skills_root: str) -> list[tuple[str, str]]:
+    """Return sorted ``(skill_name, absolute_skill_dir)`` for each direct child directory.
+
+    Skips dot-directories. Used for startup warm-up of the trust cache.
+    """
+    out: list[tuple[str, str]] = []
+    try:
+        root = os.path.abspath(os.path.expanduser(skills_root))
+        if not os.path.isdir(root):
+            return out
+        for name in sorted(os.listdir(root)):
+            if name.startswith("."):
+                continue
+            d = os.path.join(root, name)
+            if os.path.isdir(d):
+                out.append((name, os.path.abspath(d)))
+    except OSError as e:
+        logger.warning("skill_trust: cannot list %s: %s", skills_root, e)
+    return out
+
+
 def _litellm_config_path() -> Optional[str]:
     env = os.environ.get("ARBITEROS_LITELLM_CONFIG", "").strip()
     if env and os.path.isfile(env):
@@ -279,6 +300,14 @@ def _cache_entry_trustworthiness(entry: Union[str, Dict[str, Any], None]) -> Opt
         if isinstance(t, str) and t in LEVEL_ORDER:
             return t  # type: ignore[return-value]
     return None
+
+
+def is_skill_cached(skill_name: str) -> bool:
+    """Return True if *skill_name* has a valid trust entry in the on-disk cache."""
+    _load_cache_from_disk()
+    with _SKILL_TRUST_LOCK:
+        entry = _SKILL_TRUST_CACHE.get(skill_name)
+    return _cache_entry_trustworthiness(entry) is not None
 
 
 def _scan_skill_package(skill_dir: str) -> Optional[Dict[str, Any]]:
