@@ -31,8 +31,22 @@ uv sync --group dev
 
 - `**model_name`**: ID exposed to clients (used in OpenClaw as `models[].id`)
 - `**litellm_params.model`**: LiteLLM format, e.g. `openai/gpt-5.2`
-- `**litellm_params.api_key**`: Your API key for the upstream provider
-- `**litellm_params.api_base**`:  API base URL
+- `**litellm_params.api_key`**: Your API key for the upstream provider
+- `**litellm_params.api_base`**:  API base URL
+
+**Skill trust (optional)** — When classifying path trustworthiness, the kernel can run [cisco-ai-skill-scanner](https://pypi.org/project/cisco-ai-skill-scanner/) to analyze scan the skill before use them if you finish this following 3 steps.
+
+1. **Install the Dependancy**:
+  ```bash
+   pip install cisco-ai-skill-scanner
+  ```
+2. **Point at your skills directory** — In `litellm_config.yaml`, set the parent of each skill package (the `skills` folder):
+  ```yaml
+   arbiteros_skill_trust:
+     skills_root: /path/to/openclaw/skills
+  ```
+3. **Optional LLM analyzer** — To pass `--use-llm` to the scanner, add all three under `skill_scanner_llm` in `litellm_config.yaml`: `model`, `api_base`, `api_key`. If any is missing, scans use static + behavioral analyzers only.
+4. **Cache** — Results are stored in `~/.arbiteros/instruction_parsing/linux_registry/skill_trust_by_name.json`
 
 **3 Run**:
 

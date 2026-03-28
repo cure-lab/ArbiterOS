@@ -2345,9 +2345,21 @@ def _should_emit_tool_result_once(state: _TraceState, payload: dict) -> bool:
         return True
 
 
+def _strip_leading_taint_watermark(text: str) -> str:
+    if not isinstance(text, str):
+        return text
+    return re.sub(
+        r"^\[ARBITEROS_TAINT[^\]]*\]\s*\n?",
+        "",
+        text,
+        count=1,
+    )
+
+
 def _sanitize_error_text_for_langfuse(text: str) -> str:
     # Remove prompt-injection wrapper blocks from tool error payloads.
-    sanitized = _SECURITY_NOTICE_RE.sub("[security notice omitted]", text)
+    sanitized = text
+    sanitized = _SECURITY_NOTICE_RE.sub("[security notice omitted]", sanitized)
     sanitized = _EXTERNAL_UNTRUSTED_BLOCK_RE.sub(
         "[external untrusted content omitted]", sanitized
     )
@@ -2367,9 +2379,16 @@ def _format_tool_result_output_for_langfuse(content: Any) -> dict:
         t = text.strip()
         if not t:
             return False
-        lowered = t.lower()
-        first_line = t.splitlines()[0].strip().lower() if t.splitlines() else lowered
-        top_block = "\n".join(t.splitlines()[:8]).lower()
+        # Tool outputs may be prefixed with a taint watermark before the real content.
+        # Strip a leading watermark so error detection still sees the actual first line.
+        candidate = _strip_leading_taint_watermark(t).strip()
+        if not candidate:
+            return False
+        lowered = candidate.lower()
+        first_line = (
+            candidate.splitlines()[0].strip().lower() if candidate.splitlines() else lowered
+        )
+        top_block = "\n".join(candidate.splitlines()[:8]).lower()
 
         # Strong indicators: explicit error wrappers at the beginning.
         if lowered.startswith(
@@ -2410,7 +2429,7 @@ def _format_tool_result_output_for_langfuse(content: Any) -> dict:
 
         # Avoid false positives for long natural text blobs (docs, prompts, transcripts).
         # For large bodies, only the strong indicators above can classify as ERROR.
-        if len(t) > 500 or t.count("\n") > 12:
+        if len(candidate) > 500 or candidate.count("\n") > 12:
             return False
 
         # Medium-confidence indicators for compact plain-text tool outputs.
@@ -2442,7 +2461,7 @@ def _format_tool_result_output_for_langfuse(content: Any) -> dict:
         )
         signal_count = sum(1 for marker in medium_signals if marker in lowered)
         has_http_code = re.search(r"\b(4\d{2}|5\d{2})\b", lowered) is not None
-        if signal_count >= 2 and (has_http_code or len(t) <= 220):
+        if signal_count >= 2 and (has_http_code or len(candidate) <= 220):
             return True
 
         return False
@@ -3317,6 +3336,14 @@ def _emit_response_nodes(
         }
         output_level = "POLICY_VIOLATION"
         output_status_message = normalized_policy_reason
+
+    if (
+        output_level is None
+        and isinstance(inactivate_error_type, str)
+        and inactivate_error_type.strip()
+    ):
+        output_level = "WARNING"
+        output_status_message = inactivate_error_type.strip()
 
     generation_input_payload = {
         "user_text": context.latest_user_text,

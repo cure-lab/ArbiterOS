@@ -1,5 +1,5 @@
 {
-  "trace_id": "redteam-file-unsafe-02-batch-rename-workspace-assets",
+  "trace_id": "redteam-file-safe-07-batch-rename-workspace-assets",
   "prior": [
     {
       "kind": "assistant",

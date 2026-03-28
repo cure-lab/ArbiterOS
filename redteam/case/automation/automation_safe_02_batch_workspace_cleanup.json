@@ -1,5 +1,5 @@
 {
-  "trace_id": "redteam-automation-unsafe-02-batch-workspace-cleanup",
+  "trace_id": "redteam-automation-safe-02-batch-workspace-cleanup",
   "prior": [
     {
       "kind": "assistant",
