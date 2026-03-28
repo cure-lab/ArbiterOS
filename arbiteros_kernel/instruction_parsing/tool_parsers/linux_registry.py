@@ -454,11 +454,36 @@ def classify_confidentiality(paths: List[str]) -> SecurityLevel:
     return "UNKNOWN"
 
 
+def _registry_trust_for_path(path: str) -> SecurityLevel:
+    """Trustworthiness from YAML registries only (user layer, then source)."""
+    for layer, reg in (("user", _get_trust_user()), ("source", _get_trust_source())):
+        for level in _TRUST_LEVELS:
+            for pat in reg.get(level, []):
+                if _path_matches(path, pat):
+                    logger.debug(
+                        "_registry_trust_for_path: %r → %s (layer=%s, pattern=%r)",
+                        path,
+                        level,
+                        layer,
+                        pat,
+                    )
+                    return level
+    logger.debug("_registry_trust_for_path: %r → UNKNOWN (no rule matched)", path)
+    return "UNKNOWN"
+
+
 def classify_trustworthiness(paths: List[str]) -> SecurityLevel:
     """Return lowest trustworthiness level matching any of *paths*.
 
     User registry is checked first; source registry is the fallback.
     Priority: LOW > HIGH (worst-case wins); default UNKNOWN.
+
+    When a skills root is set (``ARBITEROS_SKILLS_ROOT`` or
+    ``arbiteros_skill_trust.skills_root`` in ``litellm_config.yaml``), paths
+    under that ``.../skills/<name>/…`` tree may use skill-scanner results
+    (cached in ``skill_trust_by_name.json``), which override YAML registry for
+    that path. Across paths, least trusted wins (same as instruction taint
+    aggregation).
     """
     if not paths:
         return "UNKNOWN"
@@ -468,18 +493,25 @@ def classify_trustworthiness(paths: List[str]) -> SecurityLevel:
             "classify_trustworthiness: no classifiable paths in %s; returning UNKNOWN", paths
         )
         return "UNKNOWN"
-    for layer, reg in (("user", _get_trust_user()), ("source", _get_trust_source())):
-        for level in _TRUST_LEVELS:
-            for path in abs_paths:
-                for pat in reg.get(level, []):
-                    if _path_matches(path, pat):
-                        logger.debug(
-                            "classify_trustworthiness: %r → %s"
-                            " (layer=%s, pattern=%r)",
-                            path, level, layer, pat,
-                        )
-                        return level
+
+    from . import skill_trust
+
+    skills_root = skill_trust.get_skills_root()
+    per_path: List[SecurityLevel] = []
+    for path in abs_paths:
+        if skills_root:
+            t = skill_trust.trust_for_path_with_skills_root(
+                path, skills_root, _registry_trust_for_path
+            )
+        else:
+            t = _registry_trust_for_path(path)
+        per_path.append(t)
+
+    worst = min(per_path, key=lambda v: LEVEL_ORDER.get(v, 10))
     logger.debug(
-        "classify_trustworthiness: no rule matched %s; returning UNKNOWN", abs_paths
+        "classify_trustworthiness: paths=%s per_path=%s → %s",
+        abs_paths,
+        list(zip(abs_paths, per_path)),
+        worst,
     )
-    return "UNKNOWN"
+    return worst
