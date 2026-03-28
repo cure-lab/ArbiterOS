@@ -10,6 +10,7 @@ dependencies = [
     "litellm[proxy]>=1.81.5",
     "mlflow[genai]>=3.9.0",
     "pyyaml>=6.0.3",
+    "rich>=13.0.0",
 ]
 
 [dependency-groups]
@@ -21,8 +22,13 @@ dev = [
 
 [tool.poe.tasks]
 mlflow = "uv run mlflow server"
-litellm = "uv run litellm --config litellm_config.yaml --host 0.0.0.0 --port 4000"
+warm-skills = "uv run python -m arbiteros_kernel.warm_skill_trust"
+# Proxy only (after warm-up). Use ``poe litellm`` to run warm-skills then this.
+litellm-proxy = "uv run litellm --config litellm_config.yaml --host 0.0.0.0 --port 4000"
 run.parallel = ["mlflow", "litellm"]
+
+[tool.poe.tasks.litellm]
+sequence = ["warm-skills", "litellm-proxy"]
 
 [tool.poe.tasks.langfuse_replay]
 cmd = "uv run python -m arbiteros_kernel.langfuse_replay --input log/api_calls.jsonl ${replay_args}"
