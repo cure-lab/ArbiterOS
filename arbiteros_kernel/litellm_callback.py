@@ -3318,6 +3318,14 @@ def _emit_response_nodes(
         output_level = "POLICY_VIOLATION"
         output_status_message = normalized_policy_reason
 
+    if (
+        output_level is None
+        and isinstance(inactivate_error_type, str)
+        and inactivate_error_type.strip()
+    ):
+        output_level = "WARNING"
+        output_status_message = inactivate_error_type.strip()
+
     generation_input_payload = {
         "user_text": context.latest_user_text,
         "category": effective_category,
