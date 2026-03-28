@@ -41,3 +41,15 @@ litellm_settings:
   # so all OpenClaw steps can be grouped into one session trace.
   success_callback: ["mlflow"]
   failure_callback: ["mlflow"]
+
+# Skill trust (arbiteros_kernel.skill_trust): path to ``.../skills`` (OpenClaw
+# skill packages). Non-empty ARBITEROS_SKILLS_ROOT overrides ``skills_root`` here.
+arbiteros_skill_trust:
+  skills_root: 
+
+# Used when running ``skill-scanner`` from the kernel. All three keys must be
+# non-empty for ``--use-llm``; otherwise scans use static + behavioral only.
+skill_scanner_llm:
+  model: openai/gpt-4o
+  api_base: 
+  api_key:
