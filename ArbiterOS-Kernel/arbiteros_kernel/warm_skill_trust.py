@@ -24,11 +24,21 @@ def main() -> int:
 
     root = skill_trust.get_skills_root()
     if not root:
-        print(
-            "ArbiterOS: no skills_root configured "
-            "(arbiteros_skill_trust.skills_root / ARBITEROS_SKILLS_ROOT); skip warm-up.",
-            file=sys.stderr,
-        )
+        raw = skill_trust.skills_root_raw()
+        if raw:
+            expanded = os.path.abspath(os.path.expanduser(raw))
+            print(
+                "ArbiterOS: skills_root is set but is not a directory in this environment "
+                f"({expanded!r}); skip warm-up. In Docker, bind-mount host skills and set "
+                "ARBITEROS_SKILLS_ROOT to the in-container path.",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                "ArbiterOS: no skills_root "
+                "(arbiteros_skill_trust.skills_root / ARBITEROS_SKILLS_ROOT); skip warm-up.",
+                file=sys.stderr,
+            )
         return 0
 
     packages = skill_trust.list_skill_packages(root)
