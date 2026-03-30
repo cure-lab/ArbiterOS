@@ -1,0 +1,185 @@
+# File-path confidentiality classification.
+#
+# Keys   : HIGH | LOW
+# Values : glob patterns matched against individual path-like tokens extracted
+#          from shell commands (using fnmatch / PurePosixPath.match).
+#
+# Matching priority: HIGH > LOW.
+#   The resolver checks HIGH first; the first matching level wins.
+#   If nothing matches, the default is UNKNOWN.
+#
+# Notes
+#   - Patterns ending with /* match direct children only.
+#   - Patterns ending with /** match all descendants (recursive).
+#   - Quoted patterns starting with * must be quoted to be valid YAML.
+
+HIGH:
+  # ── Authentication & identity ───────────────────────────────────────────────
+  - /etc/shadow
+  - /etc/gshadow
+  - /etc/sudoers
+  - /etc/sudoers.d/*
+  - /etc/pam.d/*
+  - /etc/security/*
+  - /etc/ssh/*
+  - /etc/ssl/private/*
+  - /etc/pki/**
+  - /etc/openvpn/*
+  - /etc/wireguard/*
+
+  # ── System secrets / credentials storage ───────────────────────────────────
+  - /etc/secrets/*
+  - /etc/credentials/*
+  - /run/secrets/*
+  - /run/credentials/**
+
+  # ── User private keys & credential stores ──────────────────────────────────
+  - ~/.ssh/*
+  - ~/.gnupg/*
+  - ~/.pgp/*
+  - ~/.netrc
+  - ~/.authinfo
+  - ~/.aws/credentials
+  - ~/.aws/config
+  - ~/.azure/*
+  - ~/.gcloud/*
+  - ~/.config/gcloud/*
+  - ~/.kube/config
+  - ~/.kube/**
+  - /etc/kubernetes/*
+  - /var/lib/kubelet/*
+  - ~/.docker/config.json
+
+  # ── Private-key / certificate file extensions ───────────────────────────────
+  - "*.pem"
+  - "*.key"
+  - "*.p12"
+  - "*.pfx"
+  - "*.pkcs12"
+  - "*.jks"
+  - "*.keystore"
+  - "*.der"
+
+  # ── Secret environment / config files ───────────────────────────────────────
+  - .env
+  - .env.*
+  - "*.secret"
+  - "*.secrets"
+  - secrets.yaml
+  - secrets.yml
+  - secrets.json
+  - secret.yaml
+  - secret.json
+  - vault.yaml
+  - vault.json
+
+  # ── Password / credential / token files (name-based wildcards) ──────────
+  - "*password*"
+  - "*credentials*"
+  - "*apikey*"
+  - "*api_key*"
+  - "*secret_key*"
+  - "*private_key*"
+
+  # ── Authentication / security logs ──────────────────────────────────────────
+  - /var/log/auth.log
+  - /var/log/secure
+  - /var/log/faillog
+  - /var/log/tallylog
+  - /var/log/btmp
+
+  # ── OpenClaw credentials & session transcripts (must not be committed) ──────
+  - ".openclaw/openclaw.json"
+  - ".openclaw/credentials/**"
+  - ".openclaw/agents/*/sessions/**"
+
+  # ── ArbiterOS kernel config ────────────────────────────────────────────────
+  - ~/.arbiteros/*
+
+  # ── System-wide configuration ─────────────────────────────────────────────
+  - /etc/*
+  - /etc/**
+
+  # ── Sensitive /proc entries ───────────────────────────────────────────────
+  - /proc/*/environ
+  - /proc/self/environ
+  - /proc/self/mem
+  - /proc/kcore
+  - /proc/*/cmdline
+  - /proc/keys
+
+  # ── System logs ──────────────────────────────────────────────────────────
+  - /var/log/*
+  - /var/log/**
+  - /run/log/*
+
+  # ── User config & local state ─────────────────────────────────────────────
+  - ~/.config/*
+  - ~/.config/**
+  - ~/.local/*
+  - ~/.local/**
+  - ~/.cache/*
+  - ~/.bashrc
+  - ~/.bash_profile
+  - ~/.zshrc
+  - ~/.profile
+
+
+  # ── OpenClaw workspace — agent memory & identity files ──────────────────
+  - ~/.openclaw/workspace/SOUL.md
+  - ~/.openclaw/workspace/MEMORY.md
+  - ~/.openclaw/workspace/AGENTS.md
+  - ~/.openclaw/workspace/USER.md
+  - ~/.openclaw/workspace/IDENTITY.md
+  - ~/.openclaw/workspace/HEARTBEAT.md
+  - ~/.openclaw/workspace/BOOT.md
+  - ~/.openclaw/workspace/memory/**
+  - ~/.openclaw/workspace-*/SOUL.md
+  - ~/.openclaw/workspace-*/MEMORY.md
+  - ~/.openclaw/workspace-*/AGENTS.md
+  - ~/.openclaw/workspace-*/USER.md
+  - ~/.openclaw/workspace-*/IDENTITY.md
+  - ~/.openclaw/workspace-*/HEARTBEAT.md
+  - ~/.openclaw/workspace-*/BOOT.md
+  - ~/.openclaw/workspace-*/memory/**
+
+  # ── OpenClaw managed skills ───────────────────────────────────────────────
+  - ~/.openclaw/skills/**
+
+LOW:
+  # ── Kernel / hardware / runtime virtual filesystems ──────────────────────
+  - /proc/*
+  - /proc/**
+  - /sys/*
+  - /sys/**
+  - /dev/*
+
+  # ── Temporary / shared directories ───────────────────────────────────────
+  - /tmp/*
+  - /var/tmp/*
+
+  # ── System binaries / libraries ──────────────────────────────────────────
+  - /usr/bin/*
+  - /usr/lib/*
+  - /usr/lib/**
+  - /usr/share/*
+  - /usr/share/**
+  - /usr/local/*
+  - /usr/local/**
+  - /bin/*
+  - /sbin/*
+  - /lib/*
+  - /lib/**
+  - /lib64/*
+  - /opt/*
+  - /opt/**
+
+  # ── Web-served / public content ──────────────────────────────────────────
+  - /var/www/*
+  - /var/www/**
+  - /srv/http/*
+  - /srv/www/*
+
+  # ── TLS certificates (public part only) ──────────────────────────────────
+  - "*.crt"
+  - "*.cer"

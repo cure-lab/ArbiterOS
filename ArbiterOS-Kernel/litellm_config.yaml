@@ -1,0 +1,55 @@
+model_list:
+  - model_name: gpt-4o-mini
+    litellm_params:
+      model: openai/gpt-5.4-mini
+      api_key:
+      api_base: 
+      response_format:
+        type: json_schema
+        json_schema:
+          name: instruction_output
+          schema:
+            type: object
+            properties:
+              topic:
+                type: string
+                description: "A concise topic/title for this turn (keep it short, e.g. 8-20 Chinese chars or <= 40 chars)."
+                maxLength: 60
+              category:
+                type: string
+                enum:
+                  - COGNITIVE_CORE__REASON
+                  - COGNITIVE_CORE__PLAN
+                  - COGNITIVE_CORE__CRITIQUE
+                  - COGNITIVE_CORE__ASK
+                  - COGNITIVE_CORE__RESPOND
+                description: "The instruction category type. Use the most Accurate category possible, rather than only choose 'COGNITIVE_CORE__RESPOND'. "
+              content:
+                type: string
+                description: "The actual content of the instruction"
+            required: [topic, category, content]
+            additionalProperties: false
+          strict: true
+
+
+litellm_settings:
+  # Following settings for anthropics models
+  # modify_params: true
+  drop_params: true
+  callbacks: arbiteros_kernel.litellm_callback.proxy_handler_instance
+  # Langfuse tracing is emitted by arbiteros_kernel.litellm_callback
+  # so all OpenClaw steps can be grouped into one session trace.
+  success_callback: ["mlflow"]
+  failure_callback: ["mlflow"]
+
+# Skill trust (arbiteros_kernel.skill_trust): path to ``.../skills`` (OpenClaw
+# skill packages). Non-empty ARBITEROS_SKILLS_ROOT overrides ``skills_root`` here.
+arbiteros_skill_trust:
+  skills_root: 
+
+# Used when running ``skill-scanner`` from the kernel. All three keys must be
+# non-empty for ``--use-llm``; otherwise scans use static + behavioral only.
+skill_scanner_llm:
+  model: openai/gpt-4o
+  api_base: 
+  api_key:
