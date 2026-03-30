@@ -110,6 +110,14 @@ def _persist_cache() -> None:
         logger.warning("skill_trust: failed to write %s", path, exc_info=True)
 
 
+def skills_root_raw() -> str:
+    """Config/env value before ``exists/isdir`` checks (may be a host-only path in Docker)."""
+    raw = os.environ.get("ARBITEROS_SKILLS_ROOT", "").strip()
+    if not raw:
+        raw = (_read_skills_root_from_litellm_config() or "").strip()
+    return raw
+
+
 def get_skills_root() -> Optional[str]:
     """Return normalized absolute path to the ``.../skills`` directory, or None.
 
@@ -117,9 +125,7 @@ def get_skills_root() -> Optional[str]:
     ``arbiteros_skill_trust.skills_root`` in ``litellm_config.yaml`` (see
     ``ARBITEROS_LITELLM_CONFIG`` or search path).
     """
-    raw = os.environ.get("ARBITEROS_SKILLS_ROOT", "").strip()
-    if not raw:
-        raw = (_read_skills_root_from_litellm_config() or "").strip()
+    raw = skills_root_raw()
     if not raw:
         return None
     expanded = os.path.abspath(os.path.expanduser(raw))
