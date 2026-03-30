@@ -138,6 +138,7 @@ celerybeat.pid
 .env
 .envrc
 .venv
+litellm_config.yaml
 env/
 venv/
 ENV/

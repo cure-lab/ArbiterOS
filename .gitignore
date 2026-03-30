@@ -1,2 +1,3 @@
 stack.env
 .DS_Store
+run-kernel.sh
