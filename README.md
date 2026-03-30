@@ -145,6 +145,7 @@ ArbiterOS Kernel 实际上是一个基于 LiteLLM 的代理，模型列表和 AP
 - **对应的 `litellm_params`**：包括：
   - `model`（上游真实模型名）
   - `api_base` / `api_key` 等
+- **Skill 可信度（可选）**：若要在使用 OpenClaw skill 前做可信度扫描，需在运行环境中安装 `cisco-ai-skill-scanner`，并在 `litellm_config.yaml` 中配置 `arbiteros_skill_trust` / `skill_scanner_llm`（示例见同目录下 `litellm_config.yaml` 注释）。完整步骤与说明见 [ArbiterOS-Kernel README](ArbiterOS-Kernel/README.md) 中的「Skill trust」小节。
 
 你后面在 OpenClaw 中引用的模型 ID（例如 `arbiteros/gpt-5.2`）需要和这里的 `model_name` 保持一致。
 
