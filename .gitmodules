@@ -1,4 +1,0 @@
-[submodule "langfuse"]
-	path = langfuse
-	url = https://github.com/ChangranXU/langfuse.git
-	branch = user

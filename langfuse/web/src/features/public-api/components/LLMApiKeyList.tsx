@@ -1,0 +1,239 @@
+import { TrashIcon } from "lucide-react";
+import { useState } from "react";
+import Header from "@/src/components/layouts/header";
+import { Button } from "@/src/components/ui/button";
+import { Card } from "@/src/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/src/components/ui/dialog";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/src/components/ui/table";
+import { usePostHogClientCapture } from "@/src/features/posthog-analytics/usePostHogClientCapture";
+import { useHasProjectAccess } from "@/src/features/rbac/utils/checkProjectAccess";
+import { api } from "@/src/utils/api";
+import { DialogDescription } from "@radix-ui/react-dialog";
+import { Alert, AlertDescription, AlertTitle } from "@/src/components/ui/alert";
+import { CreateLLMApiKeyDialog } from "./CreateLLMApiKeyDialog";
+import { UpdateLLMApiKeyDialog } from "./UpdateLLMApiKeyDialog";
+import { useLanguage } from "@/src/features/i18n/LanguageProvider";
+import { localize } from "@/src/features/i18n/localize";
+
+export function LlmApiKeyList(props: { projectId: string }) {
+  const [editingKeyId, setEditingKeyId] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
+  const { language } = useLanguage();
+
+  const hasAccess = useHasProjectAccess({
+    projectId: props.projectId,
+    scope: "llmApiKeys:read",
+  });
+
+  const apiKeys = api.llmApiKey.all.useQuery(
+    {
+      projectId: props.projectId,
+    },
+    {
+      enabled: hasAccess,
+    },
+  );
+
+  const hasExtraHeaderKeys = apiKeys.data?.data.some(
+    (key) => key.extraHeaderKeys.length > 0,
+  );
+
+  if (!hasAccess) {
+    return (
+      <div>
+        <Header title={localize(language, "LLM Connections", "LLM 连接")} />
+        <Alert>
+          <AlertTitle>
+            {localize(language, "Access Denied", "访问被拒绝")}
+          </AlertTitle>
+          <AlertDescription>
+            {localize(
+              language,
+              "You do not have permission to view LLM API keys for this project.",
+              "你没有权限查看此项目的 LLM API 密钥。",
+            )}
+          </AlertDescription>
+        </Alert>
+      </div>
+    );
+  }
+
+  return (
+    <div id="llm-api-keys">
+      <Header title={localize(language, "LLM Connections", "LLM 连接")} />
+      <p className="mb-4 text-sm">
+        {localize(
+          language,
+          "Connect your LLM services to enable evaluations and playground features. Your provider will charge based on usage.",
+          "连接你的 LLM 服务以启用评估和 playground 功能。你的服务提供商将根据使用量收费。",
+        )}
+      </p>
+      <Card className="mb-4 overflow-auto">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="text-primary md:table-cell">
+                {localize(language, "Provider", "提供商")}
+              </TableHead>
+              <TableHead className="text-primary md:table-cell">
+                {localize(language, "Adapter", "适配器")}
+              </TableHead>
+              <TableHead className="text-primary md:table-cell">
+                {localize(language, "Base URL", "基础 URL")}
+              </TableHead>
+              <TableHead className="text-primary">
+                {localize(language, "API Key", "API 密钥")}
+              </TableHead>
+              {hasExtraHeaderKeys ? (
+                <TableHead className="text-primary">
+                  {localize(language, "Extra headers", "额外请求头")}
+                </TableHead>
+              ) : null}
+              <TableHead />
+            </TableRow>
+          </TableHeader>
+          <TableBody className="text-muted-foreground">
+            {apiKeys.data?.data.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={6} className="text-center">
+                  {localize(language, "None", "无")}
+                </TableCell>
+              </TableRow>
+            ) : (
+              apiKeys.data?.data.map((apiKey) => (
+                <TableRow
+                  key={apiKey.id}
+                  className="cursor-default hover:bg-primary-foreground"
+                  onClick={() => setEditingKeyId(apiKey.id)}
+                >
+                  <TableCell className="font-mono">{apiKey.provider}</TableCell>
+                  <TableCell className="font-mono">{apiKey.adapter}</TableCell>
+                  <TableCell className="max-w-md overflow-auto font-mono">
+                    {apiKey.baseURL ?? localize(language, "default", "默认")}
+                  </TableCell>
+                  <TableCell className="font-mono">
+                    {apiKey.displaySecretKey}
+                  </TableCell>
+                  {hasExtraHeaderKeys ? (
+                    <TableCell> {apiKey.extraHeaderKeys.join(", ")} </TableCell>
+                  ) : null}
+                  <TableCell className="text-right">
+                    <div
+                      className="flex justify-end space-x-2"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <UpdateLLMApiKeyDialog
+                        apiKey={{
+                          ...apiKey,
+                          secretKey: apiKey.displaySecretKey,
+                          extraHeaders: apiKey.extraHeaderKeys.join(","),
+                          config: apiKey.config ?? null,
+                        }}
+                        projectId={props.projectId}
+                        open={editingKeyId === apiKey.id}
+                        onOpenChange={(open: boolean) => {
+                          if (open) {
+                            setEditingKeyId(apiKey.id);
+                          } else {
+                            setEditingKeyId(null);
+                          }
+                        }}
+                      />
+                      <DeleteApiKeyButton
+                        projectId={props.projectId}
+                        apiKeyId={apiKey.id}
+                      />
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))
+            )}
+          </TableBody>
+        </Table>
+      </Card>
+      <CreateLLMApiKeyDialog open={open} setOpen={setOpen} />
+    </div>
+  );
+}
+
+// show dialog to let user confirm that this is a destructive action
+function DeleteApiKeyButton(props: { projectId: string; apiKeyId: string }) {
+  const capture = usePostHogClientCapture();
+  const { language } = useLanguage();
+  const hasAccess = useHasProjectAccess({
+    projectId: props.projectId,
+    scope: "llmApiKeys:delete",
+  });
+
+  const utils = api.useUtils();
+  const mutDeleteApiKey = api.llmApiKey.delete.useMutation({
+    onSuccess: () => utils.llmApiKey.invalidate(),
+  });
+  const [open, setOpen] = useState(false);
+
+  if (!hasAccess) return null;
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button variant="ghost" size="icon">
+          <TrashIcon className="h-4 w-4" />
+        </Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle className="mb-5">
+            {localize(language, "Delete LLM Connection", "删除 LLM 连接")}
+          </DialogTitle>
+          <DialogDescription>
+            {localize(
+              language,
+              "Are you sure you want to delete this connection? This action cannot be undone.",
+              "确定要删除此连接吗？此操作无法撤销。",
+            )}
+          </DialogDescription>
+        </DialogHeader>
+
+        <DialogFooter>
+          <Button
+            variant="destructive"
+            onClick={() => {
+              mutDeleteApiKey
+                .mutateAsync({
+                  projectId: props.projectId,
+                  id: props.apiKeyId,
+                })
+                .then(() => {
+                  capture("project_settings:llm_api_key_delete");
+                  setOpen(false);
+                })
+                .catch((error) => {
+                  console.error(error);
+                });
+            }}
+            loading={mutDeleteApiKey.isPending}
+          >
+            {localize(language, "Permanently delete", "永久删除")}
+          </Button>
+          <Button variant="ghost" onClick={() => setOpen(false)}>
+            {localize(language, "Cancel", "取消")}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
