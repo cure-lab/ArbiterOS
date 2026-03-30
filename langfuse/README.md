@@ -1,399 +1,546 @@
-<img width="4856" height="1000" alt="github-banner" src="https://github.com/user-attachments/assets/6f435ef3-1194-4e26-87af-aa13826bbb5f" />
-
-<div align="center">
-   <div>
-      <h3>
-        <a href="https://langfuse.com/blog/2025-06-04-open-sourcing-langfuse-product">
-            <strong>Langfuse Is Doubling Down On Open Source</strong>
-         </a> <br> <br>
-         <a href="https://cloud.langfuse.com">
-            <strong>Langfuse Cloud</strong>
-         </a> · 
-         <a href="https://langfuse.com/docs/deployment/self-host">
-            <strong>Self Host</strong>
-         </a> · 
-         <a href="https://langfuse.com/demo">
-            <strong>Demo</strong>
-         </a>
-      </h3>
-   </div>
-
-   <div>
-      <a href="https://langfuse.com/docs"><strong>Docs</strong></a> ·
-      <a href="https://langfuse.com/issues"><strong>Report Bug</strong></a> ·
-      <a href="https://langfuse.com/ideas"><strong>Feature Request</strong></a> ·
-      <a href="https://langfuse.com/changelog"><strong>Changelog</strong></a> ·
-      <a href="https://langfuse.com/roadmap"><strong>Roadmap</strong></a> ·
-   </div>
-   <br/>
-   <span>Langfuse uses <a href="https://github.com/orgs/langfuse/discussions"><strong>GitHub Discussions</strong></a>  for Support and Feature Requests.</span>
-   <br/>
-   <span><b>We're hiring.</b> <a href="https://langfuse.com/careers"><strong>Join us</strong></a> in product engineering and technical go-to-market roles.</span>
-   <br/>
-   <br/>
-   <div>
-   </div>
-</div>
-
-<p align="center">
-   <a href="https://github.com/langfuse/langfuse/blob/main/LICENSE">
-   <img src="https://img.shields.io/badge/License-MIT-E11311.svg" alt="MIT License">
-   </a>
-   <a href="https://www.ycombinator.com/companies/langfuse"><img src="https://img.shields.io/badge/Y%20Combinator-W23-orange" alt="Y Combinator W23"></a>
-   <a href="https://hub.docker.com/u/langfuse" target="_blank">
-   <img alt="Docker Pulls" src="https://img.shields.io/docker/pulls/langfuse/langfuse?labelColor=%20%23FDB062&logo=Docker&labelColor=%20%23528bff"></a>
-   <a href="https://pypi.python.org/pypi/langfuse"><img src="https://img.shields.io/pypi/dm/langfuse?logo=python&logoColor=white&label=pypi%20langfuse&color=blue" alt="langfuse Python package on PyPi"></a>
-   <a href="https://www.npmjs.com/package/langfuse"><img src="https://img.shields.io/npm/dm/langfuse?logo=npm&logoColor=white&label=npm%20langfuse&color=blue" alt="langfuse npm package"></a>
-   <br/>
-   <a href="https://discord.com/invite/7NXusRtqYU" target="_blank">
-   <img src="https://img.shields.io/discord/1111061815649124414?logo=discord&labelColor=%20%235462eb&logoColor=%20%23f5f5f5&color=%20%235462eb"
-      alt="chat on Discord"></a>
-   <a href="https://twitter.com/intent/follow?screen_name=langfuse" target="_blank">
-   <img src="https://img.shields.io/twitter/follow/langfuse?logo=X&color=%20%23f5f5f5"
-      alt="follow on X(Twitter)"></a>
-   <a href="https://www.linkedin.com/company/langfuse/" target="_blank">
-   <img src="https://custom-icon-badges.demolab.com/badge/LinkedIn-0A66C2?logo=linkedin-white&logoColor=fff"
-      alt="follow on LinkedIn"></a>
-   <a href="https://github.com/langfuse/langfuse/graphs/commit-activity" target="_blank">
-   <img alt="Commits last month" src="https://img.shields.io/github/commit-activity/m/langfuse/langfuse?labelColor=%20%2332b583&color=%20%2312b76a"></a>
-   <a href="https://github.com/langfuse/langfuse/" target="_blank">
-   <img alt="Issues closed" src="https://img.shields.io/github/issues-search?query=repo%3Alangfuse%2Flangfuse%20is%3Aclosed&label=issues%20closed&labelColor=%20%237d89b0&color=%20%235d6b98"></a>
-   <a href="https://github.com/langfuse/langfuse/discussions/" target="_blank">
-   <img alt="Discussion posts" src="https://img.shields.io/github/discussions/langfuse/langfuse?labelColor=%20%239b8afb&color=%20%237a5af8"></a>
-   <a href="https://deepwiki.com/langfuse/langfuse" target="_blank">
-   <img alt="Ask DeepWiki" src="https://deepwiki.com/badge.svg"></a>
-</p>
-
-<p align="center">
-  <a href="./README.md"><img alt="README in English" src="https://img.shields.io/badge/English-d9d9d9"></a>
-  <a href="./README.cn.md"><img alt="简体中文版自述文件" src="https://img.shields.io/badge/简体中文-d9d9d9"></a>
-  <a href="./README.ja.md"><img alt="日本語のREADME" src="https://img.shields.io/badge/日本語-d9d9d9"></a>
-  <a href="./README.kr.md"><img alt="README in Korean" src="https://img.shields.io/badge/한국어-d9d9d9"></a>
-</p>
-
-<p align="center">
-   <a href="https://github.com/ClickHouse/ClickHouse"><strong>Proudly made with ClickHouse open source database</strong></a>
-</p>
-
-
-
-Langfuse is an **open source LLM engineering** platform. It helps teams collaboratively
-**develop, monitor, evaluate,** and **debug** AI applications. Langfuse can be **self-hosted in minutes** and is **battle-tested**.
-
-[![Langfuse Overview Video](https://github.com/user-attachments/assets/925d71db-6331-445e-8f3e-727ee95d1c9f)](https://langfuse.com/watch-demo)
-
-## ✨ Core Features
-
-<img width="4856" height="1944" alt="Langfuse Overview" src="https://github.com/user-attachments/assets/5dac68ef-d546-49fb-b06f-cfafc19282e3" />
-
-- [LLM Application Observability](https://langfuse.com/docs/tracing): Instrument your app and start ingesting traces to Langfuse, thereby tracking LLM calls and other relevant logic in your app such as retrieval, embedding, or agent actions. Inspect and debug complex logs and user sessions. Try the interactive [demo](https://langfuse.com/docs/demo) to see this in action.
-
-- [Prompt Management](https://langfuse.com/docs/prompt-management/get-started) helps you centrally manage, version control, and collaboratively iterate on your prompts. Thanks to strong caching on server and client side, you can iterate on prompts without adding latency to your application.
-
-- [Evaluations](https://langfuse.com/docs/evaluation/overview) are key to the LLM application development workflow, and Langfuse adapts to your needs. It supports LLM-as-a-judge, user feedback collection, manual labeling, and custom evaluation pipelines via APIs/SDKs.
-
-- [Datasets](https://langfuse.com/docs/evaluation/dataset-runs/datasets) enable test sets and benchmarks for evaluating your LLM application. They support continuous improvement, pre-deployment testing, structured experiments, flexible evaluation, and seamless integration with frameworks like LangChain and LlamaIndex.
-
-- [LLM Playground](https://langfuse.com/docs/playground) is a tool for testing and iterating on your prompts and model configurations, shortening the feedback loop and accelerating development. When you see a bad result in tracing, you can directly jump to the playground to iterate on it.
-
-- [Comprehensive API](https://langfuse.com/docs/api): Langfuse is frequently used to power bespoke LLMOps workflows while using the building blocks provided by Langfuse via the API. OpenAPI spec, Postman collection, and typed SDKs for Python, JS/TS are available.
-
-## 📦 Deploy Langfuse
+# Langfuse Tracing
 
-<img width="4856" height="1322" alt="Langfuse Deployment Options" src="https://github.com/user-attachments/assets/98f020c7-7a20-4264-a201-65c41a52a5d5" />
+This document describes the Langfuse-based tracing and governance UI used with ArbiterOS.
 
-### Langfuse Cloud
+## Table of Contents
 
-Managed deployment by the Langfuse team, generous free-tier, no credit card required.
+- [Home Page](#home-page)
+- [Tracing](#tracing)
+- [Analysis](#analysis)
+- [Summary](#summary)
+- [Policy](#policy)
+- [Setting](#setting)
 
-<div align="center">
-    <a href="https://cloud.langfuse.com" target="_blank">
-        <img alt="Static Badge" src="https://img.shields.io/badge/»%20Sign%20up%20for%20Langfuse%20Cloud-8A2BE2?&color=orange">
-    </a>
-</div>
-
-### Self-Host Langfuse
+---
 
-Run Langfuse on your own infrastructure:
-
-- [Local (docker compose)](https://langfuse.com/self-hosting/local): Run Langfuse on your own machine in 5 minutes using Docker Compose.
+# Home Page
 
-  ```bash
-  # Get a copy of the latest Langfuse repository
-  git clone https://github.com/langfuse/langfuse.git
-  cd langfuse
+The Home Page displays overview metrics. The following are most relevant to ArbiterOS:
 
-  # Run the langfuse docker compose
-  docker compose up
-  ```
+## Governed Signals
 
-- [VM](https://langfuse.com/self-hosting/docker-compose): Run Langfuse on a single Virtual Machine using Docker Compose.
-- [Kubernetes (Helm)](https://langfuse.com/self-hosting/kubernetes-helm): Run Langfuse on a Kubernetes cluster using Helm. This is the preferred production deployment.
-- Terraform Templates: [AWS](https://langfuse.com/self-hosting/aws), [Azure](https://langfuse.com/self-hosting/azure), [GCP](https://langfuse.com/self-hosting/gcp)
+- **Definition**: errorCount + warningCount + policyViolationCount
+- **Meaning**: Total count of all signals that require governance attention, under the current filters and time range
 
-See [self-hosting documentation](https://langfuse.com/self-hosting) to learn more about architecture and configuration options.
+## Errors
 
-## 🔌 Integrations
+- **Definition**: Sum of counts where level = ERROR
+- **Latest bucket**: Error count in the most recent time bucket (not the latest single event)
 
-<img width="4856" height="1322" alt="github-integrations" src="https://github.com/user-attachments/assets/e41ea0fb-742d-41ce-bf94-1d4fb95750cd" />
+## Warnings
 
-### Main Integrations:
+- **Definition**: Sum of counts where level = WARNING
+- **Latest bucket**: Warning count in the most recent time bucket
 
-| Integration                                                                  | Supports                   | Description                                                                                                                                      |
-| ---------------------------------------------------------------------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| [SDK](https://langfuse.com/docs/sdk)                                         | Python, JS/TS              | Manual instrumentation using the SDKs for full flexibility.                                                                                      |
-| [OpenAI](https://langfuse.com/integrations/model-providers/openai-py)        | Python, JS/TS              | Automated instrumentation using drop-in replacement of OpenAI SDK.                                                                               |
-| [Langchain](https://langfuse.com/docs/integrations/langchain)                | Python, JS/TS              | Automated instrumentation by passing callback handler to Langchain application.                                                                  |
-| [LlamaIndex](https://langfuse.com/docs/integrations/llama-index/get-started) | Python                     | Automated instrumentation via LlamaIndex callback system.                                                                                        |
-| [Haystack](https://langfuse.com/docs/integrations/haystack)                  | Python                     | Automated instrumentation via Haystack content tracing system.                                                                                   |
-| [LiteLLM](https://langfuse.com/docs/integrations/litellm)                    | Python, JS/TS (proxy only) | Use any LLM as a drop in replacement for GPT. Use Azure, OpenAI, Cohere, Anthropic, Ollama, VLLM, Sagemaker, HuggingFace, Replicate (100+ LLMs). |
-| [Vercel AI SDK](https://langfuse.com/docs/integrations/vercel-ai-sdk)        | JS/TS                      | TypeScript toolkit designed to help developers build AI-powered applications with React, Next.js, Vue, Svelte, Node.js.                          |
-| [Mastra](https://langfuse.com/docs/integrations/mastra)                      | JS/TS                      | Open source framework for building AI agents and multi-agent systems.                                                                            |
-| [API](https://langfuse.com/docs/api)                                         |                            | Directly call the public API. OpenAPI spec available.                                                                                            |
+## Policy Violations
 
-### Packages integrated with Langfuse:
+- **Definition**: Sum of counts where level = POLICY_VIOLATION
+- **Latest bucket**: Policy Violation count in the most recent time bucket
 
-| Name                                                                    | Type               | Description                                                                                                             |
-| ----------------------------------------------------------------------- | ------------------ | ----------------------------------------------------------------------------------------------------------------------- |
-| [Instructor](https://langfuse.com/docs/integrations/instructor)         | Library            | Library to get structured LLM outputs (JSON, Pydantic)                                                                  |
-| [DSPy](https://langfuse.com/docs/integrations/dspy)                     | Library            | Framework that systematically optimizes language model prompts and weights                                              |
-| [Mirascope](https://langfuse.com/docs/integrations/mirascope)           | Library            | Python toolkit for building LLM applications.                                                                           |
-| [Ollama](https://langfuse.com/docs/integrations/ollama)                 | Model (local)      | Easily run open source LLMs on your own machine.                                                                        |
-| [Amazon Bedrock](https://langfuse.com/docs/integrations/amazon-bedrock) | Model              | Run foundation and fine-tuned models on AWS.                                                                            |
-| [AutoGen](https://langfuse.com/docs/integrations/autogen)               | Agent Framework    | Open source LLM platform for building distributed agents.                                                               |
-| [Flowise](https://langfuse.com/docs/integrations/flowise)               | Chat/Agent&nbsp;UI | JS/TS no-code builder for customized LLM flows.                                                                         |
-| [Langflow](https://langfuse.com/docs/integrations/langflow)             | Chat/Agent&nbsp;UI | Python-based UI for LangChain, designed with react-flow to provide an effortless way to experiment and prototype flows. |
-| [Dify](https://langfuse.com/docs/integrations/dify)                     | Chat/Agent&nbsp;UI | Open source LLM app development platform with no-code builder.                                                          |
-| [OpenWebUI](https://langfuse.com/docs/integrations/openwebui)           | Chat/Agent&nbsp;UI | Self-hosted LLM Chat web ui supporting various LLM runners including self-hosted and local models.                      |
-| [Promptfoo](https://langfuse.com/docs/integrations/promptfoo)           | Tool               | Open source LLM testing platform.                                                                                       |
-| [LobeChat](https://langfuse.com/docs/integrations/lobechat)             | Chat/Agent&nbsp;UI | Open source chatbot platform.                                                                                           |
-| [Vapi](https://langfuse.com/docs/integrations/vapi)                     | Platform           | Open source voice AI platform.                                                                                          |
-| [Inferable](https://langfuse.com/docs/integrations/other/inferable)     | Agents             | Open source LLM platform for building distributed agents.                                                               |
-| [Gradio](https://langfuse.com/docs/integrations/other/gradio)           | Chat/Agent&nbsp;UI | Open source Python library to build web interfaces like Chat UI.                                                        |
-| [Goose](https://langfuse.com/docs/integrations/goose)                   | Agents             | Open source LLM platform for building distributed agents.                                                               |
-| [smolagents](https://langfuse.com/docs/integrations/smolagents)         | Agents             | Open source AI agents framework.                                                                                        |
-| [CrewAI](https://langfuse.com/docs/integrations/crewai)                 | Agents             | Multi agent framework for agent collaboration and tool use.                                                             |
+## Governance Assets
 
-## 🚀 Quickstart
+- **Experience packs**: summary.experiences.length — number of accumulated experience items
+- **prompt lines**: summary.promptPack.lines.length — number of governance statements that can be directly inserted into prompts
 
-Instrument your app and start ingesting traces to Langfuse, thereby tracking LLM calls and other relevant logic in your app such as retrieval, embedding, or agent actions. Inspect and debug complex logs and user sessions.
+## Governance Trend
 
-### 1️⃣ Create new project
+Two modes are available:
 
-1.  [Create Langfuse account](https://cloud.langfuse.com/auth/sign-up) or [self-host](https://langfuse.com/self-hosting)
-2.  Create a new project
-3.  Create new API credentials in the project settings
+1. **Error & Warning**
+   - Two lines: Errors and Warnings
+   - Shows overall risk and alert fluctuation
+2. **Policy Violation**
+   - One line: Policy Violations
+   - Shows policy block/violation event fluctuation
 
-### 2️⃣ Log your first LLM call
+Each point on the chart represents the count for the corresponding time bucket.
 
-The [`@observe()` decorator](https://langfuse.com/docs/sdk/python/decorators) makes it easy to trace any Python LLM application. In this quickstart we also use the Langfuse [OpenAI integration](https://langfuse.com/integrations/model-providers/openai-py) to automatically capture all model parameters.
+![Governance Trend](./images/langfuse/bc7f5712-82cd-486a-8e92-7b2272d293d2.png)
 
-> [!TIP]
-> Not using OpenAI? Visit [our documentation](https://langfuse.com/docs/get-started#log-your-first-llm-call-to-langfuse) to learn how to log other models and frameworks.
+![Governance Trend detail](./images/langfuse/d52703ca-5106-4e4f-8bd6-c25b4169c796.png)
 
-```bash
-pip install langfuse openai
-```
+## Policy violations (Home quick entry)
 
-```bash filename=".env"
-LANGFUSE_SECRET_KEY="sk-lf-..."
-LANGFUSE_PUBLIC_KEY="pk-lf-..."
-LANGFUSE_BASE_URL="https://cloud.langfuse.com" # 🇪🇺 EU region
-# LANGFUSE_BASE_URL="https://us.cloud.langfuse.com" # 🇺🇸 US region
-```
+The Home page includes a **Policy violations** table card for policy-focused triage.
 
-```python /@observe()/ /from langfuse.openai import openai/ filename="main.py"
-from langfuse import observe
-from langfuse.openai import openai # OpenAI integration
+- **Main fields**:
+  - **Policy name**
+  - **Description**
+  - **Triggered** (count)
+- **Unclassified row**:
+  - Includes policy violation nodes where no policy name is extracted
+- **Common usage**:
+  - Quickly identify high-frequency violated policies from the `Triggered` column
 
-@observe()
-def story():
-    return openai.chat.completions.create(
-        model="gpt-4o",
-        messages=[{"role": "user", "content": "What is Langfuse?"}],
-    ).choices[0].message.content
+### Link navigation
 
-@observe()
-def main():
-    return story()
-
-main()
-```
-
-### 3️⃣ See traces in Langfuse
-
-See your language model calls and other application logic in Langfuse.
-
-<img width="1787" height="674" alt="Example trace in Langfuse" src="https://github.com/user-attachments/assets/f796eb78-dfb5-4570-b236-bdb4b67d4d55" />
-
-_[Public example trace in Langfuse](https://cloud.langfuse.com/project/cloramnkj0002jz088vzn1ja4/traces/2cec01e3-3dc2-472f-afcf-3b968cf0c1f4?timestamp=2025-02-10T14%3A27%3A30.275Z&observation=cb5ff844-07ef-41e6-b8e2-6c64344bc13b)_
-
-> [!TIP]
->
-> [Learn more](https://langfuse.com/docs/tracing) about tracing in Langfuse or play with the [interactive demo](https://langfuse.com/docs/demo).
-
-## ⭐️ Star Us
-
-![star-langfuse-on-github](https://github.com/user-attachments/assets/79a1d816-d229-4526-aecc-097d4a19f1ad)
-
-## 💭 Support
-
-Finding an answer to your question:
-
-- Our [documentation](https://langfuse.com/docs) is the best place to start looking for answers. It is comprehensive, and we invest significant time into maintaining it. You can also suggest edits to the docs via GitHub.
-- [Langfuse FAQs](https://langfuse.com/faq) where the most common questions are answered.
-- Use "[Ask AI](https://langfuse.com/docs/ask-ai)" to get instant answers to your questions.
-
-Support Channels:
-
-- **Ask any question in our [public Q&A](https://github.com/orgs/langfuse/discussions/categories/support) on GitHub Discussions.** Please include as much detail as possible (e.g. code snippets, screenshots, background information) to help us understand your question.
-- [Request a feature](https://github.com/orgs/langfuse/discussions/categories/ideas) on GitHub Discussions.
-- [Report a Bug](https://github.com/langfuse/langfuse/issues) on GitHub Issues.
-- For time-sensitive queries, ping us via the in-app chat widget.
-
-## 🤝 Contributing
-
-Your contributions are welcome!
-
-- Vote on [Ideas](https://github.com/orgs/langfuse/discussions/categories/ideas) in GitHub Discussions.
-- Raise and comment on [Issues](https://github.com/langfuse/langfuse/issues).
-- Open a PR - see [CONTRIBUTING.md](CONTRIBUTING.md) for details on how to setup a development environment.
-
-## 🥇 License
-
-This repository is MIT licensed, except for the `ee` folders. See [LICENSE](LICENSE) and [docs](https://langfuse.com/docs/open-source) for more details.
-
-## Dependencies
-
-We deploy this code base in Docker containers based on the Linux Alpine Image ([source](https://github.com/nodejs/docker-node)). You may find the Dockerfiles in [web/Dockerfile](web/Dockerfile) and [worker/Dockerfile](worker/Dockerfile).
-
-## ⭐️ Star History
-
-<a href="https://star-history.com/#langfuse/langfuse&Date">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=langfuse/langfuse&type=Date&theme=dark" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=langfuse/langfuse&type=Date" />
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=langfuse/langfuse&type=Date" style="border-radius: 15px;" />
- </picture>
-</a>
-
-## ❤️ Open Source Projects Using Langfuse
-
-Top open-source Python projects that use Langfuse, ranked by stars ([Source](https://github.com/langfuse/langfuse-docs/blob/main/components-mdx/dependents)):
-
-| Repository                                                                                                                                                                                                                                                                                                     |  Stars |
-| :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -----: |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/85702467?s=40&v=4" width="20" height="20" alt=""> &nbsp; [langflow-ai](https://github.com/langflow-ai) / [langflow](https://github.com/langflow-ai/langflow)                                                                             | 116251 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/158137808?s=40&v=4" width="20" height="20" alt=""> &nbsp; [open-webui](https://github.com/open-webui) / [open-webui](https://github.com/open-webui/open-webui)                                                                           | 109642 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/23818?s=40&v=4" width="20" height="20" alt=""> &nbsp; [abi](https://github.com/abi) / [screenshot-to-code](https://github.com/abi/screenshot-to-code)                                                                                    |  70877 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/131470832?s=40&v=4" width="20" height="20" alt=""> &nbsp; [lobehub](https://github.com/lobehub) / [lobe-chat](https://github.com/lobehub/lobe-chat)                                                                                      |  65454 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/69962740?s=40&v=4" width="20" height="20" alt=""> &nbsp; [infiniflow](https://github.com/infiniflow) / [ragflow](https://github.com/infiniflow/ragflow)                                                                                  |  64118 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/135057108?s=40&v=4" width="20" height="20" alt=""> &nbsp; [firecrawl](https://github.com/firecrawl) / [firecrawl](https://github.com/firecrawl/firecrawl)                                                                                |  56713 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/130722866?s=40&v=4" width="20" height="20" alt=""> &nbsp; [run-llama](https://github.com/run-llama) / [llama_index](https://github.com/run-llama/llama_index)                                                                            |  44203 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/128289781?s=40&v=4" width="20" height="20" alt=""> &nbsp; [FlowiseAI](https://github.com/FlowiseAI) / [Flowise](https://github.com/FlowiseAI/Flowise)                                                                                    |  43547 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/159330290?s=40&v=4" width="20" height="20" alt=""> &nbsp; [QuivrHQ](https://github.com/QuivrHQ) / [quivr](https://github.com/QuivrHQ/quivr)                                                                                              |  38415 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/6154722?s=40&v=4" width="20" height="20" alt=""> &nbsp; [microsoft](https://github.com/microsoft) / [ai-agents-for-beginners](https://github.com/microsoft/ai-agents-for-beginners)                                                      |  38012 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/139558948?s=40&v=4" width="20" height="20" alt=""> &nbsp; [chatchat-space](https://github.com/chatchat-space) / [Langchain-Chatchat](https://github.com/chatchat-space/Langchain-Chatchat)                                               |  36071 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/31035808?s=40&v=4" width="20" height="20" alt=""> &nbsp; [mindsdb](https://github.com/mindsdb) / [mindsdb](https://github.com/mindsdb/mindsdb)                                                                                           |  35669 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/169401942?s=40&v=4" width="20" height="20" alt=""> &nbsp; [danny-avila](https://github.com/danny-avila) / [LibreChat](https://github.com/danny-avila/LibreChat)                                                                            |  33142 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/121462774?s=40&v=4" width="20" height="20" alt=""> &nbsp; [BerriAI](https://github.com/BerriAI) / [litellm](https://github.com/BerriAI/litellm)                                                                                          |  28726 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/157326433?s=40&v=4" width="20" height="20" alt=""> &nbsp; [onlook-dev](https://github.com/onlook-dev) / [onlook](https://github.com/onlook-dev/onlook)                                                                                   |  22447 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/487568?s=40&v=4" width="20" height="20" alt=""> &nbsp; [NixOS](https://github.com/NixOS) / [nixpkgs](https://github.com/NixOS/nixpkgs)                                                                                                   |  21748 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/170767358?s=40&v=4" width="20" height="20" alt=""> &nbsp; [kortix-ai](https://github.com/kortix-ai) / [suna](https://github.com/kortix-ai/suna)                                                                                          |  17976 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/76263028?s=40&v=4" width="20" height="20" alt=""> &nbsp; [anthropics](https://github.com/anthropics) / [courses](https://github.com/anthropics/courses)                                                                                  |  17057 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/149120496?s=40&v=4" width="20" height="20" alt=""> &nbsp; [mastra-ai](https://github.com/mastra-ai) / [mastra](https://github.com/mastra-ai/mastra)                                                                                      |  16484 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/134601687?s=40&v=4" width="20" height="20" alt=""> &nbsp; [langfuse](https://github.com/langfuse) / [langfuse](https://github.com/langfuse/langfuse)                                                                                     |  16054 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/7250217?s=40&v=4" width="20" height="20" alt=""> &nbsp; [Canner](https://github.com/Canner) / [WrenAI](https://github.com/Canner/WrenAI)                                                                                                 |  11868 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/137907881?s=40&v=4" width="20" height="20" alt=""> &nbsp; [promptfoo](https://github.com/promptfoo) / [promptfoo](https://github.com/promptfoo/promptfoo)                                                                                |   8350 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/193350244?s=40&v=4" width="20" height="20" alt=""> &nbsp; [The-Pocket](https://github.com/The-Pocket) / [PocketFlow](https://github.com/The-Pocket/PocketFlow)                                                                           |   8313 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/139012218?s=40&v=4" width="20" height="20" alt=""> &nbsp; [OpenPipe](https://github.com/OpenPipe) / [ART](https://github.com/OpenPipe/ART)                                                                                               |   7093 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/125468716?s=40&v=4" width="20" height="20" alt=""> &nbsp; [topoteretes](https://github.com/topoteretes) / [cognee](https://github.com/topoteretes/cognee)                                                                                |   7011 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/3299148?s=40&v=4" width="20" height="20" alt=""> &nbsp; [awslabs](https://github.com/awslabs) / [agent-squad](https://github.com/awslabs/agent-squad)                                                                                    |   6785 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/162546372?s=40&v=4" width="20" height="20" alt=""> &nbsp; [BasedHardware](https://github.com/BasedHardware) / [omi](https://github.com/BasedHardware/omi)                                                                                |   6231 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/118301880?s=40&v=4" width="20" height="20" alt=""> &nbsp; [hatchet-dev](https://github.com/hatchet-dev) / [hatchet](https://github.com/hatchet-dev/hatchet)                                                                              |   6019 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/88676955?s=40&v=4" width="20" height="20" alt=""> &nbsp; [zenml-io](https://github.com/zenml-io) / [zenml](https://github.com/zenml-io/zenml)                                                                                            |   4873 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/132635806?s=40&v=4" width="20" height="20" alt=""> &nbsp; [refly-ai](https://github.com/refly-ai) / [refly](https://github.com/refly-ai/refly)                                                                                           |   4654 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/47287758?s=40&v=4" width="20" height="20" alt=""> &nbsp; [coleam00](https://github.com/coleam00) / [ottomator-agents](https://github.com/coleam00/ottomator-agents)                                                                      |   4165 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/8251002?s=40&v=4" width="20" height="20" alt=""> &nbsp; [JoshuaC215](https://github.com/JoshuaC215) / [agent-service-toolkit](https://github.com/JoshuaC215/agent-service-toolkit)                                                       |   3557 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/185852128?s=40&v=4" width="20" height="20" alt=""> &nbsp; [colanode](https://github.com/colanode) / [colanode](https://github.com/colanode/colanode)                                                                                     |   3517 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/201282378?s=40&v=4" width="20" height="20" alt=""> &nbsp; [VoltAgent](https://github.com/VoltAgent) / [voltagent](https://github.com/VoltAgent/voltagent)                                                                                |   3210 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/188657705?s=40&v=4" width="20" height="20" alt=""> &nbsp; [bragai](https://github.com/bragai) / [bRAG-langchain](https://github.com/bragai/bRAG-langchain)                                                                               |   3010 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/11855343?s=40&v=4" width="20" height="20" alt=""> &nbsp; [pingcap](https://github.com/pingcap) / [autoflow](https://github.com/pingcap/autoflow)                                                                                         |   2651 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/135396723?s=40&v=4" width="20" height="20" alt=""> &nbsp; [sourcebot-dev](https://github.com/sourcebot-dev) / [sourcebot](https://github.com/sourcebot-dev/sourcebot)                                                                    |   2570 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/158137808?s=40&v=4" width="20" height="20" alt=""> &nbsp; [open-webui](https://github.com/open-webui) / [pipelines](https://github.com/open-webui/pipelines)                                                                             |   2055 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/179994263?s=40&v=4" width="20" height="20" alt=""> &nbsp; [YFGaia](https://github.com/YFGaia) / [dify-plus](https://github.com/YFGaia/dify-plus)                                                                                         |   1734 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/46323662?s=40&v=4" width="20" height="20" alt=""> &nbsp; [TheSpaghettiDetective](https://github.com/TheSpaghettiDetective) / [obico-server](https://github.com/TheSpaghettiDetective/obico-server)                                       |   1687 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/85268109?s=40&v=4" width="20" height="20" alt=""> &nbsp; [MLSysOps](https://github.com/MLSysOps) / [MLE-agent](https://github.com/MLSysOps/MLE-agent)                                                                                    |   1387 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/144196744?s=40&v=4" width="20" height="20" alt=""> &nbsp; [TIGER-AI-Lab](https://github.com/TIGER-AI-Lab) / [TheoremExplainAgent](https://github.com/TIGER-AI-Lab/TheoremExplainAgent)                                                   |   1385 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/2314423?s=40&v=4" width="20" height="20" alt=""> &nbsp; [trailofbits](https://github.com/trailofbits) / [buttercup](https://github.com/trailofbits/buttercup)                                                                            |   1223 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/62564480?s=40&v=4" width="20" height="20" alt=""> &nbsp; [wassim249](https://github.com/wassim249) / [fastapi-langgraph-agent-production-ready-template](https://github.com/wassim249/fastapi-langgraph-agent-production-ready-template) |   1200 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/18422723?s=40&v=4" width="20" height="20" alt=""> &nbsp; [alishobeiri](https://github.com/alishobeiri) / [thread](https://github.com/alishobeiri/thread)                                                                                 |   1098 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/2357342?s=40&v=4" width="20" height="20" alt=""> &nbsp; [dmayboroda](https://github.com/dmayboroda) / [minima](https://github.com/dmayboroda/minima)                                                                                     |   1010 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/65890619?s=40&v=4" width="20" height="20" alt=""> &nbsp; [zstar1003](https://github.com/zstar1003) / [ragflow-plus](https://github.com/zstar1003/ragflow-plus)                                                                           |    993 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/121352441?s=40&v=4" width="20" height="20" alt=""> &nbsp; [openops-cloud](https://github.com/openops-cloud) / [openops](https://github.com/openops-cloud/openops)                                                                        |    939 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/151867818?s=40&v=4" width="20" height="20" alt=""> &nbsp; [dynamiq-ai](https://github.com/dynamiq-ai) / [dynamiq](https://github.com/dynamiq-ai/dynamiq)                                                                                 |    927 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/74420131?s=40&v=4" width="20" height="20" alt=""> &nbsp; [xataio](https://github.com/xataio) / [agent](https://github.com/xataio/agent)                                                                                                  |    857 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/123981229?s=40&v=4" width="20" height="20" alt=""> &nbsp; [plastic-labs](https://github.com/plastic-labs) / [tutor-gpt](https://github.com/plastic-labs/tutor-gpt)                                                                       |    845 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/176438967?s=40&v=4" width="20" height="20" alt=""> &nbsp; [trendy-design](https://github.com/trendy-design) / [llmchat](https://github.com/trendy-design/llmchat)                                                                        |    829 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/2045570?s=40&v=4" width="20" height="20" alt=""> &nbsp; [hotovo](https://github.com/hotovo) / [aider-desk](https://github.com/hotovo/aider-desk)                                                                                         |    781 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/169500408?s=40&v=4" width="20" height="20" alt=""> &nbsp; [opslane](https://github.com/opslane) / [opslane](https://github.com/opslane/opslane)                                                                                          |    719 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/142796018?s=40&v=4" width="20" height="20" alt=""> &nbsp; [wrtnlabs](https://github.com/wrtnlabs) / [autoview](https://github.com/wrtnlabs/autoview)                                                                                     |    688 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/20493493?s=40&v=4" width="20" height="20" alt=""> &nbsp; [andysingal](https://github.com/andysingal) / [llm-course](https://github.com/andysingal/llm-course)                                                                            |    643 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/48585267?s=40&v=4" width="20" height="20" alt=""> &nbsp; [theopenconversationkit](https://github.com/theopenconversationkit) / [tock](https://github.com/theopenconversationkit/tock)                                                    |    587 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/178644984?s=40&v=4" width="20" height="20" alt=""> &nbsp; [sentient-engineering](https://github.com/sentient-engineering) / [agent-q](https://github.com/sentient-engineering/agent-q)                                                   |    487 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/58037050?s=40&v=4" width="20" height="20" alt=""> &nbsp; [NicholasGoh](https://github.com/NicholasGoh) / [fastapi-mcp-langgraph-template](https://github.com/NicholasGoh/fastapi-mcp-langgraph-template)                                 |    481 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/148684274?s=40&v=4" width="20" height="20" alt=""> &nbsp; [i-am-alice](https://github.com/i-am-alice) / [3rd-devs](https://github.com/i-am-alice/3rd-devs)                                                                               |    472 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/163431636?s=40&v=4" width="20" height="20" alt=""> &nbsp; [AIDotNet](https://github.com/AIDotNet) / [koala-ai](https://github.com/AIDotNet/koala-ai)                                                                                     |    470 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/132396805?s=40&v=4" width="20" height="20" alt=""> &nbsp; [phospho-app](https://github.com/phospho-app) / [text-analytics-legacy](https://github.com/phospho-app/text-analytics-legacy)                                                  |    439 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/170831637?s=40&v=4" width="20" height="20" alt=""> &nbsp; [inferablehq](https://github.com/inferablehq) / [inferable](https://github.com/inferablehq/inferable)                                                                          |    403 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/171800766?s=40&v=4" width="20" height="20" alt=""> &nbsp; [duoyang666](https://github.com/duoyang666) / [ai_novel](https://github.com/duoyang666/ai_novel)                                                                               |    397 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/209155962?s=40&v=4" width="20" height="20" alt=""> &nbsp; [strands-agents](https://github.com/strands-agents) / [samples](https://github.com/strands-agents/samples)                                                                     |    385 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/16997807?s=40&v=4" width="20" height="20" alt=""> &nbsp; [FranciscoMoretti](https://github.com/FranciscoMoretti) / [sparka](https://github.com/FranciscoMoretti/sparka)                                                                  |    380 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/66303003?s=40&v=4" width="20" height="20" alt=""> &nbsp; [RobotecAI](https://github.com/RobotecAI) / [rai](https://github.com/RobotecAI/rai)                                                                                             |    373 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/137044109?s=40&v=4" width="20" height="20" alt=""> &nbsp; [ElectricCodeGuy](https://github.com/ElectricCodeGuy) / [SupabaseAuthWithSSR](https://github.com/ElectricCodeGuy/SupabaseAuthWithSSR)                                          |    370 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/15125613?s=40&v=4" width="20" height="20" alt=""> &nbsp; [souzatharsis](https://github.com/souzatharsis) / [tamingLLMs](https://github.com/souzatharsis/tamingLLMs)                                                                      |    323 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/8931462?s=40&v=4" width="20" height="20" alt=""> &nbsp; [aws-samples](https://github.com/aws-samples) / [aws-ai-ml-workshop-kr](https://github.com/aws-samples/aws-ai-ml-workshop-kr)                                                    |    295 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/25676773?s=40&v=4" width="20" height="20" alt=""> &nbsp; [weizxfree](https://github.com/weizxfree) / [KnowFlow](https://github.com/weizxfree/KnowFlow)                                                                                   |    285 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/88676955?s=40&v=4" width="20" height="20" alt=""> &nbsp; [zenml-io](https://github.com/zenml-io) / [zenml-projects](https://github.com/zenml-io/zenml-projects)                                                                          |    276 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/136071305?s=40&v=4" width="20" height="20" alt=""> &nbsp; [wxai-space](https://github.com/wxai-space) / [LightAgent](https://github.com/wxai-space/LightAgent)                                                                           |    275 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/90278288?s=40&v=4" width="20" height="20" alt=""> &nbsp; [Ozamatash](https://github.com/Ozamatash) / [deep-research-mcp](https://github.com/Ozamatash/deep-research-mcp)                                                                 |    269 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/168552753?s=40&v=4" width="20" height="20" alt=""> &nbsp; [sql-agi](https://github.com/sql-agi) / [DB-GPT](https://github.com/sql-agi/DB-GPT)                                                                                            |    241 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/828269?s=40&v=4" width="20" height="20" alt=""> &nbsp; [guyernest](https://github.com/guyernest) / [advanced-rag](https://github.com/guyernest/advanced-rag)                                                                             |    238 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/175069511?s=40&v=4" width="20" height="20" alt=""> &nbsp; [bklieger-groq](https://github.com/bklieger-groq) / [mathtutor-on-groq](https://github.com/bklieger-groq/mathtutor-on-groq)                                                    |    233 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/123981229?s=40&v=4" width="20" height="20" alt=""> &nbsp; [plastic-labs](https://github.com/plastic-labs) / [honcho](https://github.com/plastic-labs/honcho)                                                                             |    224 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/118967077?s=40&v=4" width="20" height="20" alt=""> &nbsp; [OVINC-CN](https://github.com/OVINC-CN) / [OpenWebUI](https://github.com/OVINC-CN/OpenWebUI)                                                                                   |    202 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/31960995?s=40&v=4" width="20" height="20" alt=""> &nbsp; [zhutoutoutousan](https://github.com/zhutoutoutousan) / [worldquant-miner](https://github.com/zhutoutoutousan/worldquant-miner)                                                 |    202 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/29215115?s=40&v=4" width="20" height="20" alt=""> &nbsp; [iceener](https://github.com/iceener) / [ai](https://github.com/iceener/ai)                                                                                                     |    186 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/187584218?s=40&v=4" width="20" height="20" alt=""> &nbsp; [giselles-ai](https://github.com/giselles-ai) / [giselle](https://github.com/giselles-ai/giselle)                                                                              |    181 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/174666116?s=40&v=4" width="20" height="20" alt=""> &nbsp; [ai-shifu](https://github.com/ai-shifu) / [ai-shifu](https://github.com/ai-shifu/ai-shifu)                                                                                     |    181 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/8931462?s=40&v=4" width="20" height="20" alt=""> &nbsp; [aws-samples](https://github.com/aws-samples) / [sample-serverless-mcp-servers](https://github.com/aws-samples/sample-serverless-mcp-servers)                                    |    175 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/202488052?s=40&v=4" width="20" height="20" alt=""> &nbsp; [celerforge](https://github.com/celerforge) / [freenote](https://github.com/celerforge/freenote)                                                                               |    171 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/104478511?s=40&v=4" width="20" height="20" alt=""> &nbsp; [babelcloud](https://github.com/babelcloud) / [LLM-RGB](https://github.com/babelcloud/LLM-RGB)                                                                                 |    164 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/171735272?s=40&v=4" width="20" height="20" alt=""> &nbsp; [8090-inc](https://github.com/8090-inc) / [xrx-sample-apps](https://github.com/8090-inc/xrx-sample-apps)                                                                       |    163 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/51827949?s=40&v=4" width="20" height="20" alt=""> &nbsp; [deepset-ai](https://github.com/deepset-ai) / [haystack-core-integrations](https://github.com/deepset-ai/haystack-core-integrations)                                            |    163 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/1009716?s=40&v=4" width="20" height="20" alt=""> &nbsp; [codecentric](https://github.com/codecentric) / [c4-genai-suite](https://github.com/codecentric/c4-genai-suite)                                                                  |    152 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/196509932?s=40&v=4" width="20" height="20" alt=""> &nbsp; [XSpoonAi](https://github.com/XSpoonAi) / [spoon-core](https://github.com/XSpoonAi/spoon-core)                                                                                 |    150 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/139558948?s=40&v=4" width="20" height="20" alt=""> &nbsp; [chatchat-space](https://github.com/chatchat-space) / [LangGraph-Chatchat](https://github.com/chatchat-space/LangGraph-Chatchat)                                               |    144 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/134601687?s=40&v=4" width="20" height="20" alt=""> &nbsp; [langfuse](https://github.com/langfuse) / [langfuse-docs](https://github.com/langfuse/langfuse-docs)                                                                           |    139 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/44976328?s=40&v=4" width="20" height="20" alt=""> &nbsp; [piyushgarg-dev](https://github.com/piyushgarg-dev) / [genai-cohort](https://github.com/piyushgarg-dev/genai-cohort)                                                            |    135 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/105285801?s=40&v=4" width="20" height="20" alt=""> &nbsp; [i-dot-ai](https://github.com/i-dot-ai) / [redbox](https://github.com/i-dot-ai/redbox)                                                                                         |    132 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/90423581?s=40&v=4" width="20" height="20" alt=""> &nbsp; [bmd1905](https://github.com/bmd1905) / [ChatOpsLLM](https://github.com/bmd1905/ChatOpsLLM)                                                                                     |    127 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/202074444?s=40&v=4" width="20" height="20" alt=""> &nbsp; [Fintech-Dreamer](https://github.com/Fintech-Dreamer) / [FinSynth](https://github.com/Fintech-Dreamer/FinSynth)                                                                |    121 |
-| <img class="avatar mr-2" src="https://avatars.githubusercontent.com/u/1566555?s=40&v=4" width="20" height="20" alt=""> &nbsp; [kenshiro-o](https://github.com/kenshiro-o) / [nagato-ai](https://github.com/kenshiro-o/nagato-ai)                                                                               |    119 |
-
-## 🔒 Security & Privacy
-
-We take data security and privacy seriously. Please refer to our [Security and Privacy](https://langfuse.com/security) page for more information.
-
-### Telemetry
-
-By default, Langfuse automatically reports basic usage statistics of self-hosted instances to a centralized server (PostHog).
-
-This helps us to:
-
-1. Understand how Langfuse is used and improve the most relevant features.
-2. Track overall usage for internal and external (e.g. fundraising) reporting.
-
-None of the data is shared with third parties and does not include any sensitive information. We want to be super transparent about this and you can find the exact data we collect [here](/web/src/features/telemetry/index.ts).
-
-You can opt-out by setting `TELEMETRY_ENABLED=false`.
+- **Card title link** (`Policy violations`, top-left of the card):
+  - Jumps to Analysis page with policy-violation mode
+- **Triggered count link** (per row):
+  - Jumps to Analysis page filtered by the specific policy type
+- **Result**:
+  - Directly lands in the policy investigation view, reducing manual filtering steps
+
+## Policy confirmation stats (Home quick entry)
+
+The Home page also includes a **Policy confirmation stats** card for reviewing
+how users respond to policy confirmation prompts.
+
+- **Main fields**:
+  - **Policy**
+  - **Total**
+  - **Accepted** (rate and count)
+  - **Rejected** (rate and count)
+- **Sorting and highlight**:
+  - Rows are sorted by rejected ratio in descending order
+  - Rows at or above the configured reject-rate threshold are highlighted
+  - You can adjust this threshold in Settings via
+    **Policy reject-rate highlight threshold (%)**
+- **Policy refinement suggestion**:
+  - Highlighted rows are clickable and open a **Policy refinement suggestion**
+    dialog for that policy
+  - The dialog uses rejected-turn evidence from the current filters and time
+    range to generate an LLM-assisted refinement suggestion
+  - The generated result includes a suggested policy update, the reason behind
+    it, and supporting signals from the observed traces
+  - Use **Regenerate with latest context** to rerun the suggestion with the
+    latest filtered evidence
+
+![Policy refinement suggestion](./images/langfuse/policy-suggestion.png)
+
+- **Clickable counts**:
+  - Clicking the accepted/rejected count opens a detail panel for that policy
+    and confirmation state
+  - The detail panel lists matching turns and shows the corresponding full trace
+
+![Policy confirmation count details](./images/langfuse/count_details.png)
+
+- **Turn-level inspection**:
+  - The node list is scoped to the matching `session.turn.xxx` node
+  - The matching turn node is selected by default so the trace detail view opens
+    directly on that node
+- **Common usage**:
+  - Quickly identify policies with high reject rates
+  - Drill from aggregate policy stats into the exact turn where the user
+    accepted or rejected the policy confirmation
+
+![Policy card](./images/langfuse/policy-card.png)
+
+---
+
+# Tracing
+
+The Tracing page lists all traces. Traces are split by `/reset` or `/new`.
+
+## Topic
+
+The Topic column shows the subject of each trace, helping you understand and locate specific traces.
+
+## Observation Levels
+
+The Observation Levels column summarizes each trace:
+
+- ⚔️: # of Policy Violation Node
+- 🚨: # of Error Node
+- ℹ️: # of Node
+
+![Observation Levels](./images/langfuse/8456719a-36a4-4f98-af0d-bc10c139f613.png)
+
+## Trace Banner (top governance bar)
+
+A governance summary Banner (Trace Banner) appears at the top of the Tracing page for an overview of risks.
+
+### Common fields
+
+- **Enhanced Governance Mode: Active**
+  - Indicates enhanced governance mode is enabled
+- **Governance Summary**
+  - errors: number of error nodes
+  - warnings: number of warning nodes
+  - policy violations: number of policy violation nodes
+  - across X nodes: total nodes covered by the stats
+
+### Type groups (clickable)
+
+- **Error node types**
+  - Shows error categories as type(count)
+  - Click to expand the node list for that type and **quickly locate** issues
+- **Policy violation node types**
+  - Shows policy violation categories as type(count)
+  - Click to see the corresponding nodes and **quickly locate** issues
+
+### Usage tips
+
+- Check Governance Summary first to assess risk scale
+- Click Error node types / Policy violation node types to find high-frequency types
+- Open the Analysis panel for specific nodes to see root causes and fix suggestions
+
+![Trace Banner](./images/langfuse/banner-policy-violation.png)
+
+![Trace Banner detail](./images/langfuse/5fb1c28f-4751-48a3-8902-1c51538ca8ad.png)
+
+## Graph
+
+The Graph area is controlled mainly via the top-right toolbar and mouse interaction.
+
+### Basic view controls
+
+- **Zoom in**: Click the + button
+- **Zoom out**: Click the - button
+- **Reset view**: Click the reset button (fit entire graph)
+- **Open fullscreen graph**: Enter fullscreen graph mode
+- **Pan**: Click and drag on empty space
+- **Scroll zoom**: Mouse wheel or trackpad gesture to zoom
+
+### Graph mode switch
+
+- Use the branch icon to switch between two modes:
+  - **Execution Flow Graph**: Emphasizes execution flow and path relationships
+  - **Hierarchy Graph**: Emphasizes hierarchy and structure; cleaner and clearer (default)
+
+![Graph mode switch](./images/langfuse/3a0e30e7-7e1f-4a2c-9387-fc51f01ccd43.png)
+
+**Hierarchy Graph (default)**
+
+![Hierarchy Graph](./images/langfuse/d4d577f4-c827-46b7-9853-e66c91fd5e09.png)
+
+**Execution Flow Graph**
+
+### Node search and navigation
+
+- Click the magnifier to open the search box (Search nodes)
+- Enter keywords to match nodes (by name, type, level, etc.)
+- In the search box:
+  - Enter: jump to next match
+  - Shift + Enter: jump to previous match
+  - Or use the left/right arrow buttons to cycle through matches
+
+![Node search](./images/langfuse/search-graph.png)
+
+### Node selection and cycling
+
+- Click a node to locate its observation
+- If a graph node maps to multiple observations, click repeatedly to cycle through them
+
+### Error Node / Policy Violation Node
+
+- Error nodes and Policy Violation nodes are highlighted in red in the graph for quick identification.
+
+## Analysis panel (bottom-right, for Error / Policy Violation nodes)
+
+When you select an **ERROR, WARNING, or POLICY_VIOLATION node**, the governance analysis panel appears in the detail area (usually in the lower or bottom-right section).
+
+### A. ERROR / WARNING nodes
+
+Common panel content:
+
+- **Output**: Node output/state (for quick identification of failure behavior)
+- **Analysis**
+- **Root cause**: Explanation of why it failed
+- **Resolve now**: Immediate fix suggestions (short-term)
+- **Prevention next call**: Suggestions to prevent recurrence (long-term stability)
+
+![Error Analysis panel](./images/langfuse/a15056f3-562a-4ad7-8a71-c4e839c9e013.png)
+
+You can also click the Analyze button (top-right) to generate manually if Error Analysis Auto Generation is off, or to regenerate.
+
+![Analyze button](./images/langfuse/3c0b1fee-b3d5-4b36-8561-6038695e33da.png)
+
+### B. POLICY_VIOLATION nodes
+
+The panel focuses on policy enforcement details for blocked requests:
+
+- **Action**: The blocked action and reason (e.g., a tool call rejected by policy)
+- **Policy Protected**: A concise rule hit summary for the current block
+- **Policy Names / Policy Descriptions**: Matched policy names and their intent
+- **Policy Sources**: Source policy snippet/path used for the decision
+- Long content can be expanded/collapsed for easier reading
+
+![Policy Violation panel](./images/langfuse/policy-violation-node.png)
+
+---
+
+# Analysis
+
+### Top switch buttons
+
+The Analysis page has two main view modes:
+
+- **Error & Warning**
+  - Shows only ERROR and WARNING level nodes
+
+  ![Error & Warning view](./images/langfuse/error-warning.png)
+
+  - Supports filtering by **Error Type**
+
+  ![Error Type filter](./images/langfuse/error-warning-filter.png)
+
+  - Supports batch **Analysis** on selected error nodes
+
+  ![Batch Analysis](./images/langfuse/batch-analysis.png)
+
+- **Policy Violation**
+  - Shows only POLICY_VIOLATION nodes
+
+  ![Policy Violation view](./images/langfuse/policy-violation.png)
+
+  - Focused on policy violation investigation
+  - Supports filtering by **Policy type**
+
+  ![Policy Violation filter](./images/langfuse/policy-violation-filter.png)
+
+### Click a node to navigate to its Trace
+
+![Trace navigation](./images/langfuse/click-node.png)
+
+---
+
+# Summary
+
+## Top toolbar buttons
+
+- **Model selection (e.g. gpt-5.2)**
+  - Choose the model used to generate/update the Summary.
+
+- **Generate (full)**
+  - Full Summary generation. Use for first-time generation or full rebuild.
+
+- **Update (incremental)**
+  - Incremental Summary update. Processes only new/pending content; faster.
+  - The button is disabled when the system detects the Summary is already up to date.
+
+- **Insert markdown path**
+  - Insert the current Summary into a Markdown file (typically the system prompt) so the LLM can avoid repeating the same errors and know how to fix them.
+
+- **Settings**
+  - Open settings (analysis, Markdown file path,
+    **Policy reject-rate highlight threshold (%)**, etc.).
+
+- **Copy all**
+  - Copy the full summary text for use in prompts (including Prompt Pack and experience lines).
+
+- **Download JSON**
+  - Download the current Summary as JSON for backup or external processing.
+
+![Summary toolbar](./images/langfuse/f7f45384-c2fc-470a-9b2e-16c270f9c99b.png)
+
+## Editing
+
+### Edit Prompt Pack
+
+Click any text in the entry to enter edit mode. You can edit:
+
+- **Title**: Prompt Pack title
+- **Lines (one per line)**: One prompt constraint/statement per line
+
+![Edit Prompt Pack](./images/langfuse/1a073c04-dfe9-4f68-a6f8-025e2c446ac9.png)
+
+### Edit Experience
+
+Click any text in the entry to enter edit mode. Each Experience can be expanded/collapsed and has these fields:
+
+- **Key (snake_case)**: Unique identifier for the experience (use stable naming)
+- **When**: Scenario description where this experience applies
+- **Keywords** (comma-separated): Search keywords
+- **Related error types** (comma-separated): Associated error types
+- **Possible problems**: Potential issues
+- **Avoidance and notes**: Avoidance tips and notes
+- **Prompt additions**: Specific statements to append to the prompt
+
+![Edit Experience](./images/langfuse/683ff757-147d-47e1-b664-5bfebc6a4efc.png)
+
+**In edit mode you can add or remove Experiences**
+
+- **Add**: Click **Add experience**
+  - A blank experience is added; fill in the fields above.
+- **Remove**: Click **Remove experience** inside an Experience
+  - The experience is removed from the current draft (saved after you save).
+
+![Add experience](./images/langfuse/1d6e5a19-fc4a-42fa-bd6f-827ceb49dc3d.png)
+
+![Remove experience](./images/langfuse/0120f918-e88d-4309-a0c9-4cb4997a48d8.png)
+
+### Save and exit edit mode
+
+- **Save**: Save current changes
+- **Discard**: Discard changes and revert to last saved state
+
+![Save / Discard](./images/langfuse/6c2b9738-f405-4688-a1e9-3acf164c9563.png)
+
+- If you have unsaved changes and switch views, leave the page, or click elsewhere, a prompt asks you to:
+  - Save and continue
+  - Discard and continue
+  - Cancel
+
+![Unsaved changes prompt](./images/langfuse/439d70ee-e60a-4bd1-a054-370f756f1ec8.png)
+
+---
+
+# Policy
+
+The Policy page is the main Langfuse workspace for reading, reviewing, and editing ArbiterOS kernel policies. It loads `policy.json` and `policy_registry.json` from the configured kernel path, then renders one card per `policy_registry.json` entry with the matching runtime sections from `policy.json`.
+
+## Policy source and live context
+
+At the top of the page, **Policy source and live context** shows where Langfuse is reading policy files from and what surrounding context is active for policy guidance.
+
+- **Path**:
+  - Accepts the `arbiteros_kernel` folder path, or a direct path to `policy.json` / `policy_registry.json`
+  - The path must be absolute
+  - For custom Docker mount layouts, use `LANGFUSE_PATH_PREFIX_MAP` so host paths can be rewritten to container paths
+- **Save Path**:
+  - Stores the kernel policy path in project settings
+  - When a saved path exists, the page auto-loads policy files on page open
+- **Load Policy Files**:
+  - Reads the current files from disk into the page
+- **Save Policy Files**:
+  - Writes the current in-page draft back to `policy.json` and `policy_registry.json`
+- **LLM connection / Error Analysis model**:
+  - Shows the OpenAI-compatible connection and configured model that are used for beginner summaries and LLM-assisted policy updates
+- **Last policy update**:
+  - Shows the last time Langfuse saved policy files from this page
+- **Kernel source updated**:
+  - Shows the latest file update time detected from disk
+- **Resolved input / policy.json / policy_registry.json**:
+  - Shows the exact resolved file paths Langfuse is reading
+
+The page also watches the kernel source continuously:
+
+- It checks the source files every 5 seconds
+- If the source changes on disk and you do not have unsaved edits, the page refreshes automatically
+- If you do have unsaved edits, Langfuse shows a warning first so the reload does not silently overwrite your draft
+
+![Policy source and live context](./images/langfuse/policy-page1.png)
+
+## Policy card
+
+Each policy card combines policy configuration with recent governance evidence.
+
+- **What this policy does**:
+  - Short description of the policy intent
+- **What it checks today**:
+  - Human-readable summary of the mapped runtime settings currently active for this policy
+  - For example, `PathBudgetPolicy` summarizes the `paths` and `input_budget` sections
+- **Example blocked action**:
+  - Recent blocked action or prompt snippet, when recent evidence exists
+- **Similar past cases**:
+  - Matched rejected-confirmation cases for this policy
+  - Click **Open trace** to open the matching observation in the trace peek and quickly locate the original trace and turn
+
+`Generate beginner summary` is useful when you want to understand a policy quickly. Langfuse sends the current policy settings together with recent policy evidence to the LLM and generates a plain-language explanation for non-technical readers.
+
+![Policy card with beginner summary](./images/langfuse/policy-page2.png)
+
+## Confirmation signals and evidence
+
+The right side of the card focuses on policy-specific evidence:
+
+- **Confirmation signals**:
+  - Shows total confirmations, accepted count, and rejected count for that policy
+- **Rejected-rate highlight**:
+  - The page uses the same reject-rate threshold configured in Settings for the Home page highlight
+  - If the rejected rate is at or above the threshold, the rejected value is highlighted and the policy card is visually emphasized
+- **Reset confirmation stats**:
+  - Records a reset timestamp for this policy, so the confirmation stats can start fresh from that point
+- **Policy evidence**:
+  - Shows recent violation count and matched past case count
+
+`View violations` opens the **Analysis** page with `analysisLevel=policy_violation` and the current `policyType` already applied, so you land directly in the filtered policy-investigation view.
+
+![Policy evidence and highlight state](./images/langfuse/policy-page3.png)
+
+When you drill into a matched case, Langfuse opens the observation/trace peek so you can inspect the original trace without leaving the policy workflow.
+
+![Trace peek from a policy case](./images/langfuse/policy-page4.png)
+
+## Advanced editor and LLM-assisted update
+
+If the current policy is not satisfactory, open **Advanced editor**.
+
+- You can toggle whether the policy is enabled in `policy_registry.json`
+- You can edit the registry description
+- You can edit the mapped JSON sections from `policy.json` directly
+- Invalid JSON blocks both saving and LLM proposal generation
+
+![Advanced editor](./images/langfuse/policy-page5.png)
+
+`LLM Suggest Update` is an assisted workflow, not an immediate write:
+
+1. Langfuse first generates a policy suggestion from rejected confirmations and policy-violation evidence.
+2. It then generates a proposed `policy.json` update for the current policy only.
+3. The dialog shows a diff for the mapped editable sections of that policy.
+4. If you click **Apply to Draft**, the proposal is copied into the in-page draft.
+5. You still need to click **Save Policy Files** to write the final change back to disk.
+
+![LLM policy update proposal](./images/langfuse/policy-page6.png)
+
+---
+
+# Setting
+
+## LLM Connections
+
+Error Analysis and Summary generation depend on the API configuration in LLM Connections.
+
+![LLM Connections](./images/langfuse/a8f00832-93cd-4427-ad9b-d6c655cb83de.png)
+
+## Error Analysis
+
+### 1) Automatic Error Analysis
+
+- **Auto-generate error analysis** toggle:
+  - When on, the system automatically analyzes new errors/warnings as they arrive
+  - When off, no automatic analysis (you can trigger manually)
+
+### 2) Model
+
+- Available only when automatic analysis is on
+  - Specifies the model used for automatic analysis
+  - Choose a stable, cost-effective model for your team
+
+### 3) New error nodes before auto summary update
+
+- Meaning: How many new error nodes must accumulate before triggering an automatic Summary update
+- **Leave empty**: Use system default (1)
+- Rules:
+  - Must be a positive integer
+  - Minimum value is 1
+
+### 4) Policy reject-rate highlight threshold (%)
+
+- Controls when rows in the Home page **Policy confirmation stats** card are highlighted
+- If a policy's reject rate is at or above this threshold, that row is highlighted on Home
+- **Leave empty**: Use system default (70)
+- Common usage:
+  - Lower it to surface more policies for review
+  - Raise it to highlight only the most rejection-heavy policies
+
+### 5) Markdown summary output mode
+
+- Controls what is written to the Markdown file:
+  - **Prompt pack only (recommended)**: Output only the Prompt Pack
+  - **Prompt pack + experiences**: Output both Prompt Pack and Experiences
+- Note: This affects only the Markdown file content, not the full structured Summary data in the database
+
+### 6) Append summary prevention note to markdown path (optional)
+
+- Specify an absolute path to a Markdown file for writing/updating the summary
+- The Markdown file is typically the Agent system prompt file. As experience accumulates, the Agent output becomes more reliable and avoids repeating the same errors.
+- Requirements:
+  - Must be an **absolute path**
+  - Filename must end with `.md`
+- Behavior:
+  - File is created if it does not exist
+  - Each Summary update replaces the corresponding HINT block with the latest content
+
+### 6) Save button behavior
+
+Save is enabled when:
+
+- The current user has project settings permission
+- There are unsaved changes on the page
+- All input validation passes (threshold, path format, etc.)
+
+A success message appears when saved; an error message appears on failure.
+
+![Error Analysis settings](./images/langfuse/13416a67-88ba-4112-b524-6075846fa9bf.png)
