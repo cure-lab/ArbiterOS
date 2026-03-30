@@ -1,0 +1,62 @@
+[
+  {
+    "name": "PathBudgetPolicy",
+    "enabled": false,
+    "description": "Enforces path allow/deny prefixes and input string length budget for tool calls."
+  },
+  {
+    "name": "AllowDenyPolicy",
+    "enabled": false,
+    "description": "Allows or denies tool calls and instruction types by allow/deny lists."
+  },
+  {
+    "name": "EfsmGatePolicy",
+    "enabled": false,
+    "description": "Gates tool execution based on EFSM state and plan alignment."
+  },
+  {
+    "name": "TaintPolicy",
+    "enabled": false,
+    "description": "Blocks high-risk tools when args contain untrusted snippets from prior tool output."
+  },
+  {
+    "name": "RateLimitPolicy",
+    "enabled": false,
+    "description": "Limits consecutive repeated tool calls per config."
+  },
+  {
+    "name": "OutputBudgetPolicy",
+    "enabled": false,
+    "description": "Truncates assistant content when it exceeds output_budget.max_chars."
+  },
+  {
+    "name": "SecurityLabelPolicy",
+    "enabled": false,
+    "description": "Gates tool calls and RESPOND by security_type (confidence, authority_label, etc.)."
+  },
+  
+  {
+    "name": "ExecCompositePolicy",
+    "enabled": false,
+    "description": "Handles multi-segment exec commands using Kernel coarse parse metadata."
+  },
+  {
+    "name": "DeletePolicy",
+    "enabled": false,
+    "description": "Blocks delete-like operations and leaves further continuation to kernel approval flow."
+  },
+  {
+      "name": "RelationalPolicy",
+      "enabled": true,
+      "description": 
+          "Applies relational taint / propagated-security checks using kernel-lowered metadata."
+      
+  },
+  {
+      "name": "UnaryGatePolicy",
+      "enabled":true,
+      "description": 
+          "Applies declarative unary rules over instruction metadata and reports the matched rule."
+      
+  }
+]

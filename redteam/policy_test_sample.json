@@ -1,0 +1,87 @@
+{
+  "trace_id": "policy-harness-ask-then-resolve",
+  "prior": [
+    {
+      "kind": "assistant",
+      "message": {
+        "role": "assistant",
+        "content": "{\"category\":\"COGNITIVE_CORE__RESPOND\",\"topic\":\"demo\",\"content\":\"Starting policy harness demo.\"}",
+        "tag": {}
+      }
+    },
+    {
+      "kind": "assistant",
+      "message": {
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_read_demo",
+            "type": "function",
+            "function": {
+              "name": "read",
+              "arguments": "{\"file_path\":\"/tmp/policy_demo.txt\",\"reference_tool_id\":[]}"
+            }
+          }
+        ],
+        "tag": {}
+      }
+    },
+    {
+      "kind": "tool",
+      "tool_call_id": "call_read_demo",
+      "tool_name": "read",
+      "arguments": {
+        "file_path": "/tmp/policy_demo.txt",
+        "reference_tool_id": []
+      },
+      "result": "[demo] file body",
+      "tag": {}
+    },
+    {
+      "kind": "assistant",
+      "message": {
+        "role": "assistant",
+        "content": "{\"category\":\"COGNITIVE_CORE__RESPOND\",\"topic\":\"policy_confirm\",\"content\":\"Policy violation detected. Do you want to apply the protection? Please reply Yes/No.\"}",
+        "tag": {
+          "policy_confirmation_ask": true
+        }
+      }
+    },
+    {
+      "kind": "assistant",
+      "message": {
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_write_demo",
+            "type": "function",
+            "function": {
+              "name": "write",
+              "arguments": "{\"file_path\":\"/tmp/out.txt\",\"content\":\"x\",\"reference_tool_id\":[\"call_read_demo\"]}"
+            }
+          }
+        ],
+        "tag": {
+          "user_approved": true
+        }
+      }
+    },
+    {
+      "kind": "tool",
+      "tool_call_id": "call_write_demo",
+      "tool_name": "write",
+      "arguments": {
+        "file_path": "/tmp/out.txt",
+        "content": "x",
+        "reference_tool_id": ["call_read_demo"]
+      },
+      "result": "write success",
+      "tag": {}
+    }
+  ],
+  "current": {
+    "role": "assistant",
+    "content": "{\"category\":\"COGNITIVE_CORE__RESPOND\",\"topic\":\"after_approval\",\"content\":\"Proceeding after user approval.\"}",
+    "tag": {}
+  }
+}

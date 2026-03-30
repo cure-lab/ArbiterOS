@@ -5,20 +5,38 @@ description = "LLM Gateway based ArbiterOS"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "bashlex>=0.18",
+    "langfuse>=3.14.1",
     "litellm[proxy]>=1.81.5",
     "mlflow[genai]>=3.9.0",
+    "pyyaml>=6.0.3",
+    "rich>=13.0.0",
 ]
 
 [dependency-groups]
 dev = [
     "pre-commit>=4.3.0",
     "poethepoet>=0.40.0",
+    "pytest>=9.0.2",
 ]
 
 [tool.poe.tasks]
 mlflow = "uv run mlflow server"
-litellm = "uv run litellm --config litellm_config.yaml"
+warm-skills = "uv run python -m arbiteros_kernel.warm_skill_trust"
+# Proxy only (after warm-up). Use ``poe litellm`` to run warm-skills then this.
+litellm-proxy = "uv run litellm --config litellm_config.yaml --host 0.0.0.0 --port 4000"
 run.parallel = ["mlflow", "litellm"]
 
-prefix = "{name}"
-prefix_template = "[{prefix}] "
+[tool.poe.tasks.litellm]
+sequence = ["warm-skills", "litellm-proxy"]
+
+[tool.poe.tasks.langfuse_replay]
+cmd = "uv run python -m arbiteros_kernel.langfuse_replay --input log/api_calls.jsonl ${replay_args}"
+args = [{ name = "replay_args", positional = true, multiple = true }]
+
+[tool.poe.tasks.policy-test]
+cmd = "uv run python -m arbiteros_kernel.policy_test_harness ${spec_file}"
+args = [{ name = "spec_file", positional = true }]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,181 @@
+{
+  "audit": { "log_allow": true },
+
+  "allow": {
+    "tools": [
+  "read",
+  "write",
+  "edit",
+  "exec",
+  "process",
+  "web_fetch",
+  "web_search",
+  "session_status",
+  "sessions_list",
+  "sessions_history",
+  "sessions_send",
+  "sessions_spawn",
+  "memory_get",
+  "memory_search",
+  "image",
+  "browser"
+],
+    "instruction_types": [],
+    "categories": []
+  },
+
+  "deny": {
+    "tools": [],
+    "instruction_types": [],
+    "categories": []
+  },
+
+  "paths": {
+    "allow_prefixes": [],
+    "deny_prefixes": [
+      "/proc", "/sys", "/dev", "/run",
+      "/Windows", "/System32"
+    ]
+  },
+
+  "input_budget": { "max_str_len": 20000 },
+  "output_budget": { "max_chars": 500 },
+
+  "rate_limit": {
+    "max_consecutive_same_tool": 20,
+    "window_seconds": 10,
+    "max_calls_per_window": 30
+  },
+
+  "user_aggregate": {
+    "tools": ["exec"],
+    "window_seconds": 60,
+    "max_events": 50
+  },
+
+  "schemas": {
+    "write": {
+      "type": "object",
+      "required": ["content"],
+      "properties": {
+        "path": { "type": "string" },
+        "file_path": { "type": "string" },
+        "content": { "type": "string" }
+      }
+    },
+    "read": {
+      "type": "object",
+      "required": ["path"],
+      "properties": {
+        "path": { "type": "string" },
+        "file_path": { "type": "string" },
+        "limit": { "type": "integer" }
+      }
+    },
+    "exec": {
+      "type": "object",
+      "required": ["command"],
+      "properties": {
+        "command": { "type": "string" },
+        "pty": { "type": "boolean" }
+      }
+    }
+  },
+
+  "taint": {
+    "enabled": true,
+
+    "taint_policy": {
+      "input_tools": ["read", "web_fetch", "web_search", "session_status", "sessions_list", "sessions_history", "memory_search", "memory_get", "agents_list", "image"],
+      "output_tools": ["edit", "write", "exec", "message", "sessions_send", "sessions_spawn", "tts", "gateway"],
+      "tools_by_action": {
+        "browser": {
+          "input_actions": ["status", "start", "stop", "profiles", "tabs", "snapshot", "screenshot", "console", "pdf", "open"],
+          "output_actions": ["focus", "close", "navigate", "upload", "dialog", "act"]
+        },
+        "process": {
+          "input_actions": ["list", "poll", "log"],
+          "output_actions": ["write", "send-keys", "submit", "paste", "kill"]
+        },
+        "canvas": {
+          "input_actions": ["snapshot"],
+          "output_actions": ["present", "hide", "navigate", "eval", "a2ui_push", "a2ui_reset"]
+        },
+        "nodes": {
+          "input_actions": ["status", "describe", "camera_snap", "camera_list", "camera_clip", "screen_record", "location_get"],
+          "output_actions": ["pending", "approve", "reject", "notify", "run", "invoke"]
+        },
+        "cron": {
+          "input_actions": ["status", "list", "runs"],
+          "output_actions": ["add", "update", "remove", "run", "wake"]
+        }
+      }
+    }
+  },
+  "exec_composite_policy": {
+  "enabled": true,
+  "allow_multi_read_only": true,
+  "block_if_any_write": true,
+  "block_if_any_exec": true
+},
+
+  "delete_policy": {
+    "enabled": true
+  },
+
+  "efsm": {
+  "enabled": true,
+  "initial": "IDLE",
+  "plan_ttl_seconds": 600,
+  "transitions": [
+    {
+      "id": "idle_read_to_after_read",
+      "from": "IDLE",
+      "event": "READ",
+      "to": "AFTER_READ",
+      "effect": "ALLOW",
+      "priority": 100
+    },
+    {
+      "id": "after_read_read_stay",
+      "from": "AFTER_READ",
+      "event": "READ",
+      "to": "AFTER_READ",
+      "effect": "ALLOW",
+      "priority": 95
+    },
+    {
+      "id": "after_read_write_block",
+      "from": "AFTER_READ",
+      "event": "WRITE",
+      "to": "IDLE",
+      "effect": "BLOCK",
+      "priority": 90
+    },
+    {
+      "id": "after_read_exec_clear",
+      "from": "AFTER_READ",
+      "event": "EXEC",
+      "to": "IDLE",
+      "effect": "ALLOW",
+      "priority": 80
+    },
+    {
+      "id": "idle_write_ok",
+      "from": "IDLE",
+      "event": "WRITE",
+      "to": "IDLE",
+      "effect": "ALLOW",
+      "priority": 70
+    },
+    {
+      "id": "idle_exec_ok",
+      "from": "IDLE",
+      "event": "EXEC",
+      "to": "IDLE",
+      "effect": "ALLOW",
+      "priority": 60
+    }
+  ]
+}
+}

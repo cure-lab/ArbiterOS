@@ -5,6 +5,13 @@
 - **Request logging**: `pre_call` writes each request’s `model`, `messages`, and `tools` to `log/api_calls.jsonl`.
 - **Response logging**: `post_call_success` writes the **raw** response (full structure including `category` / `content`) to the same jsonl for later analysis.
 - **Response transform**: Before returning to the client, if the assistant `content` is a JSON string `{"category":"...","content":"..."}`, only the inner `content` is returned (same for streaming and non-streaming). Messages with `tool_calls` are left unchanged.
+- **Policy confirmation**: When a policy blocks a response (e.g. blocks a tool call), the kernel returns a confirmation message and waits for the user to reply **Yes** or **No**. On the next request, pre-call detects the reply and returns the protected response (Yes) or original response (No) without calling the LLM. See `docs/kernel.md`for details.
+- **Live observability**: MLflow logging uses LiteLLM’s `mlflow` callbacks; Langfuse session tracing is emitted by `arbiteros_kernel.litellm_callback` when `LANGFUSE_PUBLIC_KEY` + `LANGFUSE_SECRET_KEY` are set (auto-loaded from `.env`). Langfuse nodes are also persisted to `log/langfuse_nodes.jsonl` for replay.
+- **Instruction parse & registry**: For each trace, the kernel generates `log/{trace_id}.json` to parse and register the original LLM input/output. The `InstructionBuilder` (from `arbiteros_kernel.instruction_parsing`) converts:
+  - **LLM structured output**: When the assistant returns `{"category":"...","content":"..."}`, it is parsed into an instruction with `instruction_category`, `instruction_type`, and `content`.
+  - **Tool calls**: Each `tool_call` (name + arguments) from the assistant response is recorded; when tool results arrive, they are merged into the same instruction.
+  - **Tool results**: Tool role messages with results are associated with their corresponding tool-call instructions.
+  Each `log/{trace_id}.json` contains `trace_id`, `created_at`, and an `instructions` array. Instructions include `id`, `content`, `runtime_step`, `parent_id`, `source_message_id`, `security_type`, `rule_types`, `instruction_category`, and `instruction_type`. This enables downstream analysis and replay of the parsed instruction flow.
 
 Configured in `litellm_config.yaml` ; Kernel's key logic lives in `_response_transform_content_only` in `arbiteros_kernel/litellm_callback.py`.
 
@@ -22,10 +29,24 @@ uv sync --group dev
 
 **2 Set Config**: Edit `litellm_config.yaml` to add your models. Each entry under `model_list` should specify:
 
-- **`model_name`**: ID exposed to clients (used in OpenClaw as `models[].id`)
-- **`litellm_params.model`**: LiteLLM format, e.g. `openai/gpt-5.2`
-- **`litellm_params.api_key`**: Your API key for the upstream provider
-- **`litellm_params.api_base`**:  API base URL
+- `**model_name`**: ID exposed to clients (used in OpenClaw as `models[].id`)
+- `**litellm_params.model`**: LiteLLM format, e.g. `openai/gpt-5.2`
+- `**litellm_params.api_key`**: Your API key for the upstream provider
+- `**litellm_params.api_base`**:  API base URL
+
+**Skill trust (optional)** — When classifying path trustworthiness, the kernel can run [cisco-ai-skill-scanner](https://pypi.org/project/cisco-ai-skill-scanner/) to analyze scan the skill before use them if you finish this following 3 steps.
+
+1. **Install the Dependancy**:
+  ```bash
+   pip install cisco-ai-skill-scanner
+  ```
+2. **Point at your skills directory** — In `litellm_config.yaml`, set the parent of each skill package (the `skills` folder):
+  ```yaml
+   arbiteros_skill_trust:
+     skills_root: /path/to/openclaw/skills
+  ```
+3. **Optional LLM analyzer** — To pass `--use-llm` to the scanner, add all three under `skill_scanner_llm` in `litellm_config.yaml`: `model`, `api_base`, `api_key`. If any is missing, scans use static + behavioral analyzers only.
+4. **Cache** — Results are stored in `~/.arbiteros/instruction_parsing/linux_registry/skill_trust_by_name.json`
 
 **3 Run**:
 
@@ -34,6 +55,90 @@ uv run poe litellm
 ```
 
 Proxy URL: [http://localhost:4000](http://localhost:4000). Send client requests there to use this proxy with the logging and kernel above.
+
+## Local Langfuse Setup (for Visualization)
+
+### 1) Start local Langfuse
+
+Use your local `langfuse` repo:
+
+```bash
+cd langfuse
+pnpm run infra:dev:up
+pnpm i
+```
+
+**First-time setup**:
+
+1. **Initialize the database:**
+  ```bash
+   pnpm --filter=shared run db:deploy
+  ```
+2. **Create ClickHouse dev tables.** Choose one:
+  - **With ClickHouse CLI:** `pnpm --filter=shared run ch:dev-tables`
+  - **Without ClickHouse CLI (manual):** From the langfuse repo root:
+    ```bash
+    sed -n '70,688p' packages/shared/clickhouse/scripts/dev-tables.sh | \
+    docker exec -i langfuse-clickhouse clickhouse-client --user clickhouse --password clickhouse --database default --multiquery
+
+    sed -n '700,824p' packages/shared/clickhouse/scripts/dev-tables.sh | \
+    docker exec -i langfuse-clickhouse clickhouse-client --user clickhouse --password clickhouse --database default --multiquery
+    ```
+3. **Start the dev server:**
+  ```bash
+   pnpm run dev:web
+  ```
+
+Langfuse UI: [http://localhost:3000](http://localhost:3000)
+
+### 2) Create project API keys in Langfuse UI
+
+In Langfuse UI, create (or open) a project and generate:
+
+- `LANGFUSE_PUBLIC_KEY` (starts with `pk-lf-`)
+- `LANGFUSE_SECRET_KEY` (starts with `sk-lf-`)
+
+### 3) Configure env vars before running ArbiterOS-Kernel
+
+Create a local env file:
+
+```bash
+cd ArbiterOS-Kernel
+cp .env.example .env
+```
+
+Edit `.env` with real keys. `arbiteros_kernel.litellm_callback` and `arbiteros_kernel.langfuse_replay` both auto-load `.env` (so you don’t need to `export` manually), but exporting works too:
+
+```bash
+export LANGFUSE_PUBLIC_KEY="pk-lf-..."
+export LANGFUSE_SECRET_KEY="sk-lf-..."
+export LANGFUSE_BASE_URL="http://localhost:3000"
+# export LANGFUSE_HOST="http://localhost:3000" # Backward-compatible alias
+```
+
+Optional tuning knobs:
+
+```bash
+export ARBITEROS_LANGFUSE_TIMEOUT="15"
+export ARBITEROS_LANGFUSE_FLUSH_AT="1"
+export ARBITEROS_LANGFUSE_FLUSH_INTERVAL="1"
+```
+
+Then start the proxy:
+
+```bash
+cd ArbiterOS-Kernel
+uv run poe litellm
+```
+
+## Verify It Works
+
+1. Start Langfuse locally and set Langfuse env vars (in `.env` or exported).
+2. Run `uv run poe litellm` and send one test request through the proxy.
+3. Confirm `log/langfuse_nodes.jsonl` is being written (it logs nodes even if Langfuse keys are missing).
+4. Open Langfuse UI (`localhost:3000`) and confirm new observations appear (requires Langfuse keys).
+5. Run `uv run poe langfuse_replay -- --dry-run` to validate parsing/counters.
+6. Run `uv run poe langfuse_replay` to import history and confirm additional traces/observations are visible.
 
 ### Apply your ArbiterOS Kernel on OpenClaw
 
@@ -84,3 +189,4 @@ Example snippet (full example: `config_example/openclaw.json`):
   }
 }
 ```
+

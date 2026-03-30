@@ -1,0 +1,96 @@
+# File-path trustworthiness classification.
+#
+# Keys   : HIGH | LOW
+# Values : glob patterns matched against individual path-like tokens extracted
+#          from shell commands (using fnmatch / PurePosixPath.match).
+#
+# Matching priority (worst-case / most conservative wins):
+#   LOW is checked first — if ANY path matches a LOW pattern the result is LOW.
+#   Then HIGH.  If nothing matches, the default is UNKNOWN.
+#
+# Rationale
+#   LOW  — content received from external / untrusted sources, user-controlled
+#           areas, or shared/temporary directories; potential for prompt
+#           injection or malicious payloads.
+#   HIGH — system-managed or package-manager-installed paths; content is
+#           generally verified by the OS or a trusted build pipeline.
+
+LOW:
+  # ── External URLs (untrusted by definition) ──────────────────────────────────
+  - "http://*"
+  - "https://*"
+  - "ftp://*"
+  - "ftps://*"
+
+  # ── Downloads / received content ────────────────────────────────────────────
+  - /home/*/Downloads/*
+  - /home/*/Downloads/**
+  - /home/*/Download/*
+  - /home/*/Desktop/downloads/*
+  - /home/*/Desktop/Downloads/*
+  - ~/Downloads/*
+  - ~/Downloads/**
+  - ~/Download/*
+
+  # ── Upload / import staging directories ─────────────────────────────────────
+  - /tmp/upload/*
+  - /tmp/uploads/*
+  - /var/tmp/upload/*
+  - /var/tmp/uploads/*
+
+  # ── Removable / external storage ─────────────────────────────────────────────
+  - /media/**
+  - /mnt/usb/**
+  - /mnt/cdrom/**
+  - /run/media/**
+
+  # ── Container / socket boundaries (cross-isolation) ─────────────────────────
+  - /var/run/docker.sock
+  - /run/docker.sock
+
+  # ── Shared temporary directories ─────────────────────────────────────────────
+  - /tmp/*
+  - /tmp/**
+  - /var/tmp/*
+  - /var/tmp/**
+  - /run/*
+  - /run/user/*
+
+  # ── External storage (non-removable) ─────────────────────────────────────────
+  - /media/*
+  - /mnt/*
+
+HIGH:
+  # ── Package-manager-installed system binaries ─────────────────────────────────
+  - /usr/bin/*
+  - /usr/sbin/*
+  - /usr/lib/*
+  - /usr/lib/**
+  - /usr/share/*
+  - /usr/share/**
+  - /usr/local/bin/*
+  - /usr/local/lib/*
+  - /bin/*
+  - /sbin/*
+  - /lib/*
+  - /lib/**
+  - /lib64/*
+
+  # ── System configuration (admin-controlled) ───────────────────────────────────
+  - /etc/*
+  - /etc/**
+
+  # ── Installed application data ────────────────────────────────────────────────
+  - /opt/*
+  - /opt/**
+  - /snap/*
+  - /snap/**
+
+  # ── OpenClaw managed resources ───────────────────────────────────────────────
+  - ".openclaw/openclaw.json"
+  - ".openclaw/skills/**"
+  - ".openclaw/workspace/**"
+  - ".openclaw/workspace-*/**"
+
+  # ── ArbiterOS kernel config ────────────────────────────────────────────────
+  - ~/.arbiteros/*
