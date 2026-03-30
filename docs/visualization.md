@@ -8,6 +8,7 @@ This document describes the Langfuse-based tracing and governance UI used with A
 - [Tracing](#tracing)
 - [Analysis](#analysis)
 - [Summary](#summary)
+- [Policy](#policy)
 - [Setting](#setting)
 
 ---
@@ -372,6 +373,106 @@ Click any text in the entry to enter edit mode. Each Experience can be expanded/
   - Cancel
 
 ![Unsaved changes prompt](./images/langfuse/439d70ee-e60a-4bd1-a054-370f756f1ec8.png)
+
+---
+
+# Policy
+
+The Policy page is the main Langfuse workspace for reading, reviewing, and editing ArbiterOS kernel policies. It loads `policy.json` and `policy_registry.json` from the configured kernel path, then renders one card per `policy_registry.json` entry with the matching runtime sections from `policy.json`.
+
+## Policy source and live context
+
+At the top of the page, **Policy source and live context** shows where Langfuse is reading policy files from and what surrounding context is active for policy guidance.
+
+- **Path**:
+  - Accepts the `arbiteros_kernel` folder path, or a direct path to `policy.json` / `policy_registry.json`
+  - The path must be absolute
+  - For custom Docker mount layouts, use `LANGFUSE_PATH_PREFIX_MAP` so host paths can be rewritten to container paths
+- **Save Path**:
+  - Stores the kernel policy path in project settings
+  - When a saved path exists, the page auto-loads policy files on page open
+- **Load Policy Files**:
+  - Reads the current files from disk into the page
+- **Save Policy Files**:
+  - Writes the current in-page draft back to `policy.json` and `policy_registry.json`
+- **LLM connection / Error Analysis model**:
+  - Shows the OpenAI-compatible connection and configured model that are used for beginner summaries and LLM-assisted policy updates
+- **Last policy update**:
+  - Shows the last time Langfuse saved policy files from this page
+- **Kernel source updated**:
+  - Shows the latest file update time detected from disk
+- **Resolved input / policy.json / policy_registry.json**:
+  - Shows the exact resolved file paths Langfuse is reading
+
+The page also watches the kernel source continuously:
+
+- It checks the source files every 5 seconds
+- If the source changes on disk and you do not have unsaved edits, the page refreshes automatically
+- If you do have unsaved edits, Langfuse shows a warning first so the reload does not silently overwrite your draft
+
+![Policy source and live context](./images/langfuse/policy-page1.png)
+
+## Policy card
+
+Each policy card combines policy configuration with recent governance evidence.
+
+- **What this policy does**:
+  - Short description of the policy intent
+- **What it checks today**:
+  - Human-readable summary of the mapped runtime settings currently active for this policy
+  - For example, `PathBudgetPolicy` summarizes the `paths` and `input_budget` sections
+- **Example blocked action**:
+  - Recent blocked action or prompt snippet, when recent evidence exists
+- **Similar past cases**:
+  - Matched rejected-confirmation cases for this policy
+  - Click **Open trace** to open the matching observation in the trace peek and quickly locate the original trace and turn
+
+`Generate beginner summary` is useful when you want to understand a policy quickly. Langfuse sends the current policy settings together with recent policy evidence to the LLM and generates a plain-language explanation for non-technical readers.
+
+![Policy card with beginner summary](./images/langfuse/policy-page2.png)
+
+## Confirmation signals and evidence
+
+The right side of the card focuses on policy-specific evidence:
+
+- **Confirmation signals**:
+  - Shows total confirmations, accepted count, and rejected count for that policy
+- **Rejected-rate highlight**:
+  - The page uses the same reject-rate threshold configured in Settings for the Home page highlight
+  - If the rejected rate is at or above the threshold, the rejected value is highlighted and the policy card is visually emphasized
+- **Reset confirmation stats**:
+  - Records a reset timestamp for this policy, so the confirmation stats can start fresh from that point
+- **Policy evidence**:
+  - Shows recent violation count and matched past case count
+
+`View violations` opens the **Analysis** page with `analysisLevel=policy_violation` and the current `policyType` already applied, so you land directly in the filtered policy-investigation view.
+
+![Policy evidence and highlight state](./images/langfuse/policy-page3.png)
+
+When you drill into a matched case, Langfuse opens the observation/trace peek so you can inspect the original trace without leaving the policy workflow.
+
+![Trace peek from a policy case](./images/langfuse/policy-page4.png)
+
+## Advanced editor and LLM-assisted update
+
+If the current policy is not satisfactory, open **Advanced editor**.
+
+- You can toggle whether the policy is enabled in `policy_registry.json`
+- You can edit the registry description
+- You can edit the mapped JSON sections from `policy.json` directly
+- Invalid JSON blocks both saving and LLM proposal generation
+
+![Advanced editor](./images/langfuse/policy-page5.png)
+
+`LLM Suggest Update` is an assisted workflow, not an immediate write:
+
+1. Langfuse first generates a policy suggestion from rejected confirmations and policy-violation evidence.
+2. It then generates a proposed `policy.json` update for the current policy only.
+3. The dialog shows a diff for the mapped editable sections of that policy.
+4. If you click **Apply to Draft**, the proposal is copied into the in-page draft.
+5. You still need to click **Save Policy Files** to write the final change back to disk.
+
+![LLM policy update proposal](./images/langfuse/policy-page6.png)
 
 ---
 
