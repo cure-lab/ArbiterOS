@@ -1,7 +1,3 @@
-[submodule "ArbiterOS-Kernel"]
-	path = ArbiterOS-Kernel
-	url = https://github.com/DavidChen-PKU/ArbiterOS-Kernel.git
-	branch = trace-vis
 [submodule "langfuse"]
 	path = langfuse
 	url = https://github.com/ChangranXU/langfuse.git
