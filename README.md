@@ -13,24 +13,6 @@
 
 ---
 
-### 0. 拉取代码
-
-如果本仓库使用了 Git submodule（例如 `ArbiterOS-Kernel/`、`langfuse/`），推荐用下面的方式拉取：
-
-- **第一次 clone**：
-
-```bash
-git clone --recurse-submodules <your-repo-url>
-```
-
-- **已经 clone 了但忘了带 submodules**：
-
-```bash
-git submodule update --init --recursive
-```
-
----
-
 ### 1. 准备环境变量文件 `stack.env`
 
 在仓库根目录执行：
