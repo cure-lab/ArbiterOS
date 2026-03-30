@@ -176,6 +176,7 @@ dependencies = [
     { name = "litellm", extra = ["proxy"] },
     { name = "mlflow", extra = ["genai"] },
     { name = "pyyaml" },
+    { name = "rich" },
 ]
 
 [package.dev-dependencies]
@@ -192,6 +193,7 @@ requires-dist = [
     { name = "litellm", extras = ["proxy"], specifier = ">=1.81.5" },
     { name = "mlflow", extras = ["genai"], specifier = ">=3.9.0" },
     { name = "pyyaml", specifier = ">=6.0.3" },
+    { name = "rich", specifier = ">=13.0.0" },
 ]
 
 [package.metadata.requires-dev]
