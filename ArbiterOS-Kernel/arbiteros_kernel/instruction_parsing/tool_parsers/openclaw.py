@@ -610,7 +610,7 @@ def _parse_nodes(
 def _parse_cron(
     args: Dict[str, Any], taint_status: Optional[TaintStatus] = None
 ) -> ToolParseResult:
-    """cron: READ (status/list/runs), WRITE (add/update), EXEC (remove/run/wake)."""
+    """cron: READ (status/list/runs), SUBSCRIBE (add/update), EXEC (remove/run/wake)."""
     action = args.get("action", "")
     if action in {"status", "list", "runs"}:
         return ToolParseResult(
@@ -625,7 +625,7 @@ def _parse_cron(
         )
     if action in {"add", "update"}:
         return ToolParseResult(
-            "WRITE",
+            "SUBSCRIBE",
             make_security_type(
                 confidentiality="LOW",
                 trustworthiness="HIGH",
