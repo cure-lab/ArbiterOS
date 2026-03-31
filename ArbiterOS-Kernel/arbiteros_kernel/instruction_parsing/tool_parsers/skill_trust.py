@@ -21,11 +21,9 @@ from ..types import LEVEL_ORDER, SecurityLevel
 
 logger = logging.getLogger(__name__)
 
-# If any finding uses one of these ThreatCategory values, trustworthiness is LOW
-# regardless of max_severity-based mapping.
-FORCE_LOW_TRUST_CATEGORIES: frozenset[str] = frozenset(
-    {"prompt_injection", "command_injection", "data_exfiltration"}
-)
+# ThreatCategory values that force LOW regardless of max_severity (empty disables).
+FORCE_LOW_TRUST_CATEGORIES: frozenset[str] = frozenset()
+
 
 # Same directory as linux user registries (~/.arbiteros/.../linux_registry).
 _USER_REGISTRY_DIR = os.environ.get(
