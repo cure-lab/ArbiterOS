@@ -4,45 +4,167 @@ This document describes the Langfuse-based tracing and governance UI used with A
 
 ## Table of Contents
 
-- [Home Page](#home-page)
-- [Tracing](#tracing)
-- [Analysis](#analysis)
-- [Summary](#summary)
-- [Policy](#policy)
-- [Setting](#setting)
+- [Install and Run](#install-and-run)
+  - [Development Mode](#development-mode)
+  - [Production Mode](#production-mode)
+- [Page Guide](#page-guide)
+  - [Home Page](#home-page)
+  - [Tracing](#tracing)
+  - [Analysis](#analysis)
+  - [Summary](#summary)
+  - [Policy](#policy)
+  - [Settings](#settings)
 
 ---
 
-# Home Page
+## Install and Run
+
+Run all commands from the repository root.
+
+### Prerequisites
+
+- Node.js 24
+- pnpm 9.5.0
+- Docker with Docker Compose
+
+### Development Mode
+
+Development mode runs the web app and worker locally, while PostgreSQL, ClickHouse, Redis, and MinIO run via `docker-compose.dev.yml`.
+
+1. Create the local environment file:
+
+   ```bash
+   cp .env.dev.example .env
+   ```
+
+2. Install dependencies:
+
+   ```bash
+   pnpm i
+   ```
+
+3. Start the local infrastructure:
+
+   ```bash
+   pnpm run infra:dev:up
+   ```
+
+4. On the first run, initialize the databases and seed example data:
+
+   ```bash
+   pnpm --filter=shared run db:reset -f
+   pnpm --filter=shared run ch:reset
+   pnpm --filter=shared run db:seed:examples
+   ```
+
+5. Start the development servers:
+
+   ```bash
+   pnpm run dev
+   ```
+
+Open `http://localhost:3000` after the app is ready.
+
+If you ran `db:seed:examples`, you can sign in with:
+
+- Email: `demo@langfuse.com`
+- Password: `password`
+
+For later restarts, when the database is already initialized, you usually only need:
+
+```bash
+pnpm run infra:dev:up
+pnpm run dev
+```
+
+If you want a full clean-room reset, `pnpm run dx` reinstalls dependencies, recreates local infrastructure, resets both databases, seeds example data, and starts development mode.
+
+### Production Mode
+
+Production mode uses `docker-compose.yml` to build and run the full stack in containers.
+
+1. Create the production environment file:
+
+   ```bash
+   cp .env.prod.example .env
+   ```
+
+2. Edit `.env` before the first start and replace the placeholder secrets, especially `NEXTAUTH_SECRET`, `SALT`, `ENCRYPTION_KEY`, and any database, Redis, or MinIO passwords you do not want to keep at their defaults.
+
+3. Build and start the production stack for the first time:
+
+   ```bash
+   docker compose -f docker-compose.yml up -d --build
+   ```
+
+4. Open `http://localhost:3000`.
+
+Production startup applies migrations automatically, so the first boot can take a little longer than later restarts. It does not seed the example dataset used in development mode. Create the first user in the UI, or set `LANGFUSE_INIT_USER_EMAIL`, `LANGFUSE_INIT_USER_NAME`, and `LANGFUSE_INIT_USER_PASSWORD` in `.env` if you want the container startup to provision one for you.
+
+Useful follow-up commands:
+
+- Start previously built images without rebuilding:
+
+  ```bash
+  docker compose -f docker-compose.yml up -d
+  ```
+
+- Stop the stack without removing containers:
+
+  ```bash
+  docker compose -f docker-compose.yml stop
+  ```
+
+- Restart previously stopped containers:
+
+  ```bash
+  docker compose -f docker-compose.yml start
+  ```
+
+  `docker compose start` only works after the containers were already created by
+  `docker compose up` or `docker compose create`. If you previously ran
+  `docker compose down`, use `docker compose -f docker-compose.yml up -d`
+  instead.
+
+- Rebuild containers after local code changes:
+
+  ```bash
+  docker compose -f docker-compose.yml up -d --build
+  ```
+
+- Stop and remove the stack containers while keeping the named volumes:
+
+  ```bash
+  docker compose -f docker-compose.yml down
+  ```
+
+The production compose stack starts `langfuse-web`, `langfuse-worker`, PostgreSQL, ClickHouse, Redis, and MinIO. On startup, `web/entrypoint.sh` applies the Postgres and ClickHouse migrations automatically before the web container begins serving traffic.
+
+---
+
+## Page Guide
+
+The sections below walk through each major page in the Langfuse governance UI.
+
+### Home Page
 
 The Home Page displays overview metrics. The following are most relevant to ArbiterOS:
 
-## Governed Signals
+#### Key Metrics
 
-- **Definition**: errorCount + warningCount + policyViolationCount
-- **Meaning**: Total count of all signals that require governance attention, under the current filters and time range
+| Metric | Definition | Notes |
+| --- | --- | --- |
+| Governed Signals | `errorCount + warningCount + policyViolationCount` | Total count of all signals that require governance attention under the current filters and time range |
+| Errors | Sum of counts where `level = ERROR` | "Latest bucket" means the error count in the most recent time bucket, not the latest single event |
+| Warnings | Sum of counts where `level = WARNING` | "Latest bucket" means the warning count in the most recent time bucket |
+| Policy Violations | Sum of counts where `level = POLICY_VIOLATION` | "Latest bucket" means the policy violation count in the most recent time bucket |
 
-## Errors
+#### Governance Assets
 
-- **Definition**: Sum of counts where level = ERROR
-- **Latest bucket**: Error count in the most recent time bucket (not the latest single event)
+- **Experience packs**: `summary.experiences.length` — number of accumulated experience items
+- **Prompt lines**: `summary.promptPack.lines.length` — number of governance statements that can be directly inserted into prompts
 
-## Warnings
-
-- **Definition**: Sum of counts where level = WARNING
-- **Latest bucket**: Warning count in the most recent time bucket
-
-## Policy Violations
-
-- **Definition**: Sum of counts where level = POLICY_VIOLATION
-- **Latest bucket**: Policy Violation count in the most recent time bucket
-
-## Governance Assets
-
-- **Experience packs**: summary.experiences.length — number of accumulated experience items
-- **prompt lines**: summary.promptPack.lines.length — number of governance statements that can be directly inserted into prompts
-
-## Governance Trend
+#### Governance Trend
 
 Two modes are available:
 
@@ -59,7 +181,7 @@ Each point on the chart represents the count for the corresponding time bucket.
 
 ![Governance Trend detail](./images/langfuse/d52703ca-5106-4e4f-8bd6-c25b4169c796.png)
 
-## Policy violations (Home quick entry)
+#### Policy Violations Card
 
 The Home page includes a **Policy violations** table card for policy-focused triage.
 
@@ -72,7 +194,7 @@ The Home page includes a **Policy violations** table card for policy-focused tri
 - **Common usage**:
   - Quickly identify high-frequency violated policies from the `Triggered` column
 
-### Link navigation
+##### Link Navigation
 
 - **Card title link** (`Policy violations`, top-left of the card):
   - Jumps to Analysis page with policy-violation mode
@@ -81,7 +203,7 @@ The Home page includes a **Policy violations** table card for policy-focused tri
 - **Result**:
   - Directly lands in the policy investigation view, reducing manual filtering steps
 
-## Policy confirmation stats (Home quick entry)
+#### Policy Confirmation Stats Card
 
 The Home page also includes a **Policy confirmation stats** card for reviewing
 how users respond to policy confirmation prompts.
@@ -128,29 +250,32 @@ how users respond to policy confirmation prompts.
 
 ---
 
-# Tracing
+### Tracing
 
 The Tracing page lists all traces. Traces are split by `/reset` or `/new`.
 
-## Topic
+#### Topic
 
 The Topic column shows the subject of each trace, helping you understand and locate specific traces.
 
-## Observation Levels
+#### Observation Levels
 
 The Observation Levels column summarizes each trace:
 
-- ⚔️: # of Policy Violation Node
-- 🚨: # of Error Node
-- ℹ️: # of Node
+| Icon | Meaning |
+| --- | --- |
+| ⚔️ | Number of policy violation nodes |
+| 🚨 | Number of error nodes |
+| ⚠️ | Number of warning nodes |
+| ℹ️ | Number of nodes |
 
 ![Observation Levels](./images/langfuse/8456719a-36a4-4f98-af0d-bc10c139f613.png)
 
-## Trace Banner (top governance bar)
+#### Trace Banner
 
 A governance summary Banner (Trace Banner) appears at the top of the Tracing page for an overview of risks.
 
-### Common fields
+##### Common Fields
 
 - **Enhanced Governance Mode: Active**
   - Indicates enhanced governance mode is enabled
@@ -160,7 +285,7 @@ A governance summary Banner (Trace Banner) appears at the top of the Tracing pag
   - policy violations: number of policy violation nodes
   - across X nodes: total nodes covered by the stats
 
-### Type groups (clickable)
+##### Type Groups
 
 - **Error node types**
   - Shows error categories as type(count)
@@ -169,7 +294,7 @@ A governance summary Banner (Trace Banner) appears at the top of the Tracing pag
   - Shows policy violation categories as type(count)
   - Click to see the corresponding nodes and **quickly locate** issues
 
-### Usage tips
+##### Usage Tips
 
 - Check Governance Summary first to assess risk scale
 - Click Error node types / Policy violation node types to find high-frequency types
@@ -179,11 +304,11 @@ A governance summary Banner (Trace Banner) appears at the top of the Tracing pag
 
 ![Trace Banner detail](./images/langfuse/5fb1c28f-4751-48a3-8902-1c51538ca8ad.png)
 
-## Graph
+#### Graph
 
 The Graph area is controlled mainly via the top-right toolbar and mouse interaction.
 
-### Basic view controls
+##### Basic View Controls
 
 - **Zoom in**: Click the + button
 - **Zoom out**: Click the - button
@@ -192,7 +317,7 @@ The Graph area is controlled mainly via the top-right toolbar and mouse interact
 - **Pan**: Click and drag on empty space
 - **Scroll zoom**: Mouse wheel or trackpad gesture to zoom
 
-### Graph mode switch
+##### Graph Mode Switch
 
 - Use the branch icon to switch between two modes:
   - **Execution Flow Graph**: Emphasizes execution flow and path relationships
@@ -206,7 +331,7 @@ The Graph area is controlled mainly via the top-right toolbar and mouse interact
 
 **Execution Flow Graph**
 
-### Node search and navigation
+##### Node Search and Navigation
 
 - Click the magnifier to open the search box (Search nodes)
 - Enter keywords to match nodes (by name, type, level, etc.)
@@ -217,20 +342,20 @@ The Graph area is controlled mainly via the top-right toolbar and mouse interact
 
 ![Node search](./images/langfuse/search-graph.png)
 
-### Node selection and cycling
+##### Node Selection and Cycling
 
 - Click a node to locate its observation
 - If a graph node maps to multiple observations, click repeatedly to cycle through them
 
-### Error Node / Policy Violation Node
+##### Error and Policy Violation Nodes
 
 - Error nodes and Policy Violation nodes are highlighted in red in the graph for quick identification.
 
-## Analysis panel (bottom-right, for Error / Policy Violation nodes)
+#### Analysis Panel
 
 When you select an **ERROR, WARNING, or POLICY_VIOLATION node**, the governance analysis panel appears in the detail area (usually in the lower or bottom-right section).
 
-### A. ERROR / WARNING nodes
+##### Error / Warning Nodes
 
 Common panel content:
 
@@ -246,7 +371,7 @@ You can also click the Analyze button (top-right) to generate manually if Error 
 
 ![Analyze button](./images/langfuse/3c0b1fee-b3d5-4b36-8561-6038695e33da.png)
 
-### B. POLICY_VIOLATION nodes
+##### Policy Violation Nodes
 
 The panel focuses on policy enforcement details for blocked requests:
 
@@ -260,9 +385,9 @@ The panel focuses on policy enforcement details for blocked requests:
 
 ---
 
-# Analysis
+### Analysis
 
-### Top switch buttons
+#### View Modes
 
 The Analysis page has two main view modes:
 
@@ -270,11 +395,9 @@ The Analysis page has two main view modes:
   - Shows only ERROR and WARNING level nodes
 
   ![Error & Warning view](./images/langfuse/error-warning.png)
-
   - Supports filtering by **Error Type**
 
   ![Error Type filter](./images/langfuse/error-warning-filter.png)
-
   - Supports batch **Analysis** on selected error nodes
 
   ![Batch Analysis](./images/langfuse/batch-analysis.png)
@@ -283,21 +406,20 @@ The Analysis page has two main view modes:
   - Shows only POLICY_VIOLATION nodes
 
   ![Policy Violation view](./images/langfuse/policy-violation.png)
-
   - Focused on policy violation investigation
   - Supports filtering by **Policy type**
 
   ![Policy Violation filter](./images/langfuse/policy-violation-filter.png)
 
-### Click a node to navigate to its Trace
+#### Open a Trace from Analysis
 
 ![Trace navigation](./images/langfuse/click-node.png)
 
 ---
 
-# Summary
+### Summary
 
-## Top toolbar buttons
+#### Top Toolbar
 
 - **Model selection (e.g. gpt-5.2)**
   - Choose the model used to generate/update the Summary.
@@ -324,9 +446,9 @@ The Analysis page has two main view modes:
 
 ![Summary toolbar](./images/langfuse/f7f45384-c2fc-470a-9b2e-16c270f9c99b.png)
 
-## Editing
+#### Editing
 
-### Edit Prompt Pack
+##### Edit Prompt Pack
 
 Click any text in the entry to enter edit mode. You can edit:
 
@@ -335,7 +457,7 @@ Click any text in the entry to enter edit mode. You can edit:
 
 ![Edit Prompt Pack](./images/langfuse/1a073c04-dfe9-4f68-a6f8-025e2c446ac9.png)
 
-### Edit Experience
+##### Edit Experience
 
 Click any text in the entry to enter edit mode. Each Experience can be expanded/collapsed and has these fields:
 
@@ -360,7 +482,7 @@ Click any text in the entry to enter edit mode. Each Experience can be expanded/
 
 ![Remove experience](./images/langfuse/0120f918-e88d-4309-a0c9-4cb4997a48d8.png)
 
-### Save and exit edit mode
+##### Save or Discard Changes
 
 - **Save**: Save current changes
 - **Discard**: Discard changes and revert to last saved state
@@ -376,11 +498,11 @@ Click any text in the entry to enter edit mode. Each Experience can be expanded/
 
 ---
 
-# Policy
+### Policy
 
 The Policy page is the main Langfuse workspace for reading, reviewing, and editing ArbiterOS kernel policies. It loads `policy.json` and `policy_registry.json` from the configured kernel path, then renders one card per `policy_registry.json` entry with the matching runtime sections from `policy.json`.
 
-## Policy source and live context
+#### Policy Source and Live Context
 
 At the top of the page, **Policy source and live context** shows where Langfuse is reading policy files from and what surrounding context is active for policy guidance.
 
@@ -412,7 +534,7 @@ The page also watches the kernel source continuously:
 
 ![Policy source and live context](./images/langfuse/policy-page1.png)
 
-## Policy card
+#### Policy Card
 
 Each policy card combines policy configuration with recent governance evidence.
 
@@ -431,7 +553,7 @@ Each policy card combines policy configuration with recent governance evidence.
 
 ![Policy card with beginner summary](./images/langfuse/policy-page2.png)
 
-## Confirmation signals and evidence
+#### Confirmation Signals and Evidence
 
 The right side of the card focuses on policy-specific evidence:
 
@@ -453,7 +575,7 @@ When you drill into a matched case, Langfuse opens the observation/trace peek so
 
 ![Trace peek from a policy case](./images/langfuse/policy-page4.png)
 
-## Advanced editor and LLM-assisted update
+#### Advanced Editor and LLM-Assisted Update
 
 If the current policy is not satisfactory, open **Advanced editor**.
 
@@ -476,29 +598,29 @@ If the current policy is not satisfactory, open **Advanced editor**.
 
 ---
 
-# Setting
+### Settings
 
-## LLM Connections
+#### LLM Connections
 
 Error Analysis and Summary generation depend on the API configuration in LLM Connections.
 
 ![LLM Connections](./images/langfuse/a8f00832-93cd-4427-ad9b-d6c655cb83de.png)
 
-## Error Analysis
+#### Error Analysis
 
-### 1) Automatic Error Analysis
+##### Automatic Error Analysis
 
 - **Auto-generate error analysis** toggle:
   - When on, the system automatically analyzes new errors/warnings as they arrive
   - When off, no automatic analysis (you can trigger manually)
 
-### 2) Model
+##### Model
 
 - Available only when automatic analysis is on
   - Specifies the model used for automatic analysis
   - Choose a stable, cost-effective model for your team
 
-### 3) New error nodes before auto summary update
+##### New Error Nodes Before Auto Summary Update
 
 - Meaning: How many new error nodes must accumulate before triggering an automatic Summary update
 - **Leave empty**: Use system default (1)
@@ -506,7 +628,7 @@ Error Analysis and Summary generation depend on the API configuration in LLM Con
   - Must be a positive integer
   - Minimum value is 1
 
-### 4) Policy reject-rate highlight threshold (%)
+##### Policy Reject-Rate Highlight Threshold (%)
 
 - Controls when rows in the Home page **Policy confirmation stats** card are highlighted
 - If a policy's reject rate is at or above this threshold, that row is highlighted on Home
@@ -515,14 +637,14 @@ Error Analysis and Summary generation depend on the API configuration in LLM Con
   - Lower it to surface more policies for review
   - Raise it to highlight only the most rejection-heavy policies
 
-### 5) Markdown summary output mode
+##### Markdown Summary Output Mode
 
 - Controls what is written to the Markdown file:
   - **Prompt pack only (recommended)**: Output only the Prompt Pack
   - **Prompt pack + experiences**: Output both Prompt Pack and Experiences
 - Note: This affects only the Markdown file content, not the full structured Summary data in the database
 
-### 6) Append summary prevention note to markdown path (optional)
+##### Markdown Summary Path (Optional)
 
 - Specify an absolute path to a Markdown file for writing/updating the summary
 - The Markdown file is typically the Agent system prompt file. As experience accumulates, the Agent output becomes more reliable and avoids repeating the same errors.
@@ -533,7 +655,7 @@ Error Analysis and Summary generation depend on the API configuration in LLM Con
   - File is created if it does not exist
   - Each Summary update replaces the corresponding HINT block with the latest content
 
-### 6) Save button behavior
+##### Save Button Behavior
 
 Save is enabled when:
 
