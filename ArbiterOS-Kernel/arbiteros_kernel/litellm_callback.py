@@ -127,6 +127,8 @@ class _TraceState:
     pending_tool_call_nodes_by_id: dict[str, dict[str, Any]] = field(
         default_factory=dict
     )
+    # Inactivate (observe-only) policy strings; flushed onto next pure-text assistant reply.
+    pending_warning_texts: list[str] = field(default_factory=list)
     # Ephemeral handle to the current turn observation, for in-process updates.
     current_turn_handle: Any = None
 
@@ -149,6 +151,11 @@ _policy_config_metadata_cache_lock = threading.Lock()
 # When user replies Yes/No in next turn, we return cached response without calling model.
 _POLICY_CONFIRMATION_SUFFIX = (
     "do you want to apply the protection? Please reply Yes/No."
+)
+# Prefixed to pending inactivate-policy lines when flushing onto assistant text.
+_PENDING_WARNINGS_APPEND_PREAMBLE = (
+    "【ArbiterOS Policy】以下为未启用策略在观测模式下的提示，请注意潜在风险。"
+    "启用或停用策略请编辑 ArbiterOS-Kernel/arbiteros_kernel/policy_registry.json。"
 )
 _policy_confirmation_pending: dict[str, dict[str, Any]] = {}
 _policy_confirmation_lock = threading.Lock()
@@ -312,6 +319,7 @@ def _trace_state_from_dict(device_key: str, payload: Any) -> Optional[_TraceStat
         latest_user_preview=latest_user_preview,
         latest_topic_summary=latest_topic_summary,
         tool_result_counter_by_tool=cleaned_counters,
+        pending_warning_texts=[],
     )
 
 
@@ -2968,6 +2976,12 @@ def _emit_response_nodes(
     ):
         return
 
+    # Inactivate warnings must accumulate even when the assistant message has tool_calls
+    # (the no-tool branch below never runs in that case).
+    if isinstance(inactivate_error_type, str) and inactivate_error_type.strip():
+        with _trace_state_lock:
+            state.pending_warning_texts.append(inactivate_error_type.strip())
+
     model_name = incoming.get("model")
     model = model_name if isinstance(model_name, str) else None
     normalized_policy_violation_reason = (
@@ -3577,6 +3591,42 @@ def _emit_failure_node(
 # - 若为 content 且为 JSON 字符串（含 category/content）：只保留内层 content，去掉 category，
 #   并按 trace_id 记录剥去的 category，供 pre_call 时把 history 包回
 # ---------------------------------------------------------------------------
+def _append_pending_warnings_to_assistant_content_if_needed(
+    state: _TraceState,
+    msg_dict: Optional[dict[str, Any]],
+    *,
+    policy_confirmation_state: Optional[str] = None,
+) -> None:
+    """
+    Append accumulated inactivate-warning lines to assistant content on pure-text replies.
+    Skips policy confirmation (Yes/No) turns: list is left unchanged.
+    Langfuse uses the pre-append dict; this only mutates the copy returned to the agent.
+    """
+    if not isinstance(msg_dict, dict):
+        return
+    if (
+        isinstance(policy_confirmation_state, str)
+        and policy_confirmation_state.strip() == "ask"
+    ):
+        return
+    if msg_dict.get("tool_calls") or msg_dict.get("function_call"):
+        return
+    raw = msg_dict.get("content")
+    if not _extract_text_from_message_content(raw).strip():
+        return
+    with _trace_state_lock:
+        if not state.pending_warning_texts:
+            return
+        batch = list(state.pending_warning_texts)
+        state.pending_warning_texts.clear()
+    lines = [f"warning{i}；{t}" for i, t in enumerate(batch, start=1)]
+    suffix = "\n\n" + _PENDING_WARNINGS_APPEND_PREAMBLE + "\n\n" + "\n".join(lines)
+    if isinstance(raw, str):
+        msg_dict["content"] = raw.rstrip() + suffix
+    else:
+        msg_dict["content"] = _extract_text_from_message_content(raw).rstrip() + suffix
+
+
 def _resolve_category_cache_trace_id(data: dict) -> Optional[str]:
     """从 data.metadata.arbiteros_trace_id 解析 trace_id，用于 category/topic 缓存的 key。"""
     if not isinstance(data, dict):
@@ -5270,6 +5320,30 @@ class MyCustomHandler(CustomLogger):
             policy_confirmation_rejected=policy_confirmation_rejected_for_langfuse,
             inactivate_error_type=inactivate_error_type_for_langfuse,
         )
+        _ctx_warn = _build_device_context(data)
+        _state_warn = _resolve_trace_state_from_metadata(data, context=_ctx_warn)
+        if _state_warn is None:
+            _state_warn, _ = _ensure_trace_state(_ctx_warn)
+        _append_pending_warnings_to_assistant_content_if_needed(
+            _state_warn,
+            final_msg_dict,
+            policy_confirmation_state=policy_confirmation_state_for_langfuse,
+        )
+        if (
+            isinstance(final_msg_dict, dict)
+            and isinstance(final_msg_dict.get("content"), str)
+            and not (
+                final_msg_dict.get("tool_calls") or final_msg_dict.get("function_call")
+            )
+        ):
+            try:
+                if is_chat_completion:
+                    response.choices[0].message = Message(**final_msg_dict)
+                else:
+                    if hasattr(response, "output_text"):
+                        setattr(response, "output_text", final_msg_dict.get("content"))
+            except Exception:
+                pass
         return response
 
     async def async_post_call_streaming_hook(
@@ -5743,6 +5817,17 @@ class MyCustomHandler(CustomLogger):
             policy_confirmation_accepted=policy_confirmation_accepted_for_langfuse,
             policy_confirmation_rejected=policy_confirmation_rejected_for_langfuse,
             inactivate_error_type=inactivate_error_type_for_langfuse,
+        )
+        _ctx_warn_s = _build_device_context(request_data)
+        _state_warn_s = _resolve_trace_state_from_metadata(
+            request_data, context=_ctx_warn_s
+        )
+        if _state_warn_s is None:
+            _state_warn_s, _ = _ensure_trace_state(_ctx_warn_s)
+        _append_pending_warnings_to_assistant_content_if_needed(
+            _state_warn_s,
+            msg_dict,
+            policy_confirmation_state=policy_confirmation_state_for_langfuse,
         )
 
         if apply_transform and msg_dict is not None:
