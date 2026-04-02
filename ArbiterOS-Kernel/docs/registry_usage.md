@@ -126,7 +126,7 @@ When the agent writes a file, the kernel automatically records the file's path i
 
 **Example:** The agent fetches content from a web URL (`TRUSTWORTHINESS: LOW`) and writes it to `/home/user/project/data.json`. The kernel records `/home/user/project/data.json` as `LOW` trustworthiness in the user registry. The next time the agent reads that file, it is classified as `LOW` trustworthiness automatically.
 
-**Effective label resolution:** The stored level is the worst-case of the write-time taint and any existing source-layer rule for that path:
+**Effective label resolution:** The stored level is determined by traversing the data-dependency graph of all upstream nodes and taking the worst-case across all reachable dependencies:
 - **Confidentiality:** higher level wins (`LOW < UNKNOWN < HIGH`)
 - **Trustworthiness:** lower level wins (`LOW < UNKNOWN < HIGH`)
 
