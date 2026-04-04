@@ -18,6 +18,9 @@ except Exception:  # pragma: no cover
     yaml = None
 
 
+RULE_DETAILS_URL = "http://43.161.233.143:5173/"
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -1169,6 +1172,7 @@ def _build_tool_context(
         "instruction_category": category,
         "missing_instruction": not isinstance(ins, dict),
         "arg_total_str_len": _estimate_argument_string_budget(args_dict),
+        "raw_args": args_dict,
 
         # existing metadata view
         **md,
@@ -1206,54 +1210,240 @@ def _build_respond_context(ins: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _format_actual(actual: Dict[str, Any]) -> str:
+    key_map = {
+        "confidence": "置信级别",
+        "trustworthiness": "可信级别",
+        "confidentiality": "保密级别",
+        "prop_confidentiality": "传播保密级别",
+        "prop_trustworthiness": "传播可信级别",
+        "tool_name": "工具",
+        "instruction_type": "指令类型",
+        "instruction_category": "指令类别",
+        "scope": "范围",
+        "risk": "风险级别",
+        "tags": "标签",
+        "arg_total_str_len": "参数总长度",
+        "approval_required": "需要审批",
+        "review_required": "需要复核",
+        "destructive": "破坏性标记",
+        "reversible": "可回退",
+        "direct_target_basenames": "直接目标文件",
+        "exec_write_target_basenames": "潜在写入目标文件",
+        "action": "动作",
+        "has_external_url": "包含外部链接",
+        "missing_instruction": "缺少元数据",
+    }
+    scope_map = {"tool": "工具调用", "respond": "直接回复"}
+    bool_map = {True: "是", False: "否"}
+
     parts: List[str] = []
     for k, v in actual.items():
-        if isinstance(v, list):
-            parts.append(f"{k}={v}")
-        else:
-            parts.append(f"{k}={v}")
-    return ", ".join(parts)
+        label = key_map.get(k, k)
+        if k == "scope" and isinstance(v, str):
+            v = scope_map.get(v, v)
+        elif isinstance(v, bool):
+            v = bool_map[v]
+        elif isinstance(v, list):
+            v = ", ".join(str(x) for x in v)
+        parts.append(f"{label}={v}")
+    return "，".join(parts)
+
+
+def _friendly_rule_label(decision: RuleDecision) -> str:
+    return f"`{decision.rule_id}`（第 {decision.index} 条）"
+
+
+def _localized_rule_meaning(decision: RuleDecision) -> str:
+    rule_id = _safe_upper(decision.rule_id)
+    mapping = {
+        "UG-001": "系统暂时无法确认这一步的具体操作内容。",
+        "UG-010": "这次请求包含的内容过多，系统暂时无法可靠核验。",
+        "UG-020": "当前执行请求的识别还不充分。",
+        "UG-021": "当前执行请求的来源还不够可信。",
+        "UG-030": "这一步属于高风险执行。",
+        "UG-031": "这一步需要先审批。",
+        "UG-032": "这一步会造成直接改动，但当前缺少可靠的回退条件。",
+        "UG-040": "这一步命中了敏感或高风险标记。",
+        "UG-050": "当前回复内容不适合直接展示。",
+        "UG-060": "这一步会直接修改受保护文件。",
+        "UG-061": "这一步会通过命令修改受保护文件。",
+        "UG-062": "这一步会把受保护文件的修改指令发给其他对象。",
+        "UG-070": "这一步会修改网关或代理的外部转发配置。",
+    }
+    return mapping.get(rule_id, "当前操作存在系统不能直接放行的安全风险。")
+
+
+
+def _localized_predicate_text(decision: RuleDecision) -> str:
+    rule_id = _safe_upper(decision.rule_id)
+    mapping = {
+        "UG-001": "缺少指令元数据。",
+        "UG-010": "参数总长度 > 4000。",
+        "UG-020": "confidence < MID。",
+        "UG-021": "trustworthiness < MID。",
+        "UG-030": "risk 属于 {HIGH, CRITICAL}。",
+        "UG-031": "approval_required = true。",
+        "UG-032": "destructive = true 且 reversible = false。",
+        "UG-040": "标签集合与 {SECRET_LIKE, HIGH_RISK} 存在交集。",
+        "UG-050": "prop_confidentiality > MID。",
+        "UG-060": "direct_target_basenames 与 {SOUL.MD, AGENTS.MD, IDENTITY.MD} 存在交集。",
+        "UG-061": "exec_write_target_basenames 与 {SOUL.MD, AGENTS.MD, IDENTITY.MD} 存在交集。",
+        "UG-062": "内容同时包含受保护文件名与修改动作关键词。",
+        "UG-070": "gateway 配置修改同时包含外部链接与代理/上游重定向字段。",
+    }
+    if rule_id in mapping:
+        return mapping[rule_id]
+    predicate = _render_predicate(decision.predicate)
+    if not predicate:
+        return "未提供。"
+    return predicate.replace("'", "") + "。"
+
+
+def _tool_block_reason(decision: RuleDecision, ctx: Dict[str, Any]) -> str:
+    rule_id = _safe_upper(decision.rule_id)
+
+    direct_targets = ctx.get("direct_target_basenames") or []
+    exec_targets = ctx.get("exec_write_target_basenames") or []
+
+    direct_target = direct_targets[0] if direct_targets else ""
+    exec_target = exec_targets[0] if exec_targets else ""
+
+    if rule_id == "UG-001":
+        return "系统暂时无法确认这一步具体会执行什么，已暂停执行。"
+
+    if rule_id == "UG-010":
+        return "这次请求包含的内容过多，系统暂时无法逐项确认其安全性，已暂停执行。"
+
+    if rule_id == "UG-020":
+        return "这一步会触发执行操作，但当前对其用途和影响的识别还不充分，已暂停执行。"
+
+    if rule_id == "UG-021":
+        return "这一步会触发执行操作，但驱动它的来源不够可靠，已暂停执行。"
+
+    if rule_id == "UG-030":
+        return "这一步属于高风险执行，可能直接影响当前环境或数据，已暂停执行。"
+
+    if rule_id == "UG-031":
+        return "这一步需要先经过审批，当前不会直接执行。"
+
+    if rule_id == "UG-032":
+        if direct_target:
+            return f"这一步会直接改动 `{direct_target}`，但当前没有可靠的撤回方式，已暂停执行。"
+        if exec_target:
+            return f"这一步会通过命令改动 `{exec_target}`，但当前没有可靠的撤回方式，已暂停执行。"
+        return "这一步会直接改动现有内容，但当前没有可靠的撤回方式，已暂停执行。"
+
+    if rule_id == "UG-040":
+        return "这一步命中了敏感或高风险标记，当前不会直接继续。"
+
+    if rule_id == "UG-050":
+        return "当前回复包含不适合直接展示的内容，系统已暂停输出。"
+
+    if rule_id == "UG-060":
+        if direct_target:
+            return f"这一步会直接修改受保护文件 `{direct_target}`，已暂停执行。"
+        return "这一步会直接修改受保护的系统身份或控制文件，已暂停执行。"
+
+    if rule_id == "UG-061":
+        if exec_target:
+            return f"这一步会通过命令修改受保护文件 `{exec_target}`，已暂停执行。"
+        return "这一步会通过命令修改受保护的系统身份或控制文件，已暂停执行。"
+
+    if rule_id == "UG-062":
+        return "这一步会把修改受保护文件的指令发送给其他对象，已暂停执行。"
+
+    if rule_id == "UG-070":
+        return "这一步会修改网关或代理配置，并把后续请求转向外部地址，已暂停执行。"
+
+    return "当前操作触发了系统安全保护，已暂停执行。"
+
+
+def _render_tool_instruction_block(ctx: Dict[str, Any]) -> str:
+    tool_name = _safe_str(ctx.get("tool_name"), "@tool")
+    raw_args = ctx.get("raw_args") if isinstance(ctx.get("raw_args"), dict) else {}
+
+    if tool_name in {"exec", "process"}:
+        command = _safe_str(
+            raw_args.get("command")
+            or raw_args.get("cmd")
+            or raw_args.get("script")
+        )
+        if command:
+            return f"```bash\n{command}\n```"
+
+    return "```json\n" + json.dumps(
+        raw_args,
+        ensure_ascii=False,
+        indent=2,
+        sort_keys=True,
+    ) + "\n```"
+
+
+def _unary_policy_title(decision: RuleDecision) -> str:
+    rule_id = _safe_upper(decision.rule_id)
+    mapping = {
+        "UG-001": "信息不足，无法安全判断",
+        "UG-010": "请求内容过多，无法可靠确认",
+        "UG-020": "执行意图识别不够可靠",
+        "UG-021": "执行依据不够可信",
+        "UG-030": "高风险执行动作",
+        "UG-031": "需要审批的动作",
+        "UG-032": "不可安全回退的动作",
+        "UG-040": "命中敏感或高风险标记",
+        "UG-050": "当前回复不适合直接展示",
+        "UG-060": "直接修改受保护文件",
+        "UG-061": "间接修改受保护文件",
+        "UG-062": "传播受保护文件修改指令",
+        "UG-070": "外部重定向或代理变更",
+    }
+    return mapping.get(rule_id, "安全保护已触发")
+
+
+def _unary_rule_reference(decision: RuleDecision, ctx: Dict[str, Any]) -> str:
+    parts: List[str] = [f"- 规则编号：{decision.rule_id}"]
+    parts.append(f"- 规则含义：{_localized_rule_meaning(decision)}")
+    parts.append(f"- 详情见：{RULE_DETAILS_URL}")
+    return "\n".join(parts)
 
 
 def _friendly_tool_block(decision: RuleDecision, ctx: Dict[str, Any]) -> str:
-    lines: List[str] = [
-        f"我没有执行工具 `{ctx.get('tool_name')}`。",
-        f"命中第 {decision.index} 条 policy（{decision.rule_id}）。",
-        f"这一步被识别为 `{ctx.get('instruction_type')}` 类型的操作。",
-    ]
-    category = _safe_str(ctx.get("instruction_category"))
-    if category:
-        lines.append(f"当前操作类别为 `{category}`。")
-    if decision.description:
-        lines.append(f"规则描述：{decision.description}")
-    lines.append(f"形式化条件：{_render_predicate(decision.predicate)}")
-    actual = _format_actual(decision.actual)
-    if actual:
-        lines.append(f"实际值：{actual}")
-    lines.append(f"处理结果：{decision.effect}")
-    if decision.message:
-        lines.append(f"补充说明：{decision.message}")
-    lines.append("如果你希望继续，请修改对应规则文件、上游 metadata，或调整执行流程后再试。")
-    return "\n".join(lines)
+    return "\n".join(
+        [
+            "## ⚠️ 安全策略拦截确认",
+            "",
+            "### 1. 触发指令",
+            _render_tool_instruction_block(ctx),
+            "",
+            "### 2. 拦截说明",
+            f"[{_unary_policy_title(decision)}]：{_tool_block_reason(decision, ctx)}",
+            "",
+            "### 3. 规则说明",
+            _unary_rule_reference(decision, ctx),
+        ]
+    )
 
 
 def _friendly_respond_block(decision: RuleDecision, ctx: Dict[str, Any]) -> str:
-    lines: List[str] = [
-        "我没有直接输出这条回复。",
-        f"命中第 {decision.index} 条 policy（{decision.rule_id}）。",
-        "原因：基于当前 RESPOND instruction 的 metadata，当前策略不允许直接返回这类内容。",
-    ]
-    if decision.description:
-        lines.append(f"规则描述：{decision.description}")
-    lines.append(f"形式化条件：{_render_predicate(decision.predicate)}")
-    actual = _format_actual(decision.actual)
-    if actual:
-        lines.append(f"实际值：{actual}")
-    lines.append(f"处理结果：{decision.effect}")
-    if decision.message:
-        lines.append(f"补充说明：{decision.message}")
-    lines.append("如果你希望继续，请先调整当前响应对应的 metadata / policy 规则文件。")
-    return "\n".join(lines)
+    return "\n".join(
+        [
+            "## ⚠️ 安全策略拦截确认",
+            "",
+            "### 1. 触发指令",
+            "```text\nRESPOND\n```",
+            "",
+            "### 2. 拦截说明",
+            f"[{_unary_policy_title(decision)}]：{_tool_block_reason(decision, ctx)}",
+            "",
+            "### 3. 规则说明",
+            _unary_rule_reference(decision, ctx),
+        ]
+    )
+
+
+def _append_unique_error(errors: List[str], seen: Set[str], message: str) -> None:
+    if message not in seen:
+        errors.append(message)
+        seen.add(message)
 
 
 # ---------------------------------------------------------------------------
@@ -1292,6 +1482,7 @@ class UnaryGatePolicy(Policy):
         rules = rules if isinstance(rules, list) else []
 
         errors: List[str] = []
+        seen_errors: Set[str] = set()
         kept: List[Dict[str, Any]] = []
         changed = False
 
@@ -1364,7 +1555,7 @@ class UnaryGatePolicy(Policy):
                 },
             )
 
-            errors.append(user_msg)
+            _append_unique_error(errors, seen_errors, user_msg)
 
         if errors:
             response["tool_calls"] = kept if kept else None

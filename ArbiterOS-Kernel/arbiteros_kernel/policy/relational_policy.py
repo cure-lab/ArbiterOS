@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from typing import Any, Dict, List, Optional, Tuple
 
 from arbiteros_kernel.instruction_parsing.types import LEVEL_ORDER
@@ -7,6 +9,9 @@ from arbiteros_kernel.policy_check import PolicyCheckResult
 from arbiteros_kernel.policy_runtime import RUNTIME, canonicalize_args
 
 from .policy import Policy
+
+
+RULE_DETAILS_URL = "http://43.161.233.143:5173/"
 
 
 # ---------------------------------------------------------------------------
@@ -306,6 +311,102 @@ def _flow_kind(
     return "none"
 
 
+def _flow_label(flow_kind: str) -> str:
+    labels = {
+        "read_external": "读取外部信息",
+        "read_sensitive": "读取敏感信息",
+        "read_state": "读取状态信息",
+        "write_local": "本地写入/落盘",
+        "write_shared": "共享/导出写入",
+        "delegate_sink": "委托/跨会话发送",
+        "comm_sink": "对外发送/可见输出",
+        "voice_sink": "语音输出",
+        "ui_side_effect": "UI 控制副作用",
+        "exec_side_effect": "执行类副作用",
+        "persist_side_effect": "持久化副作用",
+        "respond_sink": "直接回复输出",
+    }
+    return labels.get(flow_kind, flow_kind or "unknown")
+
+
+def _render_tool_instruction_block(tool_name: str, args_dict: Dict[str, Any]) -> str:
+    if tool_name in {"exec", "process"}:
+        command = _safe_str(
+            args_dict.get("command")
+            or args_dict.get("cmd")
+            or args_dict.get("script")
+        )
+        if command:
+            return f"```bash\n{command}\n```"
+    return "```json\n" + json.dumps(
+        args_dict,
+        ensure_ascii=False,
+        indent=2,
+        sort_keys=True,
+    ) + "\n```"
+
+
+def _relational_policy_title(flow_kind: str) -> str:
+    mapping = {
+        "read_external": "外部内容读取",
+        "read_sensitive": "敏感信息读取",
+        "read_state": "状态读取",
+        "write_local": "本地写入",
+        "write_shared": "共享或导出写入",
+        "delegate_sink": "跨会话委托",
+        "comm_sink": "对外发送",
+        "voice_sink": "语音输出",
+        "ui_side_effect": "界面操作",
+        "exec_side_effect": "执行类动作",
+        "persist_side_effect": "持久化任务",
+        "respond_sink": "直接回复输出",
+    }
+    return mapping.get(flow_kind, "关系型安全保护")
+
+
+def _relational_policy_function_text(
+    flow_kind: str,
+    actual: Optional[str],
+    required: str,
+    source_trust: str,
+    source_conf: str,
+    *,
+    direct_output: bool = False,
+) -> str:
+    mapping = {
+        "read_external": "这一步会读取外部内容，但当前条件下系统无法确认这种读取是安全的，因此先拦截。",
+        "read_sensitive": "这一步会读取较敏感的信息，但当前读取方暂不满足安全要求，因此先拦截。",
+        "read_state": "这一步会读取系统状态，但当前依据还不足以支持继续读取，因此先拦截。",
+        "write_local": "这一步会把内容写入本地位置，但当前内容不适合直接落盘，因此先拦截。",
+        "write_shared": "这一步会把内容写入更容易扩散的位置，因此先拦截。",
+        "delegate_sink": "这一步会把内容或任务交给其他会话或代理，但当前承接对象暂不满足安全要求，因此先拦截。",
+        "comm_sink": "这一步会把内容发送到对外可见的渠道，但当前接收对象可能不够可信，因此先拦截。",
+        "voice_sink": "这一步会把内容直接以语音形式输出，内容一旦播出更难控制，因此先拦截。",
+        "ui_side_effect": "这一步会直接影响界面或交互环境，但驱动它的依据还不够可靠，因此先拦截。",
+        "exec_side_effect": "这一步会直接影响系统或运行环境，但驱动它的依据还不够可靠，因此先拦截。",
+        "persist_side_effect": "这一步会把动作固化为持续生效的任务，但当前条件下不适合直接持久化，因此先拦截。",
+        "respond_sink": "当前内容不适合直接展示给用户，因此先拦截。",
+    }
+    return mapping.get(flow_kind, "当前信息流转方式存在安全风险，因此先拦截。")
+
+
+def _relational_rule_reference(
+    flow_kind: str,
+    actual: Optional[str],
+    required: str,
+    source_trust: str,
+    source_conf: str,
+    *,
+    reason: Optional[str] = None,
+) -> str:
+    lines = [
+        f"- 规则类型：{_relational_policy_title(flow_kind)}",
+        "- 保护目标：避免不够可信或不适合外发的内容继续流向当前目标。",
+        f"- 详情见：{RULE_DETAILS_URL}",
+    ]
+    return "\n".join(lines)
+
+
 def _friendly_message(
     tool_name: str,
     flow_kind: str,
@@ -313,37 +414,36 @@ def _friendly_message(
     source_conf: str,
     required: str,
     reason: Optional[str] = None,
+    *,
+    actual: Optional[str] = None,
+    phase: str = "tool-call",
+    args_dict: Optional[Dict[str, Any]] = None,
 ) -> str:
-    if flow_kind in {"read_external", "read_sensitive", "read_state"}:
-        head = [
-            f"我没有执行工具 `{tool_name}`。",
-            "这一步属于“读取/获取信息”类操作。",
-            f"当前来源的可信级别为 `{source_trust}`，当前数据/动作要求至少 `{required}`。",
+    args_dict = args_dict if isinstance(args_dict, dict) else {}
+    return "\n".join(
+        [
+            "## ⚠️ 安全策略拦截确认",
+            "",
+            "### 1. 触发指令",
+            _render_tool_instruction_block(tool_name, args_dict),
+            "",
+            "### 2. 拦截说明",
+            (
+                f"[{_relational_policy_title(flow_kind)}]："
+                f"{_relational_policy_function_text(flow_kind, actual, required, source_trust, source_conf)}"
+            ),
+            "",
+            "### 3. 规则说明",
+            _relational_rule_reference(
+                flow_kind,
+                actual,
+                required,
+                source_trust,
+                source_conf,
+                reason=reason,
+            ),
         ]
-    elif flow_kind in {"write_local", "write_shared"}:
-        head = [
-            f"我没有执行工具 `{tool_name}`。",
-            "这一步属于“写入/落盘”类操作。",
-            f"当前来源的可信级别为 `{source_trust}`，当前数据保密级别为 `{source_conf}`，要求至少 `{required}`。",
-        ]
-    elif flow_kind in {"delegate_sink", "comm_sink", "voice_sink"}:
-        head = [
-            f"我没有执行工具 `{tool_name}`。",
-            "这一步属于“对外发送 / 委托 / 可见输出”类操作。",
-            f"当前来源的可信级别为 `{source_trust}`，当前数据保密级别为 `{source_conf}`，要求至少 `{required}`。",
-        ]
-    else:
-        head = [
-            f"我没有执行工具 `{tool_name}`。",
-            "这一步属于“有副作用的控制/执行”类操作。",
-            f"当前来源的可信级别为 `{source_trust}`，而执行这一步至少需要 `{required}`。",
-        ]
-
-    if isinstance(reason, str) and reason.strip():
-        head.append(f"补充说明：{reason.strip()}")
-
-    head.append("如果你希望继续，请提高来源可信度，降低敏感度，或补充确认/审批流程。")
-    return "\n".join(head)
+    )
 
 
 def _friendly_respond_message(
@@ -351,20 +451,42 @@ def _friendly_respond_message(
     source_conf: str,
     required: str,
     reason: Optional[str] = None,
+    *,
+    actual: Optional[str] = None,
+    phase: str = "respond",
 ) -> str:
-    lines = [
-        "我没有直接输出这条回复。",
-        f"当前来源的可信级别为 `{source_trust}`，当前内容保密级别为 `{source_conf}`，而直接输出至少需要 `{required}`。",
-        "原因：按照 relational flow 规则，这条内容当前不适合作为直接对外可见输出返回。",
-    ]
-    if isinstance(reason, str) and reason.strip():
-        lines.append(f"补充说明：{reason.strip()}")
-    lines.append("如果你希望继续，请降低敏感度，或先经过更高权限/确认流程。")
-    return "\n".join(lines)
+    flow_kind = "respond_sink"
+    return "\n".join(
+        [
+            "## ⚠️ 安全策略拦截确认",
+            "",
+            "### 1. 触发指令",
+            "```text\nRESPOND\n```",
+            "",
+            "### 2. 拦截说明",
+            (
+                f"[{_relational_policy_title(flow_kind)}]："
+                f"{_relational_policy_function_text(flow_kind, actual, required, source_trust, source_conf, direct_output=True)}"
+            ),
+            "",
+            "### 3. 规则说明",
+            _relational_rule_reference(
+                flow_kind,
+                actual,
+                required,
+                source_trust,
+                source_conf,
+                reason=reason,
+            ),
+        ]
+    )
 
 
 def _should_treat_respond_as_sink(tp_cfg: Dict[str, Any]) -> bool:
-    return bool(tp_cfg.get("treat_respond_as_sink", False) or tp_cfg.get("respond_as_output", False))
+    return bool(
+        tp_cfg.get("treat_respond_as_sink", False)
+        or tp_cfg.get("respond_as_output", False)
+    )
 
 
 def _respond_instruction_enabled(tp_cfg: Dict[str, Any]) -> bool:
@@ -376,6 +498,12 @@ def _respond_instruction_enabled(tp_cfg: Dict[str, Any]) -> bool:
 
 def _fail_closed_on_missing_metadata(tp_cfg: Dict[str, Any]) -> bool:
     return bool(tp_cfg.get("fail_closed_on_missing_instruction_metadata", False))
+
+
+def _append_unique_error(errors: List[str], seen: set[str], message: str) -> None:
+    if message not in seen:
+        errors.append(message)
+        seen.add(message)
 
 
 def _get_taint_cfg() -> Dict[str, Any]:
@@ -552,6 +680,7 @@ class RelationalPolicy(Policy):
                 instr_by_tool_call_id[tcid] = ins
 
         errors: List[str] = []
+        seen_errors: set[str] = set()
         kept: List[Dict[str, Any]] = []
 
         # -------------------------------------------------------------------
@@ -581,6 +710,9 @@ class RelationalPolicy(Policy):
                     source_conf,
                     required,
                     reason,
+                    actual=source_trust,
+                    phase="tool-call",
+                    args_dict=args_dict,
                 )
                 RUNTIME.audit(
                     phase="policy.relational",
@@ -604,7 +736,7 @@ class RelationalPolicy(Policy):
                         "custom": sec["custom"],
                     },
                 )
-                errors.append(user_message)
+                _append_unique_error(errors, seen_errors, user_message)
                 continue
 
             ok, actual, required, extra = _evaluate_flow(
@@ -645,6 +777,9 @@ class RelationalPolicy(Policy):
                 source_conf,
                 required,
                 reason,
+                actual=actual,
+                phase="tool-call",
+                args_dict=args_dict,
             )
 
             RUNTIME.audit(
@@ -656,7 +791,7 @@ class RelationalPolicy(Policy):
                 args=args_dict,
                 extra=extra,
             )
-            errors.append(user_message)
+            _append_unique_error(errors, seen_errors, user_message)
 
         if errors:
             response["tool_calls"] = kept if kept else None
@@ -696,7 +831,14 @@ class RelationalPolicy(Policy):
             if respond_ins is None and _fail_closed_on_missing_metadata(tp_cfg):
                 required = "UNKNOWN"
                 reason = "missing lowered RESPOND instruction metadata for relational flow check"
-                user_msg = _friendly_respond_message(source_trust, source_conf, required, reason)
+                user_msg = _friendly_respond_message(
+                    source_trust,
+                    source_conf,
+                    required,
+                    reason,
+                    actual=source_trust,
+                    phase="respond",
+                )
                 RUNTIME.audit(
                     phase="policy.relational",
                     trace_id=trace_id,
@@ -735,7 +877,14 @@ class RelationalPolicy(Policy):
 
             if not _level_at_least(actual, required):
                 reason = f"respond sink trustworthiness < source confidentiality ({actual} < {required})"
-                user_msg = _friendly_respond_message(source_trust, source_conf, required, reason)
+                user_msg = _friendly_respond_message(
+                    source_trust,
+                    source_conf,
+                    required,
+                    reason,
+                    actual=actual,
+                    phase="respond",
+                )
                 RUNTIME.audit(
                     phase="policy.relational",
                     trace_id=trace_id,
