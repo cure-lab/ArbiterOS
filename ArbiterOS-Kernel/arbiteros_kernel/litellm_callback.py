@@ -150,7 +150,7 @@ _policy_config_metadata_cache_lock = threading.Lock()
 # Policy confirmation: trace_id -> {original_response, protected_response, policy_reason, policy_names, policy_sources}
 # When user replies Yes/No in next turn, we return cached response without calling model.
 _POLICY_CONFIRMATION_SUFFIX = (
-    "do you want to apply the protection? Please reply Yes/No."
+    "是否采纳当前的安全建议：Yes / No."
 )
 # Prefixed to pending inactivate-policy lines when flushing onto assistant text.
 _PENDING_WARNINGS_APPEND_PREAMBLE = (
@@ -5247,7 +5247,7 @@ class MyCustomHandler(CustomLogger):
                             "popped_category_topic": popped_ct,
                             "instruction_count_before": _policy_instruction_count_before,
                         }
-                    confirm_content = f"policy violation {error_type_str} are detected, {_POLICY_CONFIRMATION_SUFFIX}"
+                    confirm_content = f"{error_type_str}\n{_POLICY_CONFIRMATION_SUFFIX}"
                     final_msg_dict = {"content": confirm_content, "role": "assistant"}
                     # 确认消息按普通信息包：默认 category + topic "protection confirmation"
                     _append_category_topic_for_trace(
@@ -5766,7 +5766,7 @@ class MyCustomHandler(CustomLogger):
                             "popped_category_topic": popped_ct,
                             "instruction_count_before": _policy_instruction_count_before_stream,
                         }
-                    confirm_content = f"policy violation {error_type_str} are detected, {_POLICY_CONFIRMATION_SUFFIX}"
+                    confirm_content = f"{error_type_str}\n{_POLICY_CONFIRMATION_SUFFIX}"
                     msg_dict = {"content": confirm_content, "role": "assistant"}
                     # 确认消息按普通信息包：默认 category + topic "protection confirmation"
                     _append_category_topic_for_trace(
