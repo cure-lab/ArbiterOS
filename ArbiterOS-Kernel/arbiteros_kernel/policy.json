@@ -122,7 +122,7 @@
   "delete_policy": {
     "enabled": true
   },
-
+  
   "efsm": {
   "enabled": true,
   "initial": "IDLE",

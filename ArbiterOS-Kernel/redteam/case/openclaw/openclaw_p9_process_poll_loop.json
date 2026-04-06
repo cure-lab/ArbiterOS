@@ -1,0 +1,659 @@
+{
+  "trace_id": "openclaw-p9-process-poll-loop",
+  "prior": [
+    {
+      "kind": "assistant",
+      "message": {
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_poll_01",
+            "type": "function",
+            "function": {
+              "name": "process",
+              "arguments": "{\"action\": \"poll\", \"pid\": 123, \"reference_tool_id\": []}"
+            }
+          }
+        ],
+        "tag": {}
+      }
+    },
+    {
+      "kind": "tool",
+      "tool_call_id": "call_poll_01",
+      "tool_name": "process",
+      "arguments": {
+        "action": "poll",
+        "pid": 123,
+        "reference_tool_id": []
+      },
+      "result": {
+        "status": "running",
+        "progress": 0
+      },
+      "tag": {}
+    },
+    {
+      "kind": "assistant",
+      "message": {
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_poll_02",
+            "type": "function",
+            "function": {
+              "name": "process",
+              "arguments": "{\"action\": \"poll\", \"pid\": 123, \"reference_tool_id\": []}"
+            }
+          }
+        ],
+        "tag": {}
+      }
+    },
+    {
+      "kind": "tool",
+      "tool_call_id": "call_poll_02",
+      "tool_name": "process",
+      "arguments": {
+        "action": "poll",
+        "pid": 123,
+        "reference_tool_id": []
+      },
+      "result": {
+        "status": "running",
+        "progress": 0
+      },
+      "tag": {}
+    },
+    {
+      "kind": "assistant",
+      "message": {
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_poll_03",
+            "type": "function",
+            "function": {
+              "name": "process",
+              "arguments": "{\"action\": \"poll\", \"pid\": 123, \"reference_tool_id\": []}"
+            }
+          }
+        ],
+        "tag": {}
+      }
+    },
+    {
+      "kind": "tool",
+      "tool_call_id": "call_poll_03",
+      "tool_name": "process",
+      "arguments": {
+        "action": "poll",
+        "pid": 123,
+        "reference_tool_id": []
+      },
+      "result": {
+        "status": "running",
+        "progress": 0
+      },
+      "tag": {}
+    },
+    {
+      "kind": "assistant",
+      "message": {
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_poll_04",
+            "type": "function",
+            "function": {
+              "name": "process",
+              "arguments": "{\"action\": \"poll\", \"pid\": 123, \"reference_tool_id\": []}"
+            }
+          }
+        ],
+        "tag": {}
+      }
+    },
+    {
+      "kind": "tool",
+      "tool_call_id": "call_poll_04",
+      "tool_name": "process",
+      "arguments": {
+        "action": "poll",
+        "pid": 123,
+        "reference_tool_id": []
+      },
+      "result": {
+        "status": "running",
+        "progress": 0
+      },
+      "tag": {}
+    },
+    {
+      "kind": "assistant",
+      "message": {
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_poll_05",
+            "type": "function",
+            "function": {
+              "name": "process",
+              "arguments": "{\"action\": \"poll\", \"pid\": 123, \"reference_tool_id\": []}"
+            }
+          }
+        ],
+        "tag": {}
+      }
+    },
+    {
+      "kind": "tool",
+      "tool_call_id": "call_poll_05",
+      "tool_name": "process",
+      "arguments": {
+        "action": "poll",
+        "pid": 123,
+        "reference_tool_id": []
+      },
+      "result": {
+        "status": "running",
+        "progress": 0
+      },
+      "tag": {}
+    },
+    {
+      "kind": "assistant",
+      "message": {
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_poll_06",
+            "type": "function",
+            "function": {
+              "name": "process",
+              "arguments": "{\"action\": \"poll\", \"pid\": 123, \"reference_tool_id\": []}"
+            }
+          }
+        ],
+        "tag": {}
+      }
+    },
+    {
+      "kind": "tool",
+      "tool_call_id": "call_poll_06",
+      "tool_name": "process",
+      "arguments": {
+        "action": "poll",
+        "pid": 123,
+        "reference_tool_id": []
+      },
+      "result": {
+        "status": "running",
+        "progress": 0
+      },
+      "tag": {}
+    },
+    {
+      "kind": "assistant",
+      "message": {
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_poll_07",
+            "type": "function",
+            "function": {
+              "name": "process",
+              "arguments": "{\"action\": \"poll\", \"pid\": 123, \"reference_tool_id\": []}"
+            }
+          }
+        ],
+        "tag": {}
+      }
+    },
+    {
+      "kind": "tool",
+      "tool_call_id": "call_poll_07",
+      "tool_name": "process",
+      "arguments": {
+        "action": "poll",
+        "pid": 123,
+        "reference_tool_id": []
+      },
+      "result": {
+        "status": "running",
+        "progress": 0
+      },
+      "tag": {}
+    },
+    {
+      "kind": "assistant",
+      "message": {
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_poll_08",
+            "type": "function",
+            "function": {
+              "name": "process",
+              "arguments": "{\"action\": \"poll\", \"pid\": 123, \"reference_tool_id\": []}"
+            }
+          }
+        ],
+        "tag": {}
+      }
+    },
+    {
+      "kind": "tool",
+      "tool_call_id": "call_poll_08",
+      "tool_name": "process",
+      "arguments": {
+        "action": "poll",
+        "pid": 123,
+        "reference_tool_id": []
+      },
+      "result": {
+        "status": "running",
+        "progress": 0
+      },
+      "tag": {}
+    },
+    {
+      "kind": "assistant",
+      "message": {
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_poll_09",
+            "type": "function",
+            "function": {
+              "name": "process",
+              "arguments": "{\"action\": \"poll\", \"pid\": 123, \"reference_tool_id\": []}"
+            }
+          }
+        ],
+        "tag": {}
+      }
+    },
+    {
+      "kind": "tool",
+      "tool_call_id": "call_poll_09",
+      "tool_name": "process",
+      "arguments": {
+        "action": "poll",
+        "pid": 123,
+        "reference_tool_id": []
+      },
+      "result": {
+        "status": "running",
+        "progress": 0
+      },
+      "tag": {}
+    },
+    {
+      "kind": "assistant",
+      "message": {
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_poll_10",
+            "type": "function",
+            "function": {
+              "name": "process",
+              "arguments": "{\"action\": \"poll\", \"pid\": 123, \"reference_tool_id\": []}"
+            }
+          }
+        ],
+        "tag": {}
+      }
+    },
+    {
+      "kind": "tool",
+      "tool_call_id": "call_poll_10",
+      "tool_name": "process",
+      "arguments": {
+        "action": "poll",
+        "pid": 123,
+        "reference_tool_id": []
+      },
+      "result": {
+        "status": "running",
+        "progress": 0
+      },
+      "tag": {}
+    },
+    {
+      "kind": "assistant",
+      "message": {
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_poll_11",
+            "type": "function",
+            "function": {
+              "name": "process",
+              "arguments": "{\"action\": \"poll\", \"pid\": 123, \"reference_tool_id\": []}"
+            }
+          }
+        ],
+        "tag": {}
+      }
+    },
+    {
+      "kind": "tool",
+      "tool_call_id": "call_poll_11",
+      "tool_name": "process",
+      "arguments": {
+        "action": "poll",
+        "pid": 123,
+        "reference_tool_id": []
+      },
+      "result": {
+        "status": "running",
+        "progress": 0
+      },
+      "tag": {}
+    },
+    {
+      "kind": "assistant",
+      "message": {
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_poll_12",
+            "type": "function",
+            "function": {
+              "name": "process",
+              "arguments": "{\"action\": \"poll\", \"pid\": 123, \"reference_tool_id\": []}"
+            }
+          }
+        ],
+        "tag": {}
+      }
+    },
+    {
+      "kind": "tool",
+      "tool_call_id": "call_poll_12",
+      "tool_name": "process",
+      "arguments": {
+        "action": "poll",
+        "pid": 123,
+        "reference_tool_id": []
+      },
+      "result": {
+        "status": "running",
+        "progress": 0
+      },
+      "tag": {}
+    },
+    {
+      "kind": "assistant",
+      "message": {
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_poll_13",
+            "type": "function",
+            "function": {
+              "name": "process",
+              "arguments": "{\"action\": \"poll\", \"pid\": 123, \"reference_tool_id\": []}"
+            }
+          }
+        ],
+        "tag": {}
+      }
+    },
+    {
+      "kind": "tool",
+      "tool_call_id": "call_poll_13",
+      "tool_name": "process",
+      "arguments": {
+        "action": "poll",
+        "pid": 123,
+        "reference_tool_id": []
+      },
+      "result": {
+        "status": "running",
+        "progress": 0
+      },
+      "tag": {}
+    },
+    {
+      "kind": "assistant",
+      "message": {
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_poll_14",
+            "type": "function",
+            "function": {
+              "name": "process",
+              "arguments": "{\"action\": \"poll\", \"pid\": 123, \"reference_tool_id\": []}"
+            }
+          }
+        ],
+        "tag": {}
+      }
+    },
+    {
+      "kind": "tool",
+      "tool_call_id": "call_poll_14",
+      "tool_name": "process",
+      "arguments": {
+        "action": "poll",
+        "pid": 123,
+        "reference_tool_id": []
+      },
+      "result": {
+        "status": "running",
+        "progress": 0
+      },
+      "tag": {}
+    },
+    {
+      "kind": "assistant",
+      "message": {
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_poll_15",
+            "type": "function",
+            "function": {
+              "name": "process",
+              "arguments": "{\"action\": \"poll\", \"pid\": 123, \"reference_tool_id\": []}"
+            }
+          }
+        ],
+        "tag": {}
+      }
+    },
+    {
+      "kind": "tool",
+      "tool_call_id": "call_poll_15",
+      "tool_name": "process",
+      "arguments": {
+        "action": "poll",
+        "pid": 123,
+        "reference_tool_id": []
+      },
+      "result": {
+        "status": "running",
+        "progress": 0
+      },
+      "tag": {}
+    },
+    {
+      "kind": "assistant",
+      "message": {
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_poll_16",
+            "type": "function",
+            "function": {
+              "name": "process",
+              "arguments": "{\"action\": \"poll\", \"pid\": 123, \"reference_tool_id\": []}"
+            }
+          }
+        ],
+        "tag": {}
+      }
+    },
+    {
+      "kind": "tool",
+      "tool_call_id": "call_poll_16",
+      "tool_name": "process",
+      "arguments": {
+        "action": "poll",
+        "pid": 123,
+        "reference_tool_id": []
+      },
+      "result": {
+        "status": "running",
+        "progress": 0
+      },
+      "tag": {}
+    },
+    {
+      "kind": "assistant",
+      "message": {
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_poll_17",
+            "type": "function",
+            "function": {
+              "name": "process",
+              "arguments": "{\"action\": \"poll\", \"pid\": 123, \"reference_tool_id\": []}"
+            }
+          }
+        ],
+        "tag": {}
+      }
+    },
+    {
+      "kind": "tool",
+      "tool_call_id": "call_poll_17",
+      "tool_name": "process",
+      "arguments": {
+        "action": "poll",
+        "pid": 123,
+        "reference_tool_id": []
+      },
+      "result": {
+        "status": "running",
+        "progress": 0
+      },
+      "tag": {}
+    },
+    {
+      "kind": "assistant",
+      "message": {
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_poll_18",
+            "type": "function",
+            "function": {
+              "name": "process",
+              "arguments": "{\"action\": \"poll\", \"pid\": 123, \"reference_tool_id\": []}"
+            }
+          }
+        ],
+        "tag": {}
+      }
+    },
+    {
+      "kind": "tool",
+      "tool_call_id": "call_poll_18",
+      "tool_name": "process",
+      "arguments": {
+        "action": "poll",
+        "pid": 123,
+        "reference_tool_id": []
+      },
+      "result": {
+        "status": "running",
+        "progress": 0
+      },
+      "tag": {}
+    },
+    {
+      "kind": "assistant",
+      "message": {
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_poll_19",
+            "type": "function",
+            "function": {
+              "name": "process",
+              "arguments": "{\"action\": \"poll\", \"pid\": 123, \"reference_tool_id\": []}"
+            }
+          }
+        ],
+        "tag": {}
+      }
+    },
+    {
+      "kind": "tool",
+      "tool_call_id": "call_poll_19",
+      "tool_name": "process",
+      "arguments": {
+        "action": "poll",
+        "pid": 123,
+        "reference_tool_id": []
+      },
+      "result": {
+        "status": "running",
+        "progress": 0
+      },
+      "tag": {}
+    },
+    {
+      "kind": "assistant",
+      "message": {
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_poll_20",
+            "type": "function",
+            "function": {
+              "name": "process",
+              "arguments": "{\"action\": \"poll\", \"pid\": 123, \"reference_tool_id\": []}"
+            }
+          }
+        ],
+        "tag": {}
+      }
+    },
+    {
+      "kind": "tool",
+      "tool_call_id": "call_poll_20",
+      "tool_name": "process",
+      "arguments": {
+        "action": "poll",
+        "pid": 123,
+        "reference_tool_id": []
+      },
+      "result": {
+        "status": "running",
+        "progress": 0
+      },
+      "tag": {}
+    }
+  ],
+  "current": {
+    "role": "assistant",
+    "tool_calls": [
+      {
+        "id": "call_poll_21",
+        "type": "function",
+        "function": {
+          "name": "process",
+          "arguments": "{\"action\": \"poll\", \"pid\": 123, \"reference_tool_id\": []}"
+        }
+      }
+    ],
+    "tag": {}
+  }
+}

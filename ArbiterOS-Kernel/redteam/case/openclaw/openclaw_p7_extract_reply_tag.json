@@ -1,0 +1,9 @@
+{
+  "trace_id": "openclaw-p7-extract-reply-tag",
+  "prior": [],
+  "current": {
+    "role": "assistant",
+    "content": "{\"category\": \"COGNITIVE_CORE__RESPOND\", \"topic\": \"demo_p7\", \"content\": \"[[reply_to:msg_test_123]] 已收到，我来处理。\"}",
+    "tag": {}
+  }
+}

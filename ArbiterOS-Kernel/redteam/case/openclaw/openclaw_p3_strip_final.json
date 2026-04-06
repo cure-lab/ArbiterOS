@@ -1,0 +1,9 @@
+{
+  "trace_id": "openclaw-p3-strip-final",
+  "prior": [],
+  "current": {
+    "role": "assistant",
+    "content": "{\"category\": \"COGNITIVE_CORE__RESPOND\", \"topic\": \"demo_p3\", \"content\": \"<final>OpenAI error: rate limit reached</final>\"}",
+    "tag": {}
+  }
+}

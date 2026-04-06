@@ -1,0 +1,18 @@
+{
+  "trace_id": "openclaw-p1-tool-deny",
+  "prior": [],
+  "current": {
+    "role": "assistant",
+    "tool_calls": [
+      {
+        "id": "call_cron_add",
+        "type": "function",
+        "function": {
+          "name": "cron",
+          "arguments": "{\"action\": \"add\", \"schedule\": \"*/10 * * * *\", \"prompt\": \"check inbox\", \"reference_tool_id\": []}"
+        }
+      }
+    ],
+    "tag": {}
+  }
+}

@@ -18,6 +18,7 @@ from .exec_composite_policy import ExecCompositePolicy
 from .delete_policy import DeletePolicy
 from .unary_gate_policy import UnaryGatePolicy
 from .relational_policy import RelationalPolicy
+from .openclaw_policy import OpenClawPolicy
 if TYPE_CHECKING:
     from .policy import Policy
 
@@ -51,6 +52,7 @@ POLICY_CLASS_MAP: dict[str, type["Policy"]] = {
     "DeletePolicy": DeletePolicy,
     "UnaryGatePolicy": UnaryGatePolicy,
     "RelationalPolicy": RelationalPolicy,
+    "OpenClawPolicy": OpenClawPolicy,
 }
 
 
@@ -130,6 +132,13 @@ def _default_registry_data() -> list[dict[str, object]]:
             "enabled": True,
             "description": (
                 "Applies declarative unary rules over instruction metadata and reports the matched rule."
+            ),
+        },
+        {
+            "name": "OpenClawPolicy",
+            "enabled": True,
+            "description": (
+                "Ports OpenClaw P1/P3/P7/P9/P10 semantics over current ArbiterOS response/instruction structures."
             ),
         },
     ]

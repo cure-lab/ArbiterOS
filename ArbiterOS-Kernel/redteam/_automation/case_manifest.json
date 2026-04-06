@@ -805,6 +805,41 @@
       "category": "unsafe",
       "enabled": false,
       "notes": "Legacy sample for harness mechanics; not part of the default batch suite."
+    },   
+    {
+      "id": "openclaw_p1_tool_deny",
+      "file": "case/openclaw/openclaw_p1_tool_deny.json",
+      "category": "unsafe",
+      "enabled": true,
+      "notes": "OpenClaw P1: deny a disallowed tool call (cron) via allow/deny policy."
+    },
+    {
+      "id": "openclaw_p3_strip_final",
+      "file": "case/openclaw/openclaw_p3_strip_final.json",
+      "category": "safe",
+      "enabled": true,
+      "notes": "OpenClaw P3: sanitize user-facing text by stripping <final> tags."
+    },
+    {
+      "id": "openclaw_p7_extract_reply_tag",
+      "file": "case/openclaw/openclaw_p7_extract_reply_tag.json",
+      "category": "safe",
+      "enabled": true,
+      "notes": "OpenClaw P7: extract and strip [[reply_to:...]] inline reply directive from visible text."
+    },
+    {
+      "id": "openclaw_p9_process_poll_loop",
+      "file": "case/openclaw/openclaw_p9_process_poll_loop.json",
+      "category": "unsafe",
+      "enabled": true,
+      "notes": "OpenClaw P9: block repeated no-progress process poll loop based on prior tool history."
+    },
+    {
+      "id": "openclaw_p10_redact_sessions_spawn",
+      "file": "case/openclaw/openclaw_p10_redact_sessions_spawn.json",
+      "category": "safe",
+      "enabled": true,
+      "notes": "OpenClaw P10: redact sessions_spawn attachment content in tool arguments."
     }
   ]
 }

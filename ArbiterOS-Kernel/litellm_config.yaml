@@ -1,9 +1,9 @@
 model_list:
-  - model_name: gpt-4.1-mini
+  - model_name: gpt-4o-mini
     litellm_params:
-      model: openai/gpt-4.1-mini
-      api_key: 
-      api_base: 
+      model: openai/gpt-4o-mini
+      api_key:
+      api_base:
       response_format:
         type: json_schema
         json_schema:
@@ -31,6 +31,7 @@ model_list:
             additionalProperties: false
           strict: true
 
+
 litellm_settings:
   # Following settings for anthropics models
   # modify_params: true
@@ -49,6 +50,6 @@ arbiteros_skill_trust:
 # Used when running ``skill-scanner`` from the kernel. All three keys must be
 # non-empty for ``--use-llm``; otherwise scans use static + behavioral only.
 skill_scanner_llm:
-  model: openai/gpt-4o-mini
+  model: openai/gpt-4o
   api_base: 
-  api_key: 
+  api_key:

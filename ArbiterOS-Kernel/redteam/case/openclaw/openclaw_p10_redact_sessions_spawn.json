@@ -1,0 +1,18 @@
+{
+  "trace_id": "openclaw-p10-redact-sessions-spawn",
+  "prior": [],
+  "current": {
+    "role": "assistant",
+    "tool_calls": [
+      {
+        "id": "call_spawn_01",
+        "type": "function",
+        "function": {
+          "name": "sessions_spawn",
+          "arguments": "{\"prompt\": \"please handle this\", \"attachments\": [{\"name\": \"secret.txt\", \"content\": \"TOP_SECRET_123456\"}], \"reference_tool_id\": []}"
+        }
+      }
+    ],
+    "tag": {}
+  }
+}
