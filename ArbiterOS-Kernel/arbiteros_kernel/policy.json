@@ -1,6 +1,15 @@
 {
   "audit": { "log_allow": true },
 
+  "unary_gate": {
+    "tool_aliases": {
+      "write_file": "write",
+      "edit_file": "edit",
+      "read_file": "read",
+      "spawn": "sessions_spawn"
+    }
+  },
+  
   "allow": {
     "tools": [
   "read",
