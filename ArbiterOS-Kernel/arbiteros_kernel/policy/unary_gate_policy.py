@@ -207,6 +207,32 @@ def _get_unary_cfg() -> Dict[str, Any]:
     return cfg if isinstance(cfg, dict) else {}
 
 
+# API tool name (lowercase) -> canonical name used in unary_gate_rules.json selectors.
+# Configured in policy.json under unary_gate.tool_aliases (single source of truth).
+
+
+def _merged_unary_tool_alias_map() -> Dict[str, str]:
+    merged: Dict[str, str] = {}
+    cfg = _get_unary_cfg().get("tool_aliases")
+    if isinstance(cfg, dict):
+        for k, v in cfg.items():
+            if isinstance(k, str) and k.strip() and isinstance(v, str) and v.strip():
+                merged[k.strip().lower()] = v.strip().lower()
+    return merged
+
+
+def _canonical_tool_for_unary_gate(tool_name: Any) -> str:
+    """
+    Map a runtime tool name to the canonical OpenClaw-style name for selector matching.
+    Unknown names pass through unchanged. Aliases come from policy.json unary_gate.tool_aliases.
+    """
+    t = (tool_name or "").strip()
+    if not t:
+        return ""
+    key = t.lower()
+    return _merged_unary_tool_alias_map().get(key, t)
+
+
 def _get_security_cfg() -> Dict[str, Any]:
     unary = _safe_dict(_get_unary_cfg().get("security"))
     if unary:
@@ -521,8 +547,9 @@ def _selector_matches(rule: Dict[str, Any], ctx: Dict[str, Any]) -> bool:
 
     tool_values = _selector_values(selector.get("tool") or selector.get("tools"))
     if tool_values and "*" not in tool_values:
-        cur = _safe_upper(ctx.get("tool_name"))
-        if cur not in tool_values:
+        raw = _safe_upper(ctx.get("tool_name"))
+        canon = _safe_upper(_canonical_tool_for_unary_gate(ctx.get("tool_name")))
+        if raw not in tool_values and canon not in tool_values:
             return False
 
     ins_values = _selector_values(
@@ -1164,9 +1191,12 @@ def _build_tool_context(
     )
     has_external_url = ("HTTP://" in arg_text_upper) or ("HTTPS://" in arg_text_upper)
 
+    canonical_tool_name = _canonical_tool_for_unary_gate(tool_name)
+
     return {
         "scope": "tool",
         "tool_name": tool_name,
+        "canonical_tool_name": canonical_tool_name,
         "tool_call_id": tool_call_id,
         "instruction_type": instruction_type,
         "instruction_category": category,
@@ -1217,6 +1247,7 @@ def _format_actual(actual: Dict[str, Any]) -> str:
         "prop_confidentiality": "传播保密级别",
         "prop_trustworthiness": "传播可信级别",
         "tool_name": "工具",
+        "canonical_tool_name": "规范工具名",
         "instruction_type": "指令类型",
         "instruction_category": "指令类别",
         "scope": "范围",
