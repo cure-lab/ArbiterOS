@@ -14,6 +14,22 @@ It will:
 - restart OpenClaw gateway and run `openclaw dashboard`
 - create a runnable script `./run-kernel.sh` (and optional user-level `systemd` service)
 
+
+## TODO List
+
+- [x] Support NanoBot
+- [x] Evaluate on Agent SafetyBench
+- [x] Evaluate on AgentDojo
+- [x] Evaluate on Wild Claw Bench
+- [x] Evaluate on ToolEmu
+- [x] Use skill-scanner for skill safety analysis
+- [ ] Protect the long-term memory files in the agent
+- [ ] Periodically analyze the consistency of agent role positioning, intent, and behavior
+- [ ] Prompt injection detection by using the clustered information in the dataflow
+- [ ] Pre-checking on input data
+- [ ] Policy self-evolving
+- [ ] Support multi-modal models
+
 ## Run (install kernel and setup)
 
 ```bash
