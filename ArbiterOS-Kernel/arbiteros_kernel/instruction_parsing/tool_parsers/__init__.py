@@ -77,14 +77,3 @@ __all__ = [
     "NANOBOT_TOOL_PARSER_REGISTRY",
     "parse_tool_instruction",
 ]
-                confidence="UNKNOWN",
-                reversible=False,
-                authority="UNKNOWN",
-            ),
-        )
-    result = parser(args, taint_status)
-    logger.debug("Parsed tool call %r(%r): %r", tool_name, args, result)
-    return result
-
-
-__all__ = ["TOOL_PARSER_REGISTRY", "parse_tool_instruction"]
