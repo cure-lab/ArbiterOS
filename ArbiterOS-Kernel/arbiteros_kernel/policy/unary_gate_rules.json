@@ -1,6 +1,11 @@
 {
   "evaluation_mode": "first_match",
   "source": "unary_gate_rules.json",
+  "protected_identity_llm": {
+    "enabled": true,
+    "max_content_chars": 12000,
+    "note": "When enabled, UG-060/061 use skill_scanner_llm. User prompt is plain text; model must reply first line SAFE or BLOCK. Transport/parse errors still block."
+  },
   "rules": [
     {
       "id": "UG-001",
