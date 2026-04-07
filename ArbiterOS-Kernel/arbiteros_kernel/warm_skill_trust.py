@@ -76,7 +76,7 @@ def main() -> int:
         ) as progress:
             task = progress.add_task("Starting…", total=n)
             for name, skill_dir in packages:
-                was_cached = skill_trust.is_skill_cached(name)
+                was_cached = skill_trust.is_skill_cached(name, skill_dir)
                 status = "cached" if was_cached else "scanning"
                 progress.update(task, description=f"{name} ({status})")
                 t = skill_trust.resolve_trust_for_skill(name, skill_dir)
@@ -89,7 +89,7 @@ def main() -> int:
                 progress.advance(task)
     else:
         for i, (name, skill_dir) in enumerate(packages, start=1):
-            was_cached = skill_trust.is_skill_cached(name)
+            was_cached = skill_trust.is_skill_cached(name, skill_dir)
             print(
                 f"[{i}/{n}] {name} ({'cached' if was_cached else 'scanning'}) …",
                 file=sys.stderr,
