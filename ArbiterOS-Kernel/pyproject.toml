@@ -5,13 +5,14 @@ description = "LLM Gateway based ArbiterOS"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "bashlex>=0.18",
     "cisco-ai-skill-scanner==1.0.2",
     "langfuse>=3.14.1",
     "litellm[proxy]>=1.81.5",
     "mlflow[genai]>=3.9.0",
     "pyyaml>=6.0.3",
     "rich>=13.0.0",
+    "tree-sitter>=0.25.2",
+    "tree-sitter-bash>=0.25.1",
 ]
 
 [dependency-groups]
