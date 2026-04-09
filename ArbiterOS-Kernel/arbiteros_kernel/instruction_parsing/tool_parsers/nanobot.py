@@ -11,12 +11,9 @@ import logging
 import os
 from typing import Any, Dict, Optional
 
-from ..helpers.shell import (
-    _ITYPE_PRIORITY,
-    classify_segment,
-    classify_segment_risk,
-    collect_exec_path_tokens,
-    split_pipeline,
+from ..shell_parsers.bash import (
+    CommandAnalysis,
+    analyze_command,
 )
 from ..types import (
     TaintStatus,
@@ -176,7 +173,9 @@ def _parse_exec(
     """nanobot exec — shell classification aligned with OpenClaw ``exec`` (standalone copy)."""
     command = str(args.get("command", ""))
 
-    if not command.strip():
+    analysis: CommandAnalysis = analyze_command(command)
+
+    if not analysis.segments:
         logger.warning(
             "Empty command string in exec; defaulting to EXEC with UNKNOWN security"
         )
@@ -204,38 +203,12 @@ def _parse_exec(
             ),
         )
 
-    if "\n" in command:
-        logger.warning(
-            "_parse_exec: multi-line command string received; newlines are treated "
-            "as command separators: %r",
-            command,
-        )
-
-    seg_strings, operators = split_pipeline(command)
-    if not seg_strings:
-        seg_strings = [command]
-
-    itypes = [classify_segment(s) for s in seg_strings]
-    itype = max(itypes, key=lambda t: _ITYPE_PRIORITY.get(t, 0))
-
-    risks = [classify_segment_risk(s) for s in seg_strings]
-    risk: str = "HIGH" if "HIGH" in risks else "UNKNOWN" if "UNKNOWN" in risks else "LOW"
-    logger.debug(
-        "_parse_exec: segment_risks=%r → risk=%s",
-        risks,
-        risk,
-    )
-
-    path_tokens, write_targets = collect_exec_path_tokens(seg_strings, itypes, operators)
-
-    if path_tokens:
-        confidentiality = classify_confidentiality(path_tokens)
-        trustworthiness = classify_trustworthiness(path_tokens)
+    if analysis.path_tokens:
+        confidentiality = classify_confidentiality(analysis.path_tokens)
+        trustworthiness = classify_trustworthiness(analysis.path_tokens)
         logger.debug(
             "_parse_exec: path_tokens=%r → confidentiality=%s trustworthiness=%s",
-            path_tokens,
-            confidentiality,
-            trustworthiness,
+            analysis.path_tokens, confidentiality, trustworthiness,
         )
     else:
         confidentiality = "LOW"
@@ -243,33 +216,29 @@ def _parse_exec(
         logger.debug(
             "_parse_exec: no path tokens → confidentiality=%s trustworthiness=%s"
             " (itype=%s fallback)",
-            confidentiality,
-            trustworthiness,
-            itype,
+            confidentiality, trustworthiness, analysis.itype,
         )
 
-    for write_target in write_targets:
+    for write_target in analysis.write_targets:
         register_file_taint(write_target, trustworthiness, confidentiality)
 
-    reversible = itype != "EXEC"
-
     return ToolParseResult(
-        itype,
+        analysis.itype,
         make_security_type(
             confidentiality=confidentiality,
             trustworthiness=trustworthiness,
             confidence="UNKNOWN",
-            reversible=reversible,
+            reversible=analysis.itype != "EXEC",
             authority="UNKNOWN",
-            risk=risk,
+            risk=analysis.risk,
             custom={
                 "exec_parse": {
                     "command": command,
-                    "segments": seg_strings,
-                    "operators": operators,
-                    "segment_instruction_types": itypes,
-                    "path_tokens": path_tokens,
-                    "write_targets": write_targets,
+                    "segments": analysis.segments,
+                    "operators": analysis.operators,
+                    "segment_instruction_types": analysis.itypes,
+                    "path_tokens": analysis.path_tokens,
+                    "write_targets": analysis.write_targets,
                     "parser_kind": "coarse_shell_split",
                 }
             },

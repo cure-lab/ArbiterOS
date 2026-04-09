@@ -21,11 +21,11 @@ from arbiteros_kernel.instruction_parsing.tool_parsers.linux_registry import (
 from arbiteros_kernel.instruction_parsing.tool_parsers.linux_registry import (
     get_user_registered_paths,
 )
-from arbiteros_kernel.instruction_parsing.helpers.shell import (
-    classify_segment as _classify_segment,
-    classify_segment_risk as _classify_segment_risk,
-    is_path_like as _is_path_like,
-    split_pipeline_str as _split_pipeline_str,
+from arbiteros_kernel.instruction_parsing.shell_parsers.bash import (
+    analyze_command as _analyze_command,
+    _classify_segment,
+    _classify_segment_risk,
+    _is_path_like,
 )
 from arbiteros_kernel.instruction_parsing.tool_parsers.openclaw import (
     TOOL_PARSER_REGISTRY,
@@ -233,81 +233,77 @@ class TestClassifyTrustworthiness:
             == "LOW"
         )
 
-
 # ---------------------------------------------------------------------------
-# _split_pipeline_str
+# analyze_command — segment splitting
 # ---------------------------------------------------------------------------
 
 
 class TestSplitPipelineStr:
     def test_single_command(self):
-        segs = _split_pipeline_str("cat /etc/passwd")
+        segs = _analyze_command("cat /etc/passwd").segments
         assert segs == ["cat /etc/passwd"]
 
     def test_pipe_separator(self):
-        segs = _split_pipeline_str("cat file.txt | grep foo")
+        segs = _analyze_command("cat file.txt | grep foo").segments
         assert len(segs) == 2
         assert segs[0].strip() == "cat file.txt"
         assert segs[1].strip() == "grep foo"
 
     def test_double_pipe(self):
-        segs = _split_pipeline_str("cmd1 || cmd2")
+        segs = _analyze_command("cmd1 || cmd2").segments
         assert len(segs) == 2
 
     def test_and_and(self):
-        segs = _split_pipeline_str("cat file && python run.py")
+        segs = _analyze_command("cat file && python run.py").segments
         assert len(segs) == 2
         assert "cat file" in segs[0]
         assert "python run.py" in segs[1]
 
     def test_semicolon_no_spaces(self):
-        segs = _split_pipeline_str("echo hello; bash evil.sh")
+        segs = _analyze_command("echo hello; bash evil.sh").segments
         assert len(segs) == 2
         assert "echo hello" in segs[0]
         assert "bash evil.sh" in segs[1]
 
     def test_semicolon_with_spaces(self):
-        segs = _split_pipeline_str("ls /tmp ; python run.py")
+        segs = _analyze_command("ls /tmp ; python run.py").segments
         assert len(segs) == 2
 
     def test_background_operator(self):
-        segs = _split_pipeline_str("sleep 10 & cat file")
+        segs = _analyze_command("sleep 10 & cat file").segments
         assert len(segs) == 2
 
     def test_long_pipeline(self):
-        segs = _split_pipeline_str("cat file | grep foo | sort | uniq | wc -l")
+        segs = _analyze_command("cat file | grep foo | sort | uniq | wc -l").segments
         assert len(segs) == 5
 
     def test_empty_string_returns_empty(self):
-        segs = _split_pipeline_str("")
+        segs = _analyze_command("").segments
         assert segs == []
 
     def test_newline_is_separator(self):
-        segs = _split_pipeline_str("echo hello\npython run.py")
+        segs = _analyze_command("echo hello\npython run.py").segments
         assert len(segs) == 2
         assert "echo hello" in segs[0]
         assert "python run.py" in segs[1]
 
     def test_newline_multiple_commands(self):
-        segs = _split_pipeline_str("ls /tmp\nrm old.txt\npython run.py")
+        segs = _analyze_command("ls /tmp\nrm old.txt\npython run.py").segments
         assert len(segs) == 3
 
     def test_quoted_pipe_not_split(self):
         # The | chars inside sed 's|...|' must not be treated as pipe operators.
         cmd = r"find . -type d | sed 's|^\./||' | sort"
-        segs = _split_pipeline_str(cmd)
+        segs = _analyze_command(cmd).segments
         assert len(segs) == 3
         assert "sed" in segs[1]
         assert "sort" in segs[2]
 
     def test_quoted_pipe_operators(self):
-        from arbiteros_kernel.instruction_parsing.helpers.shell import (
-            split_pipeline as _split_pipeline,
-        )
         cmd = r"find . | sed 's|a|b|' | sort"
-        segs, ops = _split_pipeline(cmd)
-        assert segs == ["find .", "sed 's|a|b|'", "sort"]
-        assert ops == ["|", "|"]
+        analysis = _analyze_command(cmd)
+        assert analysis.segments == ["find .", "sed 's|a|b|'", "sort"]
+        assert analysis.operators == ["|", "|"]
 
 
 # ---------------------------------------------------------------------------
@@ -1096,16 +1092,16 @@ class TestComplexPipelinesWithParentheses:
         """(python run.py should be classified EXEC."""
         assert _classify_segment("(python run.py") == "EXEC"
 
-    # --- _split_pipeline_str segment count ---
+    # --- analyze_command segment count ---
 
     def test_split_pipeline_andand_with_subshell(self):
         """a && (B | C) splits into exactly 3 segments."""
-        segs = _split_pipeline_str("cat file && (python run.py | grep result)")
+        segs = _analyze_command("cat file && (python run.py | grep result)").segments
         assert len(segs) == 3
 
     def test_split_pipeline_nested_parens_count(self):
         """ls && (rm /tmp/junk | echo done) splits into 3 segments."""
-        segs = _split_pipeline_str("ls && (rm /tmp/junk | echo done)")
+        segs = _analyze_command("ls && (rm /tmp/junk | echo done)").segments
         assert len(segs) == 3
 
     # --- end-to-end parse_tool_instruction ---

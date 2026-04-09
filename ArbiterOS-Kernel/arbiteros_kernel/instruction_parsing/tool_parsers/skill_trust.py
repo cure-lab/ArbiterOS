@@ -2,10 +2,14 @@
 Skill-scanner integration: map skill package paths to trustworthiness using
 cisco-ai-skill-scanner (CLI), with a persistent JSON cache under the user
 registry directory (same as linux_registry YAML files).
+
+Cache hits skip re-scanning only when ``SKILL.md`` SHA-256 matches the value
+stored in the cache entry (``skill_md_sha256``).
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -37,6 +41,10 @@ _USER_REGISTRY_DIR = os.environ.get(
 )
 
 SKILL_TRUST_CACHE_FILENAME = "skill_trust_by_name.json"
+
+# Per-skill manifest for cache invalidation (same basename as common Agent Skills layout).
+SKILL_MD_BASENAME = "SKILL.md"
+_SKILL_MD_SHA256_HEX_LEN = 64
 
 # Values: legacy plain trust string, or dict (see schema in ``trust_from_scan_report``).
 _SKILL_TRUST_CACHE: Dict[str, Union[str, Dict[str, Any]]] = {}
@@ -263,6 +271,60 @@ def _finding_categories(findings: Any) -> Set[str]:
     return out
 
 
+def skill_md_path(skill_dir: str) -> str:
+    """Absolute path to ``SKILL.md`` inside a skill package directory."""
+    return os.path.join(os.path.abspath(os.path.expanduser(skill_dir)), SKILL_MD_BASENAME)
+
+
+def compute_skill_md_sha256(skill_dir: str) -> Optional[str]:
+    """SHA-256 (hex) of ``SKILL.md`` bytes. Missing file → hash of empty bytes.
+
+    Returns None if the file exists but cannot be read (permissions, etc.).
+    """
+    path = skill_md_path(skill_dir)
+    try:
+        if os.path.isfile(path):
+            with open(path, "rb") as fh:
+                data = fh.read()
+        else:
+            data = b""
+    except OSError:
+        logger.debug("skill_trust: cannot read %s for hash", path, exc_info=True)
+        return None
+    return hashlib.sha256(data).hexdigest()
+
+
+def _skill_md_sha256_from_cache_entry(
+    entry: Union[str, Dict[str, Any], None],
+) -> Optional[str]:
+    """Return normalized hex hash from cache entry, or None if absent/invalid."""
+    if not isinstance(entry, dict):
+        return None
+    raw = entry.get("skill_md_sha256")
+    if not isinstance(raw, str):
+        return None
+    s = raw.strip().lower()
+    if len(s) != _SKILL_MD_SHA256_HEX_LEN or any(c not in "0123456789abcdef" for c in s):
+        return None
+    return s
+
+
+def _cache_allows_skip_scan(
+    entry: Union[str, Dict[str, Any], None],
+    skill_dir: str,
+) -> bool:
+    """True if entry has valid trust *and* stored ``SKILL.md`` hash matches disk."""
+    if _cache_entry_trustworthiness(entry) is None:
+        return False
+    current = compute_skill_md_sha256(skill_dir)
+    if current is None:
+        return False
+    stored = _skill_md_sha256_from_cache_entry(entry)
+    if stored is None:
+        return False
+    return stored == current.lower()
+
+
 def trust_from_scan_report(report: Dict[str, Any]) -> Tuple[SecurityLevel, Dict[str, Any]]:
     """Derive trust from scanner JSON and build a cache record.
 
@@ -283,7 +345,7 @@ def trust_from_scan_report(report: Dict[str, Any]) -> Tuple[SecurityLevel, Dict[
         trust = max_severity_to_trustworthiness(max_sev_str)
 
     record: Dict[str, Any] = {
-        "schema_version": 2,
+        "schema_version": 3,
         "trustworthiness": trust,
         "max_severity": max_sev_str or None,
         "categories_present": sorted(categories),
@@ -306,12 +368,12 @@ def _cache_entry_trustworthiness(entry: Union[str, Dict[str, Any], None]) -> Opt
     return None
 
 
-def is_skill_cached(skill_name: str) -> bool:
-    """Return True if *skill_name* has a valid trust entry in the on-disk cache."""
+def is_skill_cached(skill_name: str, skill_dir: str) -> bool:
+    """Return True if trust is cached *and* ``SKILL.md`` hash matches (scan can be skipped)."""
     _load_cache_from_disk()
     with _SKILL_TRUST_LOCK:
         entry = _SKILL_TRUST_CACHE.get(skill_name)
-    return _cache_entry_trustworthiness(entry) is not None
+    return _cache_allows_skip_scan(entry, skill_dir)
 
 
 def _scan_skill_package(skill_dir: str) -> Optional[Dict[str, Any]]:
@@ -383,20 +445,23 @@ def resolve_trust_for_skill(skill_name: str, skill_dir: str) -> Optional[Securit
     with _SKILL_TRUST_LOCK:
         cached = _SKILL_TRUST_CACHE.get(skill_name)
     hit = _cache_entry_trustworthiness(cached)
-    if hit is not None:
+    if hit is not None and _cache_allows_skip_scan(cached, skill_dir):
         return hit
 
     with _lock_for_skill(skill_name):
         with _SKILL_TRUST_LOCK:
             cached = _SKILL_TRUST_CACHE.get(skill_name)
         hit = _cache_entry_trustworthiness(cached)
-        if hit is not None:
+        if hit is not None and _cache_allows_skip_scan(cached, skill_dir):
             return hit
 
         report = _scan_skill_package(skill_dir)
         if not report:
             return None
         trust, record = trust_from_scan_report(report)
+        h = compute_skill_md_sha256(skill_dir)
+        if h is not None:
+            record["skill_md_sha256"] = h
         with _SKILL_TRUST_LOCK:
             _SKILL_TRUST_CACHE[skill_name] = record
         _persist_cache()
