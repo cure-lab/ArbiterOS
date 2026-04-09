@@ -33,13 +33,14 @@ FORCE_LOW_TRUST_CATEGORIES: frozenset[str] = frozenset()
 
 # Same directory as the OS-appropriate user registry.
 _IS_WINDOWS = _platform.system() == "Windows"
+_IS_DARWIN = _platform.system() == "Darwin"
 _USER_REGISTRY_DIR = os.environ.get(
-    "ARBITEROS_USER_WINDOWS_REGISTRY_DIR" if _IS_WINDOWS else "ARBITEROS_USER_REGISTRY_DIR",
+    "ARBITEROS_USER_REGISTRY_DIR",
     os.path.join(
         os.path.expanduser("~"),
         ".arbiteros",
         "instruction_parsing",
-        "windows_registry" if _IS_WINDOWS else "linux_registry",
+        "windows_registry" if _IS_WINDOWS else "darwin_registry" if _IS_DARWIN else "linux_registry",
     ),
 )
 

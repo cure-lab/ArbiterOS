@@ -1,0 +1,268 @@
+# Execution risk classification for shell commands on macOS (Darwin).
+#
+# Keys   : HIGH (only one level; unmatched commands default to UNKNOWN)
+# Values : list of command patterns — either a bare executable basename
+#          (e.g. "rm") or an "executable subcommand" two-token prefix
+#          (e.g. "git clean").  Matching is done on basename(tokens[0]),
+#          then on "basename(tokens[0]) tokens[1]" when a non-flag second
+#          token exists.
+#
+# These are commands whose execution poses a HIGH risk of data loss,
+# irreversible system damage, or destructive side effects.
+
+HIGH:
+  # ---------------------------------------------------------------------------
+  # File deletion / secure erasure
+  # ---------------------------------------------------------------------------
+  - rm
+  - shred
+  - wipe
+  - rmdir
+
+  # ---------------------------------------------------------------------------
+  # Destructive disk / volume operations (macOS-specific)
+  # ---------------------------------------------------------------------------
+  - diskutil    # diskutil eraseVolume / eraseDisk / partitionDisk / zeroDisk
+  - hdiutil     # hdiutil create -format with destructive conversion
+  - dd          # raw disk overwrite
+
+  # ---------------------------------------------------------------------------
+  # System shutdown / reboot
+  # ---------------------------------------------------------------------------
+  - shutdown
+  - reboot
+  - halt
+
+  # ---------------------------------------------------------------------------
+  # Process termination
+  # ---------------------------------------------------------------------------
+  - kill
+  - pkill
+  - killall
+
+  # ---------------------------------------------------------------------------
+  # File truncation / zeroing
+  # ---------------------------------------------------------------------------
+  - truncate
+
+  # ---------------------------------------------------------------------------
+  # Keychain / credentials manipulation
+  # ---------------------------------------------------------------------------
+  - security    # can silently read or delete Keychain entries
+
+  # ---------------------------------------------------------------------------
+  # macOS arbitrary code execution
+  # ---------------------------------------------------------------------------
+  - osascript   # AppleScript / JXA: system-level control, UI scripting
+
+  # ---------------------------------------------------------------------------
+  # Dangerous git subcommands (destructive local state)
+  # ---------------------------------------------------------------------------
+  - git clean
+  - git reset
+
+  # ---------------------------------------------------------------------------
+  # Privilege escalation running destructive commands
+  # ---------------------------------------------------------------------------
+  - sudo rm
+  - sudo shred
+  - sudo dd
+  - sudo diskutil
+  - sudo shutdown
+  - sudo reboot
+  - sudo halt
+
+LOW:
+  # ---------------------------------------------------------------------------
+  # Directory navigation / listing (no side effects)
+  # ---------------------------------------------------------------------------
+  - ls
+  - ll
+  - dir
+  - cd
+  - pwd
+
+  # ---------------------------------------------------------------------------
+  # Text output (no side effects)
+  # ---------------------------------------------------------------------------
+  - echo
+  - printf
+
+  # ---------------------------------------------------------------------------
+  # Command / path lookup (read-only)
+  # ---------------------------------------------------------------------------
+  - which
+  - whereis
+
+  # ---------------------------------------------------------------------------
+  # System information (read-only)
+  # ---------------------------------------------------------------------------
+  - date
+  - uname
+  - uptime
+  - id
+  - whoami
+  - sw_vers
+  - system_profiler
+
+  # ---------------------------------------------------------------------------
+  # Environment (read-only)
+  # ---------------------------------------------------------------------------
+  - env
+  - printenv
+
+  # ---------------------------------------------------------------------------
+  # Boolean no-ops
+  # ---------------------------------------------------------------------------
+  - "true"
+  - "false"
+
+  # ---------------------------------------------------------------------------
+  # File reading and viewing
+  # ---------------------------------------------------------------------------
+  - cat
+  - tac
+  - more
+  - less
+  - head
+  - tail
+  - nl
+  - od
+  - hexdump
+  - xxd
+  - strings
+  - zcat
+  - bzcat
+  - xzcat
+
+  # ---------------------------------------------------------------------------
+  # File and filesystem information
+  # ---------------------------------------------------------------------------
+  - file
+  - stat
+  - wc
+  - du
+  - df
+  - lsof
+  - mdfind
+  - mdls
+
+  # ---------------------------------------------------------------------------
+  # Text search
+  # ---------------------------------------------------------------------------
+  - grep
+  - egrep
+  - fgrep
+  - rg
+
+  # ---------------------------------------------------------------------------
+  # File search
+  # ---------------------------------------------------------------------------
+  - find
+  - locate
+
+  # ---------------------------------------------------------------------------
+  # Text processing (stdout only, no in-place write capability)
+  # ---------------------------------------------------------------------------
+  - sort
+  - uniq
+  - cut
+  - tr
+  - rev
+  - paste
+  - join
+  - comm
+  - column
+  - fold
+  - fmt
+  - expand
+  - unexpand
+  - diff
+  - cmp
+
+  # ---------------------------------------------------------------------------
+  # Sequence / arithmetic
+  # ---------------------------------------------------------------------------
+  - seq
+  - expr
+  - bc
+
+  # ---------------------------------------------------------------------------
+  # Checksums and digests
+  # ---------------------------------------------------------------------------
+  - md5
+  - md5sum
+  - shasum
+  - sha1sum
+  - sha256sum
+  - sha512sum
+  - cksum
+
+  # ---------------------------------------------------------------------------
+  # Process and system information
+  # ---------------------------------------------------------------------------
+  - ps
+  - pgrep
+  - top
+  - htop
+  - vm_stat
+  - iostat
+  - nproc
+  - hostname
+
+  # ---------------------------------------------------------------------------
+  # Path and command utilities
+  # ---------------------------------------------------------------------------
+  - basename
+  - dirname
+  - realpath
+  - readlink
+  - type
+
+  # ---------------------------------------------------------------------------
+  # Documentation
+  # ---------------------------------------------------------------------------
+  - man
+  - info
+
+  # ---------------------------------------------------------------------------
+  # Network information (read-only)
+  # ---------------------------------------------------------------------------
+  - ping
+  - nslookup
+  - dig
+  - host
+  - netstat
+
+  # ---------------------------------------------------------------------------
+  # Git read-only subcommands
+  # ---------------------------------------------------------------------------
+  - git log
+  - git status
+  - git diff
+  - git show
+  - git blame
+  - git grep
+  - git ls-files
+  - git shortlog
+  - git describe
+  - git reflog
+
+  # ---------------------------------------------------------------------------
+  # launchctl read-only subcommands
+  # ---------------------------------------------------------------------------
+  - launchctl list
+  - launchctl print
+  - launchctl print-disabled
+
+  # ---------------------------------------------------------------------------
+  # Package information (read-only subcommands)
+  # ---------------------------------------------------------------------------
+  - pip list
+  - pip show
+  - pip check
+  - brew list
+  - brew info
+  - brew outdated
+  - npm list
+  - npm ls

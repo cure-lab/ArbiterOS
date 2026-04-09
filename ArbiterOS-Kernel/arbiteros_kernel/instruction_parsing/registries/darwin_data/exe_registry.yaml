@@ -1,0 +1,511 @@
+# Instruction-type classification for executables and shell commands on macOS (Darwin).
+#
+# Keys   : EXEC | WRITE | READ
+# Values : list of command patterns — either a bare executable basename
+#          (e.g. "cat") or an "executable subcommand" two-token prefix
+#          (e.g. "git log").  Matching is done on basename(tokens[0]), then
+#          on "basename(tokens[0]) tokens[1]" when a non-flag second token
+#          exists.
+#
+# Priority: EXEC > WRITE > READ.
+#   The resolver checks EXEC first; the first match wins.
+#   If nothing matches, the default is EXEC.
+
+EXEC:
+  # ---------------------------------------------------------------------------
+  # Shell / script interpreters  (run arbitrary code)
+  # ---------------------------------------------------------------------------
+  - bash
+  - sh
+  - zsh
+  - fish
+  - dash
+  - ksh
+  - csh
+  - tcsh
+  - ash
+  - xargs
+  - parallel
+  - env # when used as "env CMD …" to launch a command
+
+  # ---------------------------------------------------------------------------
+  # macOS scripting / automation (high-risk code execution)
+  # ---------------------------------------------------------------------------
+  - osascript  # AppleScript / JXA: equivalent to bash -c for macOS
+  - open       # can open URLs, apps, or execute scripts
+
+  # ---------------------------------------------------------------------------
+  # Language runtimes
+  # ---------------------------------------------------------------------------
+  - python
+  - python2
+  - python3
+  - python3.10
+  - python3.11
+  - python3.12
+  - python3.13
+  - node
+  - nodejs
+  - deno
+  - bun
+  - ruby
+  - lua
+  - php
+  - java
+  - javac
+  - kotlin
+  - kotlinc
+  - scala
+  - groovy
+  - julia
+  - R
+  - Rscript
+  - octave
+
+  # ---------------------------------------------------------------------------
+  # Build systems / task runners
+  # ---------------------------------------------------------------------------
+  - make
+  - cmake
+  - ninja
+  - gradle
+  - gradlew
+  - mvn
+  - mvnw
+  - ant
+  - sbt
+  - lein
+  - mix
+  - rake
+  - cabal
+  - stack
+  - cargo
+  - go
+  - meson
+  - bazel
+  - buck
+  - tox
+  - nox
+  - invoke
+  - just
+  - task
+
+  # ---------------------------------------------------------------------------
+  # Process management with side effects
+  # ---------------------------------------------------------------------------
+  - kill
+  - pkill
+  - killall
+  - timeout
+  - nice
+  - renice
+  - nohup
+  - disown
+  - flock
+
+  # ---------------------------------------------------------------------------
+  # System / service management
+  # ---------------------------------------------------------------------------
+  - launchctl      # macOS service manager (launchd)
+  - shutdown
+  - reboot
+  - halt
+  - softwareupdate # macOS OS / App updates
+  - networksetup   # macOS network configuration
+  - systemsetup    # macOS system preferences CLI
+  - tmutil         # Time Machine (backup control)
+
+  # ---------------------------------------------------------------------------
+  # Privilege escalation
+  # ---------------------------------------------------------------------------
+  - sudo
+  - su
+  - doas
+
+  # ---------------------------------------------------------------------------
+  # Remote execution / file transfer
+  # ---------------------------------------------------------------------------
+  - ssh
+  - scp
+  - sftp
+  - rsh
+  - rcp
+  - rlogin
+  - telnet
+  - ftp
+  - lftp
+  - mosh
+  - screen
+  - tmux
+
+  # ---------------------------------------------------------------------------
+  # Network services with write-to-remote side effects
+  # ---------------------------------------------------------------------------
+  - curl
+  - wget
+  - nc
+  - netcat
+  - ncat
+  - socat
+  - openssl
+
+  # ---------------------------------------------------------------------------
+  # Disk / filesystem management (macOS-specific)
+  # ---------------------------------------------------------------------------
+  - diskutil    # erase / partition / repair volumes
+  - hdiutil     # create / attach / detach / convert disk images
+  - fdisk       # low-level partition editor (available via Homebrew)
+  - dd          # raw disk overwrite
+
+  # ---------------------------------------------------------------------------
+  # Keychain / credentials access
+  # ---------------------------------------------------------------------------
+  - security    # macOS Keychain CLI: can read/write/delete secrets
+
+  # ---------------------------------------------------------------------------
+  # Container / orchestration / VM
+  # ---------------------------------------------------------------------------
+  - docker
+  - podman
+  - kubectl
+  - helm
+  - kind
+  - minikube
+  - docker-compose
+  - vagrant
+  - vboxmanage
+  - qemu-system-x86_64
+  - qemu-system-aarch64
+
+  # ---------------------------------------------------------------------------
+  # Git — remote / destructive subcommands
+  # ---------------------------------------------------------------------------
+  - git push
+  - git pull
+  - git fetch
+  - git clone
+  - git submodule update
+  - git remote add
+  - git remote set-url
+  - git bisect start
+
+  # ---------------------------------------------------------------------------
+  # Destructive file operations
+  # ---------------------------------------------------------------------------
+  - rm
+  - shred
+  - wipe
+
+  # ---------------------------------------------------------------------------
+  # Communication / alerting
+  # ---------------------------------------------------------------------------
+  - sendmail
+  - mail
+  - mutt
+  - neomutt
+
+WRITE:
+  # ---------------------------------------------------------------------------
+  # File creation / copy / move / deletion
+  # ---------------------------------------------------------------------------
+  - cp
+  - mv
+  - rename
+  - touch
+  - mkdir
+  - mkfifo
+  - mknod
+  - rmdir
+  - ln
+  - tee
+  - install
+  - truncate
+  - split
+  - csplit
+  - mktemp
+  - ditto   # macOS copy tool (preserves resource forks / metadata)
+
+  # ---------------------------------------------------------------------------
+  # Permission / ownership / extended attributes
+  # ---------------------------------------------------------------------------
+  - chmod
+  - chown
+  - chgrp
+  - xattr   # macOS extended attribute editor (set/remove)
+  - umask
+
+  # ---------------------------------------------------------------------------
+  # Archive / compression (output to disk)
+  # ---------------------------------------------------------------------------
+  - tar
+  - gzip
+  - gunzip
+  - bzip2
+  - bunzip2
+  - xz
+  - unxz
+  - zstd
+  - zip
+  - unzip
+  - 7z
+  - ar
+
+  # ---------------------------------------------------------------------------
+  # Package management (modifies local system state)
+  # ---------------------------------------------------------------------------
+  - pip
+  - pip3
+  - pip3.10
+  - pip3.11
+  - pip3.12
+  - uv
+  - pipx
+  - conda
+  - mamba
+  - npm
+  - npx
+  - yarn
+  - pnpm
+  - gem
+  - bundle
+  - composer
+  - brew    # Homebrew package manager
+  - port    # MacPorts package manager
+  - nix
+
+  # ---------------------------------------------------------------------------
+  # System / App preferences (writes to plist / Keychain)
+  # ---------------------------------------------------------------------------
+  - defaults  # read/write macOS user/system preferences plist
+  - PlistBuddy
+
+  # ---------------------------------------------------------------------------
+  # In-place text editing
+  # ---------------------------------------------------------------------------
+  - sed
+  - awk
+  - perl
+  - ex
+  - ed
+  - patch
+
+  # ---------------------------------------------------------------------------
+  # Git — local write subcommands
+  # ---------------------------------------------------------------------------
+  - git add
+  - git commit
+  - git reset
+  - git restore
+  - git checkout
+  - git switch
+  - git merge
+  - git rebase
+  - git cherry-pick
+  - git stash
+  - git stash pop
+  - git stash drop
+  - git tag
+  - git tag -a
+  - git rm
+  - git mv
+  - git init
+  - git config
+  - git worktree add
+  - git worktree remove
+  - git clean
+
+  # ---------------------------------------------------------------------------
+  # Cron / scheduler (modifying schedules)
+  # ---------------------------------------------------------------------------
+  - crontab
+  - at
+
+READ:
+  # ---------------------------------------------------------------------------
+  # Directory navigation (no side effects)
+  # ---------------------------------------------------------------------------
+  - cd
+
+  # ---------------------------------------------------------------------------
+  # File content inspection
+  # ---------------------------------------------------------------------------
+  - cat
+  - tac
+  - less
+  - more
+  - most
+  - bat
+  - head
+  - tail
+  - strings
+  - xxd
+  - hexdump
+  - od
+
+  # ---------------------------------------------------------------------------
+  # Directory / filesystem metadata
+  # ---------------------------------------------------------------------------
+  - ls
+  - ll
+  - la
+  - dir
+  - pwd
+  - realpath
+  - readlink
+  - find
+  - locate
+  - mlocate
+  - which
+  - type
+  - command
+  - file
+  - stat
+  - du
+  - df
+  - lsof
+
+  # ---------------------------------------------------------------------------
+  # macOS-specific filesystem / system info (read-only)
+  # ---------------------------------------------------------------------------
+  - mdfind          # Spotlight metadata search
+  - mdls            # Spotlight metadata for a file
+  - system_profiler # hardware/software info report
+  - sw_vers         # macOS version
+  - ioreg           # I/O Registry (hardware tree)
+  - diskutil list   # list disks (read-only subcommand)
+  - diskutil info   # disk info (read-only subcommand)
+  - spctl --status  # Gatekeeper status
+  - sips            # image metadata / read
+
+  # ---------------------------------------------------------------------------
+  # Text processing (non-in-place)
+  # ---------------------------------------------------------------------------
+  - grep
+  - egrep
+  - fgrep
+  - rg
+  - ag
+  - ack
+  - wc
+  - sort
+  - uniq
+  - cut
+  - paste
+  - join
+  - tr
+  - col
+  - column
+  - fold
+  - fmt
+  - expand
+  - unexpand
+  - diff
+  - diff3
+  - comm
+  - md5
+  - md5sum
+  - shasum
+  - sha1sum
+  - sha256sum
+  - sha512sum
+  - cksum
+  - cmp
+
+  # ---------------------------------------------------------------------------
+  # Output / formatting
+  # ---------------------------------------------------------------------------
+  - echo
+  - printf
+  - tput
+
+  # ---------------------------------------------------------------------------
+  # Environment / system info
+  # ---------------------------------------------------------------------------
+  - printenv
+  - uname
+  - hostname
+  - date
+  - cal
+  - uptime
+  - id
+  - whoami
+  - logname
+  - groups
+  - w
+  - who
+  - users
+  - last
+  - history
+  - fc
+  - times
+  - scutil   # macOS system configuration read (DNS, hostname, etc.)
+
+  # ---------------------------------------------------------------------------
+  # Process / system info (read-only)
+  # ---------------------------------------------------------------------------
+  - ps
+  - pstree
+  - pidof
+  - pgrep
+  - lsof
+  - fuser
+  - vm_stat   # macOS virtual memory stats
+  - iostat
+  - top
+  - htop
+  - atop
+  - nmon
+  - glances
+
+  # ---------------------------------------------------------------------------
+  # Network diagnostics (read-only / passive)
+  # ---------------------------------------------------------------------------
+  - netstat
+  - ifconfig
+  - ping
+  - ping6
+  - traceroute
+  - tracepath
+  - mtr
+  - nslookup
+  - dig
+  - host
+  - whois
+  - nmap
+  - tcpdump
+
+  # ---------------------------------------------------------------------------
+  # Documentation
+  # ---------------------------------------------------------------------------
+  - man
+  - info
+  - help
+
+  # ---------------------------------------------------------------------------
+  # Git — read-only subcommands
+  # ---------------------------------------------------------------------------
+  - git log
+  - git status
+  - git diff
+  - git show
+  - git branch
+  - git describe
+  - git ls-files
+  - git ls-tree
+  - git ls-remote
+  - git rev-parse
+  - git rev-list
+  - git cat-file
+  - git shortlog
+  - git stash list
+  - git remote -v
+  - git remote show
+  - git blame
+  - git grep
+
+  # ---------------------------------------------------------------------------
+  # launchctl — read-only subcommands
+  # ---------------------------------------------------------------------------
+  - launchctl list
+  - launchctl print
+  - launchctl print-disabled

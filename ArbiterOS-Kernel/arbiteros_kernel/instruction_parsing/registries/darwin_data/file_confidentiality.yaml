@@ -1,0 +1,179 @@
+# File-path confidentiality classification for macOS (Darwin).
+#
+# Keys   : HIGH | LOW
+# Values : glob patterns matched against path tokens (fnmatch / PurePosixPath).
+#          Forward slashes used throughout; backslashes are normalised before
+#          matching.
+#
+# Matching priority: HIGH > LOW.  Default: UNKNOWN.
+
+HIGH:
+  # ── Authentication & identity ───────────────────────────────────────────────
+  - /etc/sudoers
+  - /etc/sudoers.d/*
+  - /etc/pam.d/*
+  - /etc/ssh/*
+  - /etc/ssl/private/*
+  - /private/etc/sudoers        # real path (macOS /etc → /private/etc)
+  - /private/etc/sudoers.d/*
+  - /private/etc/pam.d/*
+  - /private/etc/ssh/*
+
+  # ── macOS Keychain (most sensitive macOS secret store) ──────────────────────
+  - ~/Library/Keychains/**
+  - /Library/Keychains/**
+  - /System/Library/Keychains/**
+
+  # ── macOS credentials & tokens stored by system / apps ─────────────────────
+  - ~/Library/Credentials/**
+  - ~/Library/Application Support/MobileSync/**   # iPhone backups
+  - ~/Library/Application Support/1Password/**
+  - ~/Library/Application Support/Bitwarden/**
+  - ~/Library/Application Support/*.keychain
+  - ~/Library/Preferences/com.apple.security.*
+
+  # ── User private keys & credential stores ──────────────────────────────────
+  - ~/.ssh/*
+  - ~/.gnupg/*
+  - ~/.pgp/*
+  - ~/.netrc
+  - ~/.authinfo
+  - ~/.aws/credentials
+  - ~/.aws/config
+  - ~/.azure/*
+  - ~/.gcloud/*
+  - ~/.config/gcloud/*
+  - ~/.kube/config
+  - ~/.kube/**
+  - ~/.docker/config.json
+
+  # ── Private-key / certificate file extensions ───────────────────────────────
+  - "*.pem"
+  - "*.key"
+  - "*.p12"
+  - "*.pfx"
+  - "*.pkcs12"
+  - "*.jks"
+  - "*.keystore"
+  - "*.der"
+  - "*.keychain"
+  - "*.keychain-db"
+
+  # ── Secret environment / config files ───────────────────────────────────────
+  - .env
+  - .env.*
+  - "*.secret"
+  - "*.secrets"
+  - secrets.yaml
+  - secrets.yml
+  - secrets.json
+  - secret.yaml
+  - secret.json
+  - vault.yaml
+  - vault.json
+
+  # ── Password / credential / token files (name-based wildcards) ──────────────
+  - "*password*"
+  - "*credentials*"
+  - "*apikey*"
+  - "*api_key*"
+  - "*secret_key*"
+  - "*private_key*"
+
+  # ── System authentication logs ───────────────────────────────────────────────
+  - /var/log/system.log
+  - /private/var/log/system.log
+  - /var/log/auth.log
+  - /private/var/log/auth.log
+
+  # ── OpenClaw credentials & session transcripts ──────────────────────────────
+  - ".openclaw/openclaw.json"
+  - ".openclaw/credentials/**"
+  - ".openclaw/agents/*/sessions/**"
+
+  # ── ArbiterOS kernel config ─────────────────────────────────────────────────
+  - ~/.arbiteros/*
+
+  # ── System-wide configuration ─────────────────────────────────────────────
+  - /etc/*
+  - /etc/**
+  - /private/etc/*
+  - /private/etc/**
+
+  # ── System logs ──────────────────────────────────────────────────────────
+  - /var/log/*
+  - /var/log/**
+  - /private/var/log/*
+  - /private/var/log/**
+
+  # ── macOS user Library (contains app credentials, tokens, configs) ───────
+  - ~/Library/Application Support/**
+  - ~/Library/Preferences/**
+  - ~/Library/Cookies/**
+  - ~/Library/Safari/**
+  - ~/Library/Mail/**
+
+  # ── User config & dotfiles ────────────────────────────────────────────────
+  - ~/.config/*
+  - ~/.config/**
+  - ~/.local/*
+  - ~/.local/**
+  - ~/.bashrc
+  - ~/.bash_profile
+  - ~/.zshrc
+  - ~/.zshenv
+  - ~/.profile
+
+  # ── OpenClaw workspace — agent memory & identity files ──────────────────
+  - ~/.openclaw/workspace/SOUL.md
+  - ~/.openclaw/workspace/MEMORY.md
+  - ~/.openclaw/workspace/AGENTS.md
+  - ~/.openclaw/workspace/USER.md
+  - ~/.openclaw/workspace/IDENTITY.md
+  - ~/.openclaw/workspace/HEARTBEAT.md
+  - ~/.openclaw/workspace/BOOT.md
+  - ~/.openclaw/workspace/memory/**
+  - ~/.openclaw/workspace-*/SOUL.md
+  - ~/.openclaw/workspace-*/MEMORY.md
+  - ~/.openclaw/workspace-*/AGENTS.md
+  - ~/.openclaw/workspace-*/USER.md
+  - ~/.openclaw/workspace-*/IDENTITY.md
+  - ~/.openclaw/workspace-*/HEARTBEAT.md
+  - ~/.openclaw/workspace-*/BOOT.md
+  - ~/.openclaw/workspace-*/memory/**
+
+  # ── OpenClaw managed skills ───────────────────────────────────────────────
+  - ~/.openclaw/skills/**
+
+LOW:
+  # ── Temporary / shared directories ──────────────────────────────────────
+  - /tmp/*
+  - /tmp/**
+  - /var/tmp/*
+  - /private/tmp/*
+  - /private/tmp/**
+  - /private/var/tmp/*
+
+  # ── System binaries / libraries (public, read-only) ─────────────────────
+  - /usr/bin/*
+  - /usr/lib/*
+  - /usr/lib/**
+  - /usr/share/*
+  - /usr/share/**
+  - /usr/local/*
+  - /usr/local/**
+  - /bin/*
+  - /sbin/*
+
+  # ── macOS system frameworks (public) ─────────────────────────────────────
+  - /System/Library/**
+  - /Library/Frameworks/**
+  - /Library/Extensions/**
+
+  # ── Installed applications ────────────────────────────────────────────────
+  - /Applications/**
+  - /opt/homebrew/**           # Apple Silicon Homebrew
+
+  # ── TLS certificates (public part only) ──────────────────────────────────
+  - "*.crt"
+  - "*.cer"
