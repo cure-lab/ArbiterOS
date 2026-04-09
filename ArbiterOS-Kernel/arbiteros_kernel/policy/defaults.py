@@ -19,6 +19,7 @@ from .delete_policy import DeletePolicy
 from .unary_gate_policy import UnaryGatePolicy
 from .relational_policy import RelationalPolicy
 from .openclaw_policy import OpenClawPolicy
+from .nanobot_policy import NanobotPolicy
 if TYPE_CHECKING:
     from .policy import Policy
 
@@ -53,6 +54,7 @@ POLICY_CLASS_MAP: dict[str, type["Policy"]] = {
     "UnaryGatePolicy": UnaryGatePolicy,
     "RelationalPolicy": RelationalPolicy,
     "OpenClawPolicy": OpenClawPolicy,
+    "NanobotPolicy": NanobotPolicy,
 }
 
 
@@ -140,6 +142,11 @@ def _default_registry_data() -> list[dict[str, object]]:
             "description": (
                 "Ports OpenClaw P1/P3/P7/P9/P10 semantics over current ArbiterOS response/instruction structures."
             ),
+        },
+        {
+            "name": "NanobotPolicy",
+            "enabled": True,
+            "description": "Implements Nanobot response-layer guards: exec deny patterns, URL/SSRF checks, and repeated external lookup blocking."
         },
     ]
 

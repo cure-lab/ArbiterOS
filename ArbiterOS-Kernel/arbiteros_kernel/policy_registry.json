@@ -46,16 +46,16 @@
     "description": "Blocks delete-like operations and leaves further continuation to kernel approval flow."
   },
   {
-      "name": "RelationalPolicy",
-      "enabled": false,
-      "description": 
+    "name": "RelationalPolicy",
+    "enabled": false,
+    "description": 
           "Applies relational taint / propagated-security checks using kernel-lowered metadata."
       
   },
   {
-      "name": "UnaryGatePolicy",
-      "enabled":false,
-      "description": 
+    "name": "UnaryGatePolicy",
+    "enabled":false,
+    "description": 
           "Applies declarative unary rules over instruction metadata and reports the matched rule."
       
   },
@@ -63,5 +63,10 @@
     "name": "OpenClawPolicy",
     "enabled": true,
     "description": "Ports OpenClaw P1/P3/P7/P9/P10 semantics over current ArbiterOS response/instruction structures."
-}
+  },
+  {
+    "name": "NanobotPolicy",
+    "enabled": true,
+    "description": "Implements Nanobot response-layer guards: exec deny patterns, URL/SSRF checks, and repeated external lookup blocking."        
+  }
 ]
