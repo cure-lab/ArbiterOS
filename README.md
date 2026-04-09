@@ -23,6 +23,9 @@ It will:
 - [x] Evaluate on Wild Claw Bench
 - [x] Evaluate on ToolEmu
 - [x] Use skill-scanner for skill safety analysis
+- [x] Support Linux system
+- [ ] Support Windows system
+- [ ] Sypport MacOS
 - [ ] Protect the long-term memory files in the agent
 - [ ] Periodically analyze the consistency of agent role positioning, intent, and behavior
 - [ ] Prompt injection detection by using the clustered information in the dataflow
