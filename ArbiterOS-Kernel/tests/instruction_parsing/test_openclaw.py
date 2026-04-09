@@ -363,16 +363,17 @@ class TestClassifyExeRisk:
     @pytest.mark.parametrize(
         "exe",
         ["ls", "ll", "dir", "cd", "pwd", "echo", "printf", "which", "whereis",
-         "date", "uname", "uptime", "id", "whoami", "env", "printenv", "true", "false"],
+         "date", "uname", "uptime", "id", "whoami", "printenv", "true", "false"],
     )
     def test_low_risk_commands(self, exe):
         assert _classify_exe_risk(exe, None) == "LOW"
 
     # Safe commands that are not explicitly listed default to UNKNOWN;
     # cat/grep/git-log are explicitly LOW in the registry and excluded here.
+    # env is UNKNOWN because it can launch arbitrary commands (env CMD ...)
     @pytest.mark.parametrize(
         "exe",
-        ["python", "bash", "cp", "mv", "chmod"],
+        ["python", "bash", "cp", "mv", "chmod", "env"],
     )
     def test_safe_commands_return_unknown(self, exe):
         assert _classify_exe_risk(exe, None) == "UNKNOWN"

@@ -110,7 +110,6 @@ EXEC:
   - rc-service
   - sv
   - supervisorctl
-  - journalctl # primarily read but commonly follow/stream
   - launchctl
   - initctl
   - shutdown
@@ -222,6 +221,151 @@ EXEC:
   - write # write to another user's terminal
   - mesg
 
+  # ---------------------------------------------------------------------------
+  # Package management — install / update / run operations
+  # (downloads from network and/or executes scripts → behavioral side effects
+  #  beyond mere storage; per the design spec EXEC applies here)
+  # ---------------------------------------------------------------------------
+  # Python
+  - pip install
+  - pip uninstall
+  - pip download
+  - pip3 install
+  - pip3 uninstall
+  - pip3 download
+  - pip3.10            # versioned pip — all operations default to EXEC
+  - pip3.11
+  - pip3.12
+  - uv run
+  - uv add
+  - uv remove
+  - uv sync
+  - uv pip             # "uv pip install / sync / uninstall" (two-token limit)
+  - uv tool            # "uv tool install / run" (two-token limit)
+  - pipx install
+  - pipx uninstall
+  - pipx upgrade
+  - pipx run
+  - pipx inject
+  # conda / mamba
+  - conda install
+  - conda update
+  - conda upgrade
+  - conda remove
+  - conda create
+  - conda env
+  - mamba install
+  - mamba update
+  - mamba remove
+  - mamba create
+  # Node — npm (npx always runs code → kept in EXEC above)
+  - npm install
+  - npm ci
+  - npm update
+  - npm uninstall
+  - npm run
+  - npm exec
+  - npm start
+  - npm test
+  - npm publish
+  - npm rebuild
+  # Node — yarn / pnpm
+  - yarn install
+  - yarn add
+  - yarn remove
+  - yarn upgrade
+  - yarn run
+  - yarn exec
+  - pnpm install
+  - pnpm add
+  - pnpm remove
+  - pnpm update
+  - pnpm run
+  - pnpm exec
+  - pnpm dlx
+  # Ruby / PHP
+  - gem install
+  - gem uninstall
+  - gem update
+  - bundle install
+  - bundle exec
+  - bundle update
+  - composer install
+  - composer require
+  - composer update
+  - composer remove
+  - composer create-project
+  # System — Debian / Ubuntu
+  - apt install
+  - apt remove
+  - apt purge
+  - apt upgrade
+  - apt full-upgrade
+  - apt dist-upgrade
+  - apt update
+  - apt autoremove
+  - apt-get install
+  - apt-get remove
+  - apt-get purge
+  - apt-get upgrade
+  - apt-get dist-upgrade
+  - apt-get update
+  - apt-get autoremove
+  - dpkg              # flag-based (-i/-r/-P); cannot split by subcommand
+  - dpkg-reconfigure  # always executes configuration scripts
+  # System — RPM (Red Hat / Fedora / CentOS)
+  - yum install
+  - yum remove
+  - yum update
+  - yum upgrade
+  - yum downgrade
+  - dnf install
+  - dnf remove
+  - dnf update
+  - dnf upgrade
+  - dnf downgrade
+  # System — Arch Linux (flag-based: -S/-R/-U; cannot split by subcommand)
+  - pacman
+  - yay
+  - paru
+  # System — SUSE
+  - zypper install
+  - zypper remove
+  - zypper update
+  - zypper upgrade
+  - zypper patch
+  # System — Alpine
+  - apk add
+  - apk del
+  - apk upgrade
+  - apk update
+  - apk fix
+  # macOS / cross-platform
+  - brew install
+  - brew uninstall
+  - brew reinstall
+  - brew upgrade
+  - brew update
+  - brew tap
+  - brew untap
+  - brew bundle
+  - port install
+  - port uninstall
+  - port upgrade
+  - port selfupdate
+  # Snap / Flatpak
+  - snap install
+  - snap remove
+  - snap refresh
+  - snap run
+  - snap connect
+  - flatpak install
+  - flatpak uninstall
+  - flatpak update
+  - flatpak run
+  # Nix (complex ecosystem — all operations default to EXEC)
+  - nix
+
 WRITE:
   # ---------------------------------------------------------------------------
   # File creation / copy / move / deletion
@@ -273,41 +417,9 @@ WRITE:
   - pax
 
   # ---------------------------------------------------------------------------
-  # Package management (modifies local system state)
+  # System log management (modifies journal/log storage; no external side effects)
   # ---------------------------------------------------------------------------
-  - pip
-  - pip3
-  - pip3.10
-  - pip3.11
-  - pip3.12
-  - uv
-  - pipx
-  - conda
-  - mamba
-  - npm
-  - npx
-  - yarn
-  - pnpm
-  - gem
-  - bundle
-  - composer
-  - apt
-  - apt-get
-  - apt-cache
-  - dpkg
-  - dpkg-reconfigure
-  - yum
-  - dnf
-  - pacman
-  - yay
-  - paru
-  - zypper
-  - apk
-  - brew
-  - port
-  - snap
-  - flatpak
-  - nix
+  - journalctl  # --vacuum-size / --rotate modify journal storage
 
   # ---------------------------------------------------------------------------
   # In-place text editing
@@ -540,3 +652,88 @@ READ:
   - git remote show
   - git blame
   - git grep
+
+  # ---------------------------------------------------------------------------
+  # Package information (read-only subcommands)
+  # ---------------------------------------------------------------------------
+  # Python
+  - pip list
+  - pip show
+  - pip check
+  - pip freeze
+  - pip3 list
+  - pip3 show
+  - pip3 check
+  - pip3 freeze
+  - uv tree
+  - pipx list
+  - conda list
+  - conda info
+  - conda search
+  - mamba list
+  - mamba info
+  - mamba search
+  # Node
+  - npm list
+  - npm ls
+  - npm info
+  - npm view
+  - npm outdated
+  - npm audit
+  - yarn list
+  - yarn info
+  - yarn outdated
+  - pnpm list
+  - pnpm ls
+  - pnpm info
+  - pnpm outdated
+  # Ruby / PHP
+  - gem list
+  - gem info
+  - gem search
+  - bundle list
+  - bundle show
+  - bundle info
+  - bundle check
+  - composer show
+  - composer validate
+  # System — Debian / Ubuntu (read-only)
+  - apt list
+  - apt show
+  - apt search
+  - apt-cache           # bare apt-cache is always read-only
+  - apt-cache show
+  - apt-cache search
+  - apt-cache policy
+  - apt-cache depends
+  # System — RPM
+  - yum list
+  - yum info
+  - yum search
+  - yum check-update
+  - dnf list
+  - dnf info
+  - dnf search
+  - dnf check-update
+  # System — SUSE / Alpine
+  - zypper search
+  - zypper info
+  - zypper list-updates
+  - apk info
+  - apk list
+  - apk search
+  # macOS / cross-platform
+  - brew list
+  - brew info
+  - brew outdated
+  - brew search
+  - brew deps
+  - port list
+  - port info
+  - port search
+  # Snap / Flatpak
+  - snap list
+  - snap info
+  - flatpak list
+  - flatpak info
+  - flatpak search
