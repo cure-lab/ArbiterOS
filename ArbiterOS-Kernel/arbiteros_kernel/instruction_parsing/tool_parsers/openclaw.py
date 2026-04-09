@@ -15,12 +15,9 @@ import logging
 import os
 from typing import Any, Dict, Optional
 
-from ..helpers.shell import (
-    _ITYPE_PRIORITY,
-    classify_segment,
-    classify_segment_risk,
-    collect_exec_path_tokens,
-    split_pipeline,
+from ..shell_parsers.bash import (
+    CommandAnalysis,
+    analyze_command,
 )
 from ..types import (
     TaintStatus,
@@ -204,125 +201,14 @@ def _parse_exec(
     """
     Classify a shell command string and attach a security_type to it.
 
-    ## What this does
 
-    The classification pipeline has three stages:
 
-    1. **Pipeline splitting** — `split_pipeline()` tokenises the command string
-       into segments separated by shell operators (``|``, ``&&``, ``;``, ``&``,
-       newline).  This step is quote-aware so that ``sed 's|a|b|'`` is not
-       split at the ``|`` inside the substitution.
-
-    2. **Per-segment classification** — each segment is independently
-       classified for:
-       - *instruction type* (READ / WRITE / EXEC) via the exe registry
-       - *risk* (HIGH / UNKNOWN / LOW) via the exe-risk registry
-       - *path tokens* — path-like arguments and redirect targets extracted
-         from the segment's AST
-
-    3. **Folding** — results across all segments are combined conservatively:
-       - instruction type: highest priority wins (EXEC > WRITE > READ)
-       - risk: highest level wins (HIGH > UNKNOWN > LOW)
-       - confidentiality / trustworthiness: registry lookup over all path
-         tokens; highest confidentiality wins, lowest trustworthiness wins
-
-    Write targets (redirect destinations, ``tee`` arguments) are registered
-    in the user file-taint registry so that future reads of those files
-    inherit the correct security classification.
-
-    The full per-segment breakdown is stored in
-    ``security_type.custom["exec_parse"]`` for upper-layer policy inspection.
-
-    ## Current limitations and known weaknesses
-
-    This parser operates entirely on the **static text** of the command string
-    before execution.  This design has several fundamental limitations:
-
-    ### 1. AST-level shell parsing is incomplete
-
-    The bash grammar is not fully implemented here.  Edge cases that can fool
-    the parser include:
-
-    - *Variable expansion*: ``cmd $SENSITIVE_PATH`` — the path token is
-      ``$SENSITIVE_PATH``, which is not classifiable until the shell expands
-      it at runtime.  The parser will miss the real path entirely.
-    - *Command substitution*: ``cat $(find /etc -name '*.key')`` — the
-      subshell result is opaque at parse time.
-    - *Here-documents and here-strings*: ``bash <<'EOF' ... EOF`` — the
-      embedded script is not recursively parsed.
-    - *Aliases and shell functions*: a seemingly harmless alias
-      ``ll='rm -rf'`` makes ``ll /important`` appear safe.
-    - *Dynamic path construction*: ``path=/etc; cat ${path}/shadow`` — the
-      concatenated path is invisible to the static tokeniser.
-    - *Obfuscated pipelines*: ``base64 -d <<< 'cm0gLXJm...' | bash`` encodes
-      a dangerous command that the risk classifier cannot see.
-
-    ### 2. Path-token heuristics are imprecise
-
-    Whether an argument is a "path" is decided by ``is_path_like()``, which
-    checks for leading ``/``, ``~``, ``./``, ``../``, or URL schemes.  A
-    bare relative filename (``shadow``, ``config``) is not treated as a path
-    even if it resolves to a sensitive file in the current working directory.
-    Similarly, there is no way to know which arguments to an unknown binary
-    are input paths vs. output paths vs. flags.
-
-    ### 3. All metadata fields are registry-bound
-
-    Every security field on the resulting instruction is derived from a
-    statically curated YAML registry — not from runtime observation:
-
-    - ``instruction_type`` / ``reversible`` — ``exe_registry.yaml``
-      (READ / WRITE / EXEC per executable and subcommand)
-    - ``risk``            — ``exe_risk.yaml``
-      (HIGH / UNKNOWN / LOW per executable and subcommand)
-    - ``confidentiality`` — ``file_confidentiality.yaml``
-      (path-pattern → HIGH / UNKNOWN / LOW)
-    - ``trustworthiness`` — ``file_trustworthiness.yaml``
-      (path-pattern → HIGH / UNKNOWN / LOW)
-
-    All four registries are manually curated and will inevitably lag behind
-    new tools, custom executables, and unusual filesystem layouts.  An
-    unknown executable defaults to EXEC / UNKNOWN rather than being blocked,
-    and an unrecognised path defaults to UNKNOWN rather than being treated
-    as sensitive.
-
-    ### 4. No runtime enforcement
-
-    All classifications are advisory metadata attached to the instruction
-    before it is dispatched.  The kernel never observes what the command
-    actually does after execution starts.  A command classified as READ /
-    LOW-risk could still perform destructive I/O that the static analyser
-    failed to predict.
-
-    ## Future direction: syscall-level interception
-
-    The only reliable way to enforce the security classifications computed
-    here is to intercept the kernel system calls made by the process at
-    runtime.  Possible approaches, in increasing order of depth:
-
-    - **eBPF / seccomp-bpf**: attach a BPF program to ``openat``, ``unlinkat``,
-      ``execve``, etc. and enforce allow/deny policies based on the
-      pre-computed security_type.  This gives per-syscall visibility without
-      modifying the process.
-    - **ptrace sandbox**: trace every syscall with ``ptrace(PTRACE_SYSCALL)``
-      and compare opened paths against the confidentiality / trustworthiness
-      registries in real time.  More flexible but higher overhead.
-    - **Linux namespaces + overlay FS**: run the command in a mount namespace
-      with an overlay that makes sensitive paths read-only or invisible,
-      enforcing access control structurally rather than via classification.
-    - **Landlock LSM** (kernel ≥ 5.13): grant only the minimal set of
-      filesystem access rights required for the expected instruction type, and
-      deny everything else without needing a kernel module or root.
-
-    Until syscall-level interception is in place, the classifications produced
-    here should be treated as **best-effort heuristics**, not security
-    guarantees.  Policy decisions (blocking, human-approval gates) based on
-    these fields remain valuable as defence-in-depth but cannot be considered
-    tamper-proof.
     """
     command = str(args.get("command", ""))
 
-    if not command.strip():
+    analysis: CommandAnalysis = analyze_command(command)
+
+    if not analysis.segments:
         logger.warning(
             "Empty command string in exec; defaulting to EXEC with UNKNOWN security"
         )
@@ -350,43 +236,12 @@ def _parse_exec(
             ),
         )
 
-    if "\n" in command:
-        logger.warning(
-            "_parse_exec: multi-line command string received; newlines are treated "
-            "as command separators: %r",
-            command,
-        )
-
-    # Split on shell operators at string level first (quote-aware)
-    seg_strings, operators = split_pipeline(command)
-    if not seg_strings:
-        seg_strings = [command]
-
-    # Instruction type = maximum priority across all segments
-    itypes = [classify_segment(s) for s in seg_strings]
-    itype = max(itypes, key=lambda t: _ITYPE_PRIORITY.get(t, 0))
-
-    # Risk folding: HIGH > UNKNOWN > LOW
-    # HIGH  — any segment is definitively dangerous
-    # UNKNOWN — any segment is unanalysed (beats LOW for conservative policy)
-    # LOW   — only when every segment is explicitly confirmed safe
-    risks = [classify_segment_risk(s) for s in seg_strings]
-    risk: str = "HIGH" if "HIGH" in risks else "UNKNOWN" if "UNKNOWN" in risks else "LOW"
-    logger.debug(
-        "_parse_exec: segment_risks=%r → risk=%s",
-        risks, risk,
-    )
-
-    # Collect file-path tokens and write targets from all pipeline segments.
-    # operators is passed so shell.py can resolve relative paths under cd context.
-    path_tokens, write_targets = collect_exec_path_tokens(seg_strings, itypes, operators)
-
-    if path_tokens:
-        confidentiality = classify_confidentiality(path_tokens)
-        trustworthiness = classify_trustworthiness(path_tokens)
+    if analysis.path_tokens:
+        confidentiality = classify_confidentiality(analysis.path_tokens)
+        trustworthiness = classify_trustworthiness(analysis.path_tokens)
         logger.debug(
             "_parse_exec: path_tokens=%r → confidentiality=%s trustworthiness=%s",
-            path_tokens, confidentiality, trustworthiness,
+            analysis.path_tokens, confidentiality, trustworthiness,
         )
     else:
         confidentiality = "LOW"
@@ -394,31 +249,29 @@ def _parse_exec(
         logger.debug(
             "_parse_exec: no path tokens → confidentiality=%s trustworthiness=%s"
             " (itype=%s fallback)",
-            confidentiality, trustworthiness, itype,
+            confidentiality, trustworthiness, analysis.itype,
         )
 
-    for write_target in write_targets:
+    for write_target in analysis.write_targets:
         register_file_taint(write_target, trustworthiness, confidentiality)
 
-    reversible = itype != "EXEC"
-
     return ToolParseResult(
-        itype,
+        analysis.itype,
         make_security_type(
             confidentiality=confidentiality,
             trustworthiness=trustworthiness,
             confidence="UNKNOWN",
-            reversible=reversible,
+            reversible=analysis.itype != "EXEC",
             authority="UNKNOWN",
-            risk=risk,
+            risk=analysis.risk,
             custom={
                 "exec_parse": {
                     "command": command,
-                    "segments": seg_strings,
-                    "operators": operators,
-                    "segment_instruction_types": itypes,
-                    "path_tokens": path_tokens,
-                    "write_targets": write_targets,
+                    "segments": analysis.segments,
+                    "operators": analysis.operators,
+                    "segment_instruction_types": analysis.itypes,
+                    "path_tokens": analysis.path_tokens,
+                    "write_targets": analysis.write_targets,
                     "parser_kind": "coarse_shell_split",
                 }
             },
