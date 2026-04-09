@@ -1,0 +1,147 @@
+# Execution risk classification for PowerShell cmdlets and aliases.
+#
+# Keys   : HIGH | LOW
+# Values : list of cmdlet/alias patterns (all lowercase).
+#
+# HIGH — commands whose execution poses a HIGH risk of data loss,
+#        irreversible system damage, or destructive side effects.
+# LOW  — commands that are read-only or have no lasting side effects.
+# Unmatched commands default to UNKNOWN.
+
+HIGH:
+  # ---------------------------------------------------------------------------
+  # File deletion / erasure
+  # ---------------------------------------------------------------------------
+  - remove-item
+  - rm
+  - del
+  - rd
+  - ri
+  - erase
+  - rmdir
+  - clear-content
+
+  # ---------------------------------------------------------------------------
+  # Disk / volume operations
+  # ---------------------------------------------------------------------------
+  - format-volume
+  - initialize-disk
+  - new-partition
+  - remove-partition
+
+  # ---------------------------------------------------------------------------
+  # System shutdown / reboot
+  # ---------------------------------------------------------------------------
+  - stop-computer
+  - restart-computer
+
+  # ---------------------------------------------------------------------------
+  # Process termination
+  # ---------------------------------------------------------------------------
+  - stop-process
+  - kill
+  - spps
+
+  # ---------------------------------------------------------------------------
+  # Arbitrary code execution
+  # ---------------------------------------------------------------------------
+  - invoke-expression
+  - iex
+  - invoke-command
+  - icm
+  - invoke-scriptblock
+
+  # ---------------------------------------------------------------------------
+  # Dangerous git subcommands (destructive local state)
+  # ---------------------------------------------------------------------------
+  - git clean
+  - git reset
+
+LOW:
+  # ---------------------------------------------------------------------------
+  # Directory listing / navigation
+  # ---------------------------------------------------------------------------
+  - get-childitem
+  - ls
+  - dir
+  - gci
+  - get-location
+  - pwd
+  - gl
+
+  # ---------------------------------------------------------------------------
+  # File reading
+  # ---------------------------------------------------------------------------
+  - get-content
+  - gc
+  - cat
+  - type
+
+  # ---------------------------------------------------------------------------
+  # Text output (no side effects)
+  # ---------------------------------------------------------------------------
+  - write-output
+  - echo
+  - write
+  - write-host
+
+  # ---------------------------------------------------------------------------
+  # Path utilities
+  # ---------------------------------------------------------------------------
+  - test-path
+  - tp
+  - resolve-path
+  - split-path
+  - join-path
+
+  # ---------------------------------------------------------------------------
+  # System information (read-only)
+  # ---------------------------------------------------------------------------
+  - get-process
+  - ps
+  - gps
+  - get-date
+  - get-host
+  - get-uptime
+
+  # ---------------------------------------------------------------------------
+  # Object pipeline (no side effects)
+  # ---------------------------------------------------------------------------
+  - select-object
+  - select
+  - where-object
+  - where
+  - foreach-object
+  - foreach
+  - sort-object
+  - sort
+  - group-object
+  - measure-object
+  - compare-object
+  - format-list
+  - fl
+  - format-table
+  - ft
+
+  # ---------------------------------------------------------------------------
+  # Documentation
+  # ---------------------------------------------------------------------------
+  - get-help
+  - help
+  - man
+  - get-command
+  - gcm
+  - get-member
+  - gm
+
+  # ---------------------------------------------------------------------------
+  # Git read-only subcommands
+  # ---------------------------------------------------------------------------
+  - git log
+  - git status
+  - git diff
+  - git show
+  - git blame
+  - git ls-files
+  - git shortlog
+  - git describe

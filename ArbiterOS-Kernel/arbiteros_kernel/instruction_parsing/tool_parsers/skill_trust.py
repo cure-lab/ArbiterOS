@@ -19,6 +19,8 @@ import tempfile
 import threading
 from typing import Any, Dict, Optional, Set, Tuple, Union
 
+import platform as _platform
+
 import yaml
 
 from ..types import LEVEL_ORDER, SecurityLevel
@@ -29,14 +31,15 @@ logger = logging.getLogger(__name__)
 FORCE_LOW_TRUST_CATEGORIES: frozenset[str] = frozenset()
 
 
-# Same directory as linux user registries (~/.arbiteros/.../linux_registry).
+# Same directory as the OS-appropriate user registry.
+_IS_WINDOWS = _platform.system() == "Windows"
 _USER_REGISTRY_DIR = os.environ.get(
-    "ARBITEROS_USER_REGISTRY_DIR",
+    "ARBITEROS_USER_WINDOWS_REGISTRY_DIR" if _IS_WINDOWS else "ARBITEROS_USER_REGISTRY_DIR",
     os.path.join(
         os.path.expanduser("~"),
         ".arbiteros",
         "instruction_parsing",
-        "linux_registry",
+        "windows_registry" if _IS_WINDOWS else "linux_registry",
     ),
 )
 

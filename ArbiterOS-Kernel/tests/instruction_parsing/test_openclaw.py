@@ -3,22 +3,22 @@
 import pytest
 
 from arbiteros_kernel.instruction_parsing.tool_parsers import parse_tool_instruction
-from arbiteros_kernel.instruction_parsing.tool_parsers.linux_registry import (
+from arbiteros_kernel.instruction_parsing.registries._base import (
     _path_matches,
 )
-from arbiteros_kernel.instruction_parsing.tool_parsers.linux_registry import (
+from arbiteros_kernel.instruction_parsing.registries.linux import (
     classify_confidentiality as _classify_confidentiality,
 )
-from arbiteros_kernel.instruction_parsing.tool_parsers.linux_registry import (
+from arbiteros_kernel.instruction_parsing.registries.linux import (
     classify_exe as _classify_exe,
 )
-from arbiteros_kernel.instruction_parsing.tool_parsers.linux_registry import (
+from arbiteros_kernel.instruction_parsing.registries.linux import (
     classify_exe_risk as _classify_exe_risk,
 )
-from arbiteros_kernel.instruction_parsing.tool_parsers.linux_registry import (
+from arbiteros_kernel.instruction_parsing.registries.linux import (
     classify_trustworthiness as _classify_trustworthiness,
 )
-from arbiteros_kernel.instruction_parsing.tool_parsers.linux_registry import (
+from arbiteros_kernel.instruction_parsing.registries.linux import (
     get_user_registered_paths,
 )
 from arbiteros_kernel.instruction_parsing.shell_parsers.bash import (

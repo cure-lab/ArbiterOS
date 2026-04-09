@@ -13,13 +13,14 @@ Public API:
 import logging
 import os
 import shlex
-from dataclasses import dataclass
 from typing import Any, List, Optional, Tuple
+
+from ._base import CommandAnalysis  # noqa: F401 — re-exported for callers
 
 import tree_sitter
 import tree_sitter_bash
 
-from ..tool_parsers.linux_registry import classify_exe, classify_exe_risk
+from ..registries.linux import classify_exe, classify_exe_risk
 
 logger = logging.getLogger(__name__)
 
@@ -488,21 +489,6 @@ def _collect_exec_path_tokens(
 # ---------------------------------------------------------------------------
 # High-level analysis
 # ---------------------------------------------------------------------------
-
-
-@dataclass
-class CommandAnalysis:
-    """All derived analysis results for a single shell command string."""
-
-    command: str
-    segments: List[str]
-    operators: List[str]
-    itypes: List[str]           # per-segment instruction type
-    itype: str                  # folded: EXEC > WRITE > READ
-    risks: List[str]            # per-segment risk level
-    risk: str                   # folded: HIGH > UNKNOWN > LOW
-    path_tokens: List[str]
-    write_targets: List[str]
 
 
 def analyze_command(command: str) -> CommandAnalysis:
