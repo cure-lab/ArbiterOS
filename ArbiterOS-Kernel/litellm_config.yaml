@@ -58,3 +58,15 @@ skill_scanner_llm:
   model: openai/gpt-4o
   api_base: 
   api_key:
+
+
+# Run once per session: before the first pure-text assistant reply, scan these files.
+# If any file is judged BLOCK, append a notice at the end of that reply.
+# LLM transport/parse failures are treated as SAFE (fail-open).
+session_bootstrap_scan:
+  enabled: true
+  protected_paths:
+    - "PATH/TO/YOUR/SOUL.MD"
+    - "PATH/TO/YOUR/AGENTS.MD"
+    - "PATH/TO/YOUR/IDENTITY.MD"
+  max_content_chars_per_file: 12000
