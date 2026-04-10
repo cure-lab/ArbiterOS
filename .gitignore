@@ -1,3 +1,5 @@
 stack.env
 .DS_Store
 run-kernel.sh
+__pycache__/
+*.pyc
