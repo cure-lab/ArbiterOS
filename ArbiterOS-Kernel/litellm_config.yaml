@@ -70,3 +70,8 @@ session_bootstrap_scan:
     - "PATH/TO/YOUR/AGENTS.MD"
     - "PATH/TO/YOUR/IDENTITY.MD"
   max_content_chars_per_file: 12000
+  
+# Taint ablation: when true, policy evaluation sees prop_* equal to base
+# trustworthiness/confidentiality (no inheritance). Implemented in policy_check only.
+taint_ablation:
+  disable_inheritance: false
