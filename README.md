@@ -8,7 +8,7 @@
 
 [![platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows%20%7C%20macOS-blue)](https://github.com/cure-lab/ArbiterOS)
 [![python](https://img.shields.io/badge/python-%3E%3D3.12-3776AB)](https://www.python.org/)
-[![license](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
+[![license](https://img.shields.io/badge/license-Apache%202.0-green)](./LICENSE)
 [![status](https://img.shields.io/badge/status-active-success)](https://github.com/cure-lab/ArbiterOS)
 [![kernel](https://img.shields.io/badge/module-ArbiterOS--Kernel-orange)](./ArbiterOS-Kernel)
 [![ui](https://img.shields.io/badge/optional-langfuse-6e56cf)](./langfuse)
