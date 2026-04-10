@@ -14,6 +14,11 @@
 [![ui](https://img.shields.io/badge/optional-langfuse-6e56cf)](./langfuse)
 [![openclaw](https://img.shields.io/badge/integrates-OpenClaw-8a2be2)](https://github.com/cure-lab/ArbiterOS)
 
+[![Landing Page](https://img.shields.io/badge/Landing-arbiteros.ai-0ea5e9?logo=googlechrome&logoColor=white)](https://arbiteros.ai/)
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-selected%20cases-22c55e?logo=vercel&logoColor=white)](https://arbiteros.ai/demo/selected-cases/index.html?demoLang=en)
+[![GitHub](https://img.shields.io/badge/GitHub-cure--lab%2FArbiterOS-111827?logo=github&logoColor=white)](https://github.com/cure-lab/ArbiterOS)
+[![Paper](https://img.shields.io/badge/Paper-arXiv%3A2510.13857-b91c1c?logo=arxiv&logoColor=white)](https://arxiv.org/abs/2510.13857)
+
 </div>
 
 🦾 ArbiterOS provides an ultra-lightweight, one-command installation for `ArbiterOS-Kernel`, without requiring `sudo`.
