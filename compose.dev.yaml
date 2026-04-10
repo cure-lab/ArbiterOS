@@ -1,9 +1,0 @@
-name: arbiteros-stack
-
-services:
-  # Development override: build ArbiterOS Kernel locally.
-  arbiteros-kernel:
-    build:
-      context: ./ArbiterOS-Kernel
-      dockerfile: ./Dockerfile
-    image: arbiteros-stack-arbiteros-kernel:dev
