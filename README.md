@@ -26,7 +26,7 @@ It will:
 - [x] Support Linux system
 - [x] Support Windows system
 - [x] Support MacOS
-- [ ] Protect the long-term memory files in the agent
+- [x] Protect the long-term memory files in the agent
 - [ ] Periodically analyze the consistency of agent role positioning, intent, and behavior
 - [ ] Prompt injection detection by using the clustered information in the dataflow
 - [ ] Pre-checking on input data

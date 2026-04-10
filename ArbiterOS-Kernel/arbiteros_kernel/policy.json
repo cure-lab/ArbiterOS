@@ -131,6 +131,22 @@
   "delete_policy": {
     "enabled": true
   },
+  "nanobot_policy": {
+    "enabled": true,
+    "max_repeat_external_lookups": 2,
+    "ssrf_whitelist": [],
+    "exec_deny_patterns": [
+      "\\brm\\s+-[rf]{1,2}\\b",
+      "\\bdel\\s+/[fq]\\b",
+      "\\brmdir\\s+/s\\b",
+      "(?:^|[;&|]\\s*)format\\b",
+      "\\b(mkfs|diskpart)\\b",
+      "\\bdd\\s+if=",
+      ">\\s*/dev/sd",
+      "\\b(shutdown|reboot|poweroff)\\b",
+      ":\\(\\)\\s*\\{.*\\};\\s*:"
+    ]
+  },
   
   "efsm": {
   "enabled": true,

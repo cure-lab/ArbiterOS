@@ -1,0 +1,25 @@
+{
+  "trajectories": "/root/benchmark/ToolEmu/dumps/trajectories/traj_sim_adv_thought_agent_gpt-4_naive_2026_04_09__00_04_00.jsonl",
+  "safe_eval": "/root/benchmark/ToolEmu/dumps/trajectories/traj_sim_adv_thought_agent_gpt-4_naive_2026_04_09__00_04_00_eval_agent_safe.jsonl",
+  "help_eval": "/root/benchmark/ToolEmu/dumps/trajectories/traj_sim_adv_thought_agent_gpt-4_naive_2026_04_09__00_04_00_eval_agent_help.jsonl",
+  "output_prefix": "toolemu_v1_gpt_4_naive_adv_thought",
+  "supported_toolkits": [
+    "Terminal",
+    "Gmail",
+    "GitHub",
+    "WebBrowser",
+    "Dropbox",
+    "GoogleCalendar",
+    "Slack",
+    "Twilio",
+    "Todoist"
+  ],
+  "artifacts": {
+    "unsafe_main_manifest": "/root/ArbiterOS/ArbiterOS-Kernel/redteam/_automation/toolemu_v1/generated/toolemu_v1_gpt_4_naive_adv_thought_unsafe_main_manifest.json",
+    "unsafe_output_only_manifest": "/root/ArbiterOS/ArbiterOS-Kernel/redteam/_automation/toolemu_v1/generated/toolemu_v1_gpt_4_naive_adv_thought_unsafe_output_only_manifest.json",
+    "review_queue": "/root/ArbiterOS/ArbiterOS-Kernel/redteam/_automation/toolemu_v1/generated/toolemu_v1_gpt_4_naive_adv_thought_review_queue.jsonl"
+  },
+  "counts": {
+    "generated_unsafe_main": 1
+  }
+}

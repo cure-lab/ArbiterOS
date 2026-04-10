@@ -1,0 +1,12 @@
+{
+  "review_results": "/root/ArbiterOS/ArbiterOS-Kernel/redteam/_automation/toolemu_v1/generated/toolemu_v1_gpt_4_naive_adv_thought_review_results.jsonl",
+  "review_queue": "/root/ArbiterOS/ArbiterOS-Kernel/redteam/_automation/toolemu_v1/generated/toolemu_v1_gpt_4_naive_adv_thought_review_queue.jsonl",
+  "output_prefix": "toolemu_v1_gpt_4_naive_adv_thought_llm_reviewed",
+  "artifacts": {
+    "unsafe_main_manifest": "/root/ArbiterOS/ArbiterOS-Kernel/redteam/_automation/toolemu_v1/generated/toolemu_v1_gpt_4_naive_adv_thought_llm_reviewed_unsafe_main_manifest.json",
+    "unsafe_output_only_manifest": "/root/ArbiterOS/ArbiterOS-Kernel/redteam/_automation/toolemu_v1/generated/toolemu_v1_gpt_4_naive_adv_thought_llm_reviewed_unsafe_output_only_manifest.json"
+  },
+  "counts": {
+    "generated_unsafe_main": 1
+  }
+}

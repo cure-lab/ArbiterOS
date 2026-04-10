@@ -1,0 +1,10 @@
+{
+  "review_queue": "/root/ArbiterOS/ArbiterOS-Kernel/redteam/_automation/toolemu_v1/generated/toolemu_v1_gpt_4_naive_adv_thought_review_queue.jsonl",
+  "results_output": "/root/ArbiterOS/ArbiterOS-Kernel/redteam/_automation/toolemu_v1/generated/toolemu_v1_gpt_4_naive_adv_thought_review_results.jsonl",
+  "review_mode": "deterministic",
+  "provider_model": null,
+  "counts": {
+    "ok": 1,
+    "keep_current": 1
+  }
+}

@@ -8,6 +8,7 @@ $InstallDir = if ($env:INSTALL_DIR) { $env:INSTALL_DIR } else { Join-Path $Insta
 $KernelSubdir = if ($env:KERNEL_SUBDIR) { $env:KERNEL_SUBDIR } else { "ArbiterOS-Kernel" }
 $KernelDir = if ($env:KERNEL_DIR) { $env:KERNEL_DIR } else { Join-Path $InstallDir $KernelSubdir }
 $OpenClawConfigPath = if ($env:OPENCLAW_CONFIG_PATH) { $env:OPENCLAW_CONFIG_PATH } else { Join-Path $env:USERPROFILE ".openclaw\openclaw.json" }
+$ConfiguredModelName = ""
 
 function Log([string]$Message) {
     Write-Host "[INFO] $Message"
@@ -19,6 +20,23 @@ function Warn([string]$Message) {
 
 function Fail([string]$Message) {
     throw $Message
+}
+
+function Invoke-ExternalCommand([ScriptBlock]$Command, [switch]$SilenceOutput) {
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        if ($SilenceOutput) {
+            & $Command *> $null
+        } else {
+            & $Command
+        }
+        return $LASTEXITCODE
+    } catch {
+        return 1
+    } finally {
+        $ErrorActionPreference = $prevEap
+    }
 }
 
 function Ensure-Command([string]$CommandName) {
@@ -215,7 +233,19 @@ for line in lines:
 cfg.write_text("\\n".join(out) + "\\n", encoding="utf-8")
 "@
 
-    & python -c $py $cfg $modelName $model $apiKey $apiBase $skillsRoot $scannerModel $scannerBase $scannerKey
+    $tmpPy = [System.IO.Path]::ChangeExtension([System.IO.Path]::GetTempFileName(), ".py")
+    try {
+        [System.IO.File]::WriteAllText($tmpPy, $py, [System.Text.UTF8Encoding]::new($false))
+        & python $tmpPy $cfg $modelName $model $apiKey $apiBase $skillsRoot $scannerModel $scannerBase $scannerKey
+        if ($LASTEXITCODE -ne 0) {
+            Fail "Failed to update litellm_config.yaml via Python helper (exit code: $LASTEXITCODE)."
+        }
+        $script:ConfiguredModelName = $modelName
+    } finally {
+        if (Test-Path $tmpPy) {
+            Remove-Item -Path $tmpPy -Force -ErrorAction SilentlyContinue
+        }
+    }
 }
 
 function Configure-OpenClawJson {
@@ -231,6 +261,10 @@ function Configure-OpenClawJson {
             $modelName = $Matches[1].Trim()
             break
         }
+    }
+    if (-not $modelName -and $script:ConfiguredModelName) {
+        $modelName = $script:ConfiguredModelName
+        Log "Using configured model_name from installer input: $modelName"
     }
     if (-not $modelName) {
         Warn "Cannot read model_name from $litellmCfg. Skipping OpenClaw config."
@@ -301,7 +335,18 @@ data["auth"]["profiles"]["openai:default"].setdefault("mode", "api_key")
 cfg_path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\\n", encoding="utf-8")
 "@
 
-    & python -c $py $OpenClawConfigPath $modelName
+    $tmpPy = [System.IO.Path]::ChangeExtension([System.IO.Path]::GetTempFileName(), ".py")
+    try {
+        [System.IO.File]::WriteAllText($tmpPy, $py, [System.Text.UTF8Encoding]::new($false))
+        & python $tmpPy $OpenClawConfigPath $modelName
+        if ($LASTEXITCODE -ne 0) {
+            Fail "Failed to update OpenClaw config via Python helper (exit code: $LASTEXITCODE)."
+        }
+    } finally {
+        if (Test-Path $tmpPy) {
+            Remove-Item -Path $tmpPy -Force -ErrorAction SilentlyContinue
+        }
+    }
     Log "Updated OpenClaw config: $OpenClawConfigPath"
     Log "Set provider=arbiteros, primary=arbiteros/$modelName"
 }
@@ -313,22 +358,27 @@ function Restart-OpenClawGateway-And-Dashboard {
         return
     }
 
+    $versionExit = Invoke-ExternalCommand -Command { openclaw --version } -SilenceOutput
+    if ($versionExit -ne 0) {
+        Warn "openclaw exists in PATH but is broken. Reinstall OpenClaw CLI, then rerun this script."
+        Warn "Suggested fix: npm uninstall -g openclaw; npm install -g @openclaw/cli"
+        return
+    }
+
     Log "Restarting OpenClaw gateway..."
-    try {
-        & openclaw gateway restart
-    } catch {
+    $restartExit = Invoke-ExternalCommand -Command { openclaw gateway restart }
+    if ($restartExit -ne 0) {
         Warn "openclaw gateway restart failed; trying openclaw gateway start..."
-        try {
-            & openclaw gateway start
-        } catch {
+        $startExit = Invoke-ExternalCommand -Command { openclaw gateway start }
+        if ($startExit -ne 0) {
             Warn "Failed to start OpenClaw gateway."
+            return
         }
     }
 
     Log "Opening OpenClaw dashboard..."
-    try {
-        & openclaw dashboard
-    } catch {
+    $dashExit = Invoke-ExternalCommand -Command { openclaw dashboard }
+    if ($dashExit -ne 0) {
         Warn "Failed to open OpenClaw dashboard."
     }
 }
@@ -347,8 +397,21 @@ uv run poe litellm
     Log "Created run script: $runScript"
 }
 
+function Test-IsWindows {
+    $isWindowsVar = Get-Variable -Name IsWindows -Scope Global -ErrorAction SilentlyContinue
+    if ($isWindowsVar) {
+        return [bool]$isWindowsVar.Value
+    }
+
+    if ($env:OS -eq "Windows_NT") {
+        return $true
+    }
+
+    return ([System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT)
+}
+
 function Main {
-    if (-not $IsWindows) {
+    if (-not (Test-IsWindows)) {
         Fail "This script is for Windows only. For Linux/macOS, use install.sh."
     }
 

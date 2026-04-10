@@ -1,0 +1,8 @@
+{
+  "version": "toolemu_v1_gpt_4_naive_adv_thought_unsafe_output_only",
+  "repo_root": "/root/ArbiterOS/ArbiterOS-Kernel",
+  "cases_dir": "/root/ArbiterOS/ArbiterOS-Kernel/redteam/case",
+  "harness_module": "arbiteros_kernel.policy_test_harness",
+  "harness_extra_args": [],
+  "cases": []
+}
