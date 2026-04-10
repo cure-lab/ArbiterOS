@@ -21,12 +21,27 @@ from arbiteros_kernel.instruction_parsing.registries.linux import (
 from arbiteros_kernel.instruction_parsing.registries.linux import (
     get_user_registered_paths,
 )
+import functools
 from arbiteros_kernel.instruction_parsing.shell_parsers.bash import (
-    analyze_command as _analyze_command,
-    _classify_segment,
-    _classify_segment_risk,
+    analyze_command as _bash_analyze_command,
+    _classify_segment as _bash_classify_segment,
+    _classify_segment_risk as _bash_classify_segment_risk,
     _is_path_like,
 )
+
+_analyze_command = functools.partial(
+    _bash_analyze_command,
+    classify_exe=_classify_exe,
+    classify_exe_risk=_classify_exe_risk,
+)
+
+
+def _classify_segment(seg_str: str) -> str:
+    return _bash_classify_segment(seg_str, _classify_exe)
+
+
+def _classify_segment_risk(seg_str: str) -> str:
+    return _bash_classify_segment_risk(seg_str, _classify_exe_risk)
 from arbiteros_kernel.instruction_parsing.tool_parsers.openclaw import (
     TOOL_PARSER_REGISTRY,
 )

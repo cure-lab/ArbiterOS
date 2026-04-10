@@ -13,14 +13,12 @@ Public API:
 import logging
 import os
 import shlex
-from typing import Any, List, Optional, Tuple
+from typing import Any, Callable, List, Optional, Tuple
 
 from ._base import CommandAnalysis  # noqa: F401 — re-exported for callers
 
 import tree_sitter
 import tree_sitter_bash
-
-from ..registries.linux import classify_exe, classify_exe_risk
 
 logger = logging.getLogger(__name__)
 
@@ -285,11 +283,11 @@ def _split_pipeline(command: str) -> Tuple[List[str], List[str]]:
     return segments, operators
 
 
-def _classify_segment(seg_str: str) -> str:
+def _classify_segment(seg_str: str, classify_exe: Callable) -> str:
     """Return instruction type (EXEC/WRITE/READ) for a single command string.
 
     Parses *seg_str* with tree-sitter to locate the executable and optional
-    subcommand, then delegates to :func:`linux_registry.classify_exe`.
+    subcommand, then delegates to *classify_exe*.
     Falls back to ``shlex.split`` when tree-sitter cannot parse the input.
     """
     if not seg_str.strip():
@@ -316,7 +314,7 @@ def _classify_segment(seg_str: str) -> str:
     return classify_exe(exe, subcommand)
 
 
-def _classify_segment_risk(seg_str: str) -> str:
+def _classify_segment_risk(seg_str: str, classify_exe_risk: Callable) -> str:
     """Return risk level (HIGH/LOW/UNKNOWN) for a single command string.
 
     Parses *seg_str* with tree-sitter to locate all command nodes, then
@@ -491,7 +489,12 @@ def _collect_exec_path_tokens(
 # ---------------------------------------------------------------------------
 
 
-def analyze_command(command: str) -> CommandAnalysis:
+def analyze_command(
+    command: str,
+    *,
+    classify_exe: Callable,
+    classify_exe_risk: Callable,
+) -> CommandAnalysis:
     """Parse *command* and return all derived analysis fields in one call.
 
     Encapsulates pipeline splitting, per-segment classification, risk and
@@ -525,10 +528,10 @@ def analyze_command(command: str) -> CommandAnalysis:
     if not segments:
         segments = [command]
 
-    itypes = [_classify_segment(s) for s in segments]
+    itypes = [_classify_segment(s, classify_exe) for s in segments]
     itype = max(itypes, key=lambda t: _ITYPE_PRIORITY.get(t, 0))
 
-    risks = [_classify_segment_risk(s) for s in segments]
+    risks = [_classify_segment_risk(s, classify_exe_risk) for s in segments]
     risk = "HIGH" if "HIGH" in risks else "UNKNOWN" if "UNKNOWN" in risks else "LOW"
     logger.debug("analyze_command: segment_risks=%r → risk=%s", risks, risk)
 

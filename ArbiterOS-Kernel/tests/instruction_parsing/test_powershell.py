@@ -5,21 +5,40 @@ are held to the same contract.  All assertions are based on the PowerShell
 grammar and the windows_data YAML registries.
 """
 
+import functools
 import os
 
 import pytest
 
+from arbiteros_kernel.instruction_parsing.registries.windows import (
+    classify_exe as _win_classify_exe,
+    classify_exe_risk as _win_classify_exe_risk,
+)
 from arbiteros_kernel.instruction_parsing.shell_parsers._base import (
     CommandAnalysis,
     ShellAnalyzer,
 )
 from arbiteros_kernel.instruction_parsing.shell_parsers.powershell import (
-    analyze_command,
+    analyze_command as _ps_analyze_command,
     _is_path_like,
-    _classify_segment,
-    _classify_segment_risk,
+    _classify_segment as _ps_classify_segment,
+    _classify_segment_risk as _ps_classify_segment_risk,
     _parse_cd_dir,
 )
+
+analyze_command = functools.partial(
+    _ps_analyze_command,
+    classify_exe=_win_classify_exe,
+    classify_exe_risk=_win_classify_exe_risk,
+)
+
+
+def _classify_segment(seg_str: str) -> str:
+    return _ps_classify_segment(seg_str, _win_classify_exe)
+
+
+def _classify_segment_risk(seg_str: str) -> str:
+    return _ps_classify_segment_risk(seg_str, _win_classify_exe_risk)
 
 
 # ---------------------------------------------------------------------------

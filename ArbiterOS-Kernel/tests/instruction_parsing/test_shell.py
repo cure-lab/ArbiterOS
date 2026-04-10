@@ -1,12 +1,23 @@
 """Tests for arbiteros_kernel.instruction_parsing.shell_parsers.bash.analyze_command."""
 
+import functools
 import os
 
 import pytest
 
+from arbiteros_kernel.instruction_parsing.registries.linux import (
+    classify_exe as _linux_classify_exe,
+    classify_exe_risk as _linux_classify_exe_risk,
+)
 from arbiteros_kernel.instruction_parsing.shell_parsers.bash import (
     CommandAnalysis,
-    analyze_command,
+    analyze_command as _bash_analyze_command,
+)
+
+analyze_command = functools.partial(
+    _bash_analyze_command,
+    classify_exe=_linux_classify_exe,
+    classify_exe_risk=_linux_classify_exe_risk,
 )
 
 
