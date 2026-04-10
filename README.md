@@ -12,9 +12,6 @@
 [![python](https://img.shields.io/badge/python-%3E%3D3.12-3776AB)](https://www.python.org/)
 [![license](https://img.shields.io/badge/license-Apache%202.0-green)](./LICENSE)
 [![status](https://img.shields.io/badge/status-active-success)](https://github.com/cure-lab/ArbiterOS)
-[![kernel](https://img.shields.io/badge/module-ArbiterOS--Kernel-orange)](./ArbiterOS-Kernel)
-[![ui](https://img.shields.io/badge/optional-langfuse-6e56cf)](./langfuse)
-[![openclaw](https://img.shields.io/badge/integrates-OpenClaw-8a2be2)](https://github.com/cure-lab/ArbiterOS)
 
 [![Landing Page](https://img.shields.io/badge/Landing-arbiteros.ai-0ea5e9?logo=googlechrome&logoColor=white)](https://arbiteros.ai/)
 [![Live Demo](https://img.shields.io/badge/Live%20Demo-selected%20cases-22c55e?logo=vercel&logoColor=white)](https://arbiteros.ai/demo/selected-cases/index.html?demoLang=en)
