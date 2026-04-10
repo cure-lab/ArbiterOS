@@ -29,7 +29,11 @@ function Invoke-ExternalCommand([ScriptBlock]$Command, [switch]$SilenceOutput) {
         if ($SilenceOutput) {
             & $Command *> $null
         } else {
-            & $Command
+            # Do not let native stdout/stderr become function pipeline output; callers expect a single exit code.
+            & $Command 2>&1 | Out-Host
+        }
+        if ($null -eq $LASTEXITCODE) {
+            return 0
         }
         return $LASTEXITCODE
     } catch {
@@ -37,6 +41,76 @@ function Invoke-ExternalCommand([ScriptBlock]$Command, [switch]$SilenceOutput) {
     } finally {
         $ErrorActionPreference = $prevEap
     }
+}
+
+function Get-OpenClawGatewayPort {
+    if ($env:OPENCLAW_GATEWAY_PORT -match '^\d+$') {
+        return [int]$env:OPENCLAW_GATEWAY_PORT
+    }
+    return 18789
+}
+
+function Test-OpenClawGatewayPortOpen {
+    param(
+        [int]$Port = 0,
+        [int]$TimeoutMs = 2500
+    )
+    if ($Port -le 0) {
+        $Port = Get-OpenClawGatewayPort
+    }
+    $client = $null
+    try {
+        $client = New-Object System.Net.Sockets.TcpClient
+        $iar = $client.BeginConnect("127.0.0.1", $Port, $null, $null)
+        $signaled = $iar.AsyncWaitHandle.WaitOne($TimeoutMs, $false)
+        if (-not $signaled) {
+            return $false
+        }
+        try {
+            $client.EndConnect($iar)
+        } catch {
+            return $false
+        }
+        return $client.Connected
+    } catch {
+        return $false
+    } finally {
+        if ($null -ne $client) {
+            try { $client.Close() } catch { }
+        }
+    }
+}
+
+function Wait-OpenClawGatewayPortOpen {
+    param(
+        [int]$MaxWaitSeconds = 20,
+        [int]$IntervalSeconds = 2
+    )
+    $port = Get-OpenClawGatewayPort
+    $deadline = [datetime]::UtcNow.AddSeconds($MaxWaitSeconds)
+    while ([datetime]::UtcNow -lt $deadline) {
+        if (Test-OpenClawGatewayPortOpen -Port $port) {
+            return $true
+        }
+        Start-Sleep -Seconds $IntervalSeconds
+    }
+    return (Test-OpenClawGatewayPortOpen -Port $port)
+}
+
+function Wait-OpenClawGatewayPortClosed {
+    param(
+        [int]$MaxWaitSeconds = 45,
+        [int]$IntervalSeconds = 1
+    )
+    $port = Get-OpenClawGatewayPort
+    $deadline = [datetime]::UtcNow.AddSeconds($MaxWaitSeconds)
+    while ([datetime]::UtcNow -lt $deadline) {
+        if (-not (Test-OpenClawGatewayPortOpen -Port $port -TimeoutMs 800)) {
+            return $true
+        }
+        Start-Sleep -Seconds $IntervalSeconds
+    }
+    return -not (Test-OpenClawGatewayPortOpen -Port $port -TimeoutMs 800)
 }
 
 function Ensure-Command([string]$CommandName) {
@@ -66,6 +140,13 @@ function Ensure-Command([string]$CommandName) {
     }
 }
 
+function Test-CurrentDirectoryIsArbiterOSRoot {
+    $root = (Get-Location).Path
+    $cwdKernelDir = Join-Path $root $KernelSubdir
+    $cwdReadme = Join-Path $root "README.md"
+    return ((Test-Path $cwdKernelDir) -and (Test-Path $cwdReadme))
+}
+
 function Ensure-Python312 {
     $versionOk = $false
     try {
@@ -86,9 +167,7 @@ function Ensure-Python312 {
 }
 
 function Clone-Or-Use-Repo {
-    $cwdKernelDir = Join-Path (Get-Location).Path $KernelSubdir
-    $cwdReadme = Join-Path (Get-Location).Path "README.md"
-    if ((Test-Path $cwdKernelDir) -and (Test-Path $cwdReadme)) {
+    if (Test-CurrentDirectoryIsArbiterOSRoot) {
         $script:InstallDir = (Get-Location).Path
         $script:KernelDir = Join-Path $script:InstallDir $KernelSubdir
         Log "Using current directory: $script:InstallDir"
@@ -160,15 +239,28 @@ function Configure-LiteLLMYaml {
     $scannerBase = Read-With-Default "skill_scanner_llm.api_base" $defaultApiBase
     $scannerKey = Read-With-Default "skill_scanner_llm.api_key" ""
 
-    $py = @"
+    $py = @'
 from pathlib import Path
+import os
 import sys
 
 cfg = Path(sys.argv[1])
-model_name, model, api_key, api_base = sys.argv[2:6]
-skills_root, scanner_model, scanner_base, scanner_key = sys.argv[6:10]
+model_name = os.environ.get("ARBITEROS_MODEL_NAME", "")
+model = os.environ.get("ARBITEROS_MODEL", "")
+api_key = os.environ.get("ARBITEROS_API_KEY", "")
+api_base = os.environ.get("ARBITEROS_API_BASE", "")
+skills_root = os.environ.get("ARBITEROS_SKILLS_ROOT", "")
+scanner_model = os.environ.get("ARBITEROS_SCANNER_MODEL", "")
+scanner_base = os.environ.get("ARBITEROS_SCANNER_BASE", "")
+scanner_key = os.environ.get("ARBITEROS_SCANNER_KEY", "")
 
-lines = cfg.read_text(encoding="utf-8").splitlines()
+raw = cfg.read_text(encoding="utf-8")
+# If YAML was saved as one physical line with literal \n (two chars) — e.g. pasted from JSON —
+# splitlines() yields a single row and no startswith() rules match; the file would be written back
+# unchanged and stay broken. Decode those escapes when we see almost no real newlines.
+if raw.count("\n") <= 1 and "\\n" in raw:
+    raw = raw.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\\r", "\n")
+lines = raw.splitlines()
 out = []
 in_first_model = False
 in_params = False
@@ -230,18 +322,43 @@ for line in lines:
         continue
     out.append(line)
 
-cfg.write_text("\\n".join(out) + "\\n", encoding="utf-8")
-"@
+nl = chr(10)
+cfg.write_text(nl.join(out) + nl, encoding="utf-8")
+'@
 
     $tmpPy = [System.IO.Path]::ChangeExtension([System.IO.Path]::GetTempFileName(), ".py")
     try {
         [System.IO.File]::WriteAllText($tmpPy, $py, [System.Text.UTF8Encoding]::new($false))
-        & python $tmpPy $cfg $modelName $model $apiKey $apiBase $skillsRoot $scannerModel $scannerBase $scannerKey
+        $prevModelName = $env:ARBITEROS_MODEL_NAME
+        $prevModel = $env:ARBITEROS_MODEL
+        $prevApiKey = $env:ARBITEROS_API_KEY
+        $prevApiBase = $env:ARBITEROS_API_BASE
+        $prevSkillsRoot = $env:ARBITEROS_SKILLS_ROOT
+        $prevScannerModel = $env:ARBITEROS_SCANNER_MODEL
+        $prevScannerBase = $env:ARBITEROS_SCANNER_BASE
+        $prevScannerKey = $env:ARBITEROS_SCANNER_KEY
+        $env:ARBITEROS_MODEL_NAME = $modelName
+        $env:ARBITEROS_MODEL = $model
+        $env:ARBITEROS_API_KEY = $apiKey
+        $env:ARBITEROS_API_BASE = $apiBase
+        $env:ARBITEROS_SKILLS_ROOT = $skillsRoot
+        $env:ARBITEROS_SCANNER_MODEL = $scannerModel
+        $env:ARBITEROS_SCANNER_BASE = $scannerBase
+        $env:ARBITEROS_SCANNER_KEY = $scannerKey
+        & python $tmpPy $cfg
         if ($LASTEXITCODE -ne 0) {
             Fail "Failed to update litellm_config.yaml via Python helper (exit code: $LASTEXITCODE)."
         }
         $script:ConfiguredModelName = $modelName
     } finally {
+        $env:ARBITEROS_MODEL_NAME = $prevModelName
+        $env:ARBITEROS_MODEL = $prevModel
+        $env:ARBITEROS_API_KEY = $prevApiKey
+        $env:ARBITEROS_API_BASE = $prevApiBase
+        $env:ARBITEROS_SKILLS_ROOT = $prevSkillsRoot
+        $env:ARBITEROS_SCANNER_MODEL = $prevScannerModel
+        $env:ARBITEROS_SCANNER_BASE = $prevScannerBase
+        $env:ARBITEROS_SCANNER_KEY = $prevScannerKey
         if (Test-Path $tmpPy) {
             Remove-Item -Path $tmpPy -Force -ErrorAction SilentlyContinue
         }
@@ -276,22 +393,26 @@ function Configure-OpenClawJson {
         New-Item -Path $cfgDir -ItemType Directory -Force | Out-Null
     }
     if (-not (Test-Path $OpenClawConfigPath)) {
-        "{}" | Out-File -FilePath $OpenClawConfigPath -Encoding utf8
+        [System.IO.File]::WriteAllText($OpenClawConfigPath, "{}" + [Environment]::NewLine, [System.Text.UTF8Encoding]::new($false))
     }
 
-    $py = @"
+    # Single-quoted here-string: no PowerShell $ expansion. Use chr(10) + json.dump so the temp .py
+    # never relies on backslash escapes (avoids JSON files ending with literal \n or other parse errors).
+    $py = @'
 import json
 import sys
 from pathlib import Path
 
 cfg_path = Path(sys.argv[1])
-model_name = sys.argv[2]
+model_name = sys.argv[2].strip()
 model_key = f"arbiteros/{model_name}"
 
+raw = cfg_path.read_text(encoding="utf-8-sig")
 try:
-    data = json.loads(cfg_path.read_text(encoding="utf-8"))
-except Exception:
-    data = {}
+    data = json.loads(raw)
+except Exception as e:
+    print(f"ERROR: existing OpenClaw config is not valid JSON: {e}", file=sys.stderr)
+    sys.exit(2)
 
 data.setdefault("models", {})
 data["models"].setdefault("providers", {})
@@ -332,15 +453,28 @@ data["auth"]["profiles"].setdefault("openai:default", {})
 data["auth"]["profiles"]["openai:default"]["provider"] = "arbiteros"
 data["auth"]["profiles"]["openai:default"].setdefault("mode", "api_key")
 
-cfg_path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\\n", encoding="utf-8")
-"@
+data.setdefault("gateway", {})
+data["gateway"].setdefault("mode", "local")
+
+with cfg_path.open("w", encoding="utf-8", newline=chr(10)) as f:
+    json.dump(data, f, ensure_ascii=False, indent=2)
+    f.write(chr(10))
+
+# Defensive cleanup: if a previous/broken writer left a literal "\n" suffix,
+# remove it so OpenClaw JSON5 parser won't fail on trailing backslash.
+raw_after = cfg_path.read_text(encoding="utf-8")
+if raw_after.endswith("\\n"):
+    cfg_path.write_text(raw_after[:-2] + chr(10), encoding="utf-8")
+'@
 
     $tmpPy = [System.IO.Path]::ChangeExtension([System.IO.Path]::GetTempFileName(), ".py")
     try {
         [System.IO.File]::WriteAllText($tmpPy, $py, [System.Text.UTF8Encoding]::new($false))
         & python $tmpPy $OpenClawConfigPath $modelName
         if ($LASTEXITCODE -ne 0) {
-            Fail "Failed to update OpenClaw config via Python helper (exit code: $LASTEXITCODE)."
+            Warn "Skipped updating OpenClaw config because existing file is not valid JSON (exit code: $LASTEXITCODE)."
+            Warn "Run 'openclaw doctor --fix' (or onboard) and rerun installer."
+            return
         }
     } finally {
         if (Test-Path $tmpPy) {
@@ -351,10 +485,33 @@ cfg_path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\\n", enco
     Log "Set provider=arbiteros, primary=arbiteros/$modelName"
 }
 
+function Get-OpenClawDashboardStartInfo {
+    param(
+        [System.Management.Automation.CommandInfo]$OpenClawCommand
+    )
+    $path = if ($OpenClawCommand.Source) { $OpenClawCommand.Source } elseif ($OpenClawCommand.Path) { $OpenClawCommand.Path } else { $null }
+    if (-not $path) {
+        return @{ FilePath = "openclaw"; ArgumentList = @("dashboard") }
+    }
+    # Start-Process on a .ps1 uses the file association (often Notepad), not PowerShell. Prefer npm's .cmd shim.
+    if ($path -like "*.ps1") {
+        $cmdShim = [System.IO.Path]::ChangeExtension($path, ".cmd")
+        if (Test-Path -LiteralPath $cmdShim) {
+            return @{ FilePath = $cmdShim; ArgumentList = @("dashboard") }
+        }
+        $psHost = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
+        if (-not (Test-Path -LiteralPath $psHost)) {
+            $psHost = "powershell.exe"
+        }
+        return @{ FilePath = $psHost; ArgumentList = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $path, "dashboard") }
+    }
+    return @{ FilePath = $path; ArgumentList = @("dashboard") }
+}
+
 function Restart-OpenClawGateway-And-Dashboard {
     $openclaw = Get-Command openclaw -ErrorAction SilentlyContinue
     if (-not $openclaw) {
-        Warn "openclaw command not found. Skipping gateway restart/dashboard."
+        Warn "openclaw command not found. Skipping gateway start and dashboard."
         return
     }
 
@@ -365,21 +522,51 @@ function Restart-OpenClawGateway-And-Dashboard {
         return
     }
 
-    Log "Restarting OpenClaw gateway..."
-    $restartExit = Invoke-ExternalCommand -Command { openclaw gateway restart }
-    if ($restartExit -ne 0) {
-        Warn "openclaw gateway restart failed; trying openclaw gateway start..."
-        $startExit = Invoke-ExternalCommand -Command { openclaw gateway start }
-        if ($startExit -ne 0) {
-            Warn "Failed to start OpenClaw gateway."
-            return
+    $gwPort = Get-OpenClawGatewayPort
+
+    # Windows: `openclaw gateway restart` tends to hit scheduled-task + health-check timeouts while the
+    # port is still held. Stop first, wait for the port to drop, then a plain `gateway start` reloads config
+    # without the flaky restart path.
+    if (Test-OpenClawGatewayPortOpen -Port $gwPort) {
+        Log "Gateway already listening on 127.0.0.1:${gwPort}; stopping so the next start picks up updated config."
+        $null = Invoke-ExternalCommand -Command { openclaw gateway stop } -SilenceOutput
+        if (Wait-OpenClawGatewayPortClosed -MaxWaitSeconds 45) {
+            Start-Sleep -Seconds 2
+        } else {
+            Warn "Port ${gwPort} did not free within 45s after openclaw gateway stop; start may fail or hit a stale listener."
         }
     }
 
+    Log "Starting OpenClaw gateway..."
+    $startExit = Invoke-ExternalCommand -Command { openclaw gateway start }
+    $gatewayUp = $false
+    if ($startExit -eq 0) {
+        $gatewayUp = $true
+    } else {
+        # Windows often launches the gateway in a separate console; the CLI may time out on health
+        # checks (e.g. 60s) even though the HTTP server is already listening.
+        Start-Sleep -Seconds 2
+        if (Wait-OpenClawGatewayPortOpen -MaxWaitSeconds 20) {
+            Log "Gateway is listening on 127.0.0.1:${gwPort} (openclaw start exited $startExit; treating as success)."
+            $gatewayUp = $true
+        }
+    }
+
+    if (-not $gatewayUp) {
+        Warn "Failed to start OpenClaw gateway (port $gwPort not listening). Try in a separate window: openclaw gateway"
+        return
+    }
+
     Log "Opening OpenClaw dashboard..."
-    $dashExit = Invoke-ExternalCommand -Command { openclaw dashboard }
-    if ($dashExit -ne 0) {
-        Warn "Failed to open OpenClaw dashboard."
+    try {
+        # In-script `openclaw dashboard` often returns a non-zero exit code even when it works
+        # (no interactive TTY / browser launch path). Launch a separate process like a normal shell.
+        $dash = Get-OpenClawDashboardStartInfo -OpenClawCommand $openclaw
+        Start-Process -FilePath $dash.FilePath -ArgumentList $dash.ArgumentList -WorkingDirectory (Get-Location).Path -ErrorAction Stop
+        Log "Launched dashboard helper. If the browser did not open, run in any terminal: openclaw dashboard"
+    } catch {
+        Warn "Could not start openclaw dashboard from installer: $($_.Exception.Message)"
+        Log "Run manually: openclaw dashboard"
     }
 }
 
@@ -391,6 +578,8 @@ Set-StrictMode -Version Latest
 
 Set-Location "$KernelDir"
 `$env:Path = "`$env:USERPROFILE\.local\bin;`$env:USERPROFILE\.cargo\bin;`$env:Path"
+`$env:PYTHONUTF8 = "1"
+`$env:PYTHONIOENCODING = "utf-8"
 uv run poe litellm
 "@
     $content | Out-File -FilePath $runScript -Encoding utf8
@@ -415,7 +604,11 @@ function Main {
         Fail "This script is for Windows only. For Linux/macOS, use install.sh."
     }
 
-    Ensure-Command "git"
+    if (-not (Test-CurrentDirectoryIsArbiterOSRoot)) {
+        Ensure-Command "git"
+    } else {
+        Log "Current folder has $KernelSubdir and README.md (ZIP or full checkout); git is not required."
+    }
     Ensure-Command "python"
     Ensure-Command "uv"
     Ensure-Python312
