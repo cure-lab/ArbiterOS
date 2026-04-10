@@ -20,7 +20,7 @@
 
 </div>
 
-🦾 ArbiterOS provides an ultra-lightweight, one-command installation for `ArbiterOS-Kernel`, without requiring `sudo`.
+🦾 ArbiterOS provides an ultra-lightweight, one-command installation for `ArbiterOS-Kernel`.
 
 ⚡ Delivers practical runtime safety and governance for agent systems while keeping local setup simple.
 

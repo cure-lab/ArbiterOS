@@ -20,7 +20,7 @@
 
 </div>
 
-🦾 ArbiterOS 提供超轻量、单命令安装 `ArbiterOS-Kernel` 的能力，且无需 `sudo`。
+🦾 ArbiterOS 提供超轻量、单命令安装 `ArbiterOS-Kernel` 的能力。
 
 ⚡ 在保持本地部署与启动简洁的同时，为 Agent 系统提供可落地的运行时安全与治理能力。
 
