@@ -11,7 +11,7 @@ import logging
 import os
 from typing import Any, Dict, Optional
 
-from ..shell_parsers.bash import (
+from ..shell_parsers import (
     CommandAnalysis,
     analyze_command,
 )
@@ -21,7 +21,7 @@ from ..types import (
     ToolParseResult,
     make_security_type,
 )
-from .linux_registry import (
+from ..registries import (
     classify_confidentiality,
     classify_trustworthiness,
     register_file_taint,

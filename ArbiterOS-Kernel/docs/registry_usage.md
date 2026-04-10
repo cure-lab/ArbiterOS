@@ -106,7 +106,7 @@ LOW:
 
 ## Pattern Syntax
 
-All file path patterns (except in `path_registry.yaml`) follow glob conventions:
+All file path patterns follow glob conventions:
 
 | Pattern | Matches |
 |---------|---------|

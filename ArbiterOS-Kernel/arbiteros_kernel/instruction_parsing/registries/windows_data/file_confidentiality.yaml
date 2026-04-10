@@ -1,0 +1,111 @@
+# File-path confidentiality classification for Windows paths.
+#
+# Keys   : HIGH | LOW
+# Values : glob patterns matched against path tokens (fnmatch / PurePosixPath).
+#          All patterns use forward slashes; backslashes are normalised before
+#          matching.  Use C:/... for drive-letter absolute paths.
+#
+# Matching priority: HIGH > LOW.  Default: UNKNOWN.
+
+HIGH:
+  # ── System credential / SAM hive ───────────────────────────────────────────
+  - C:/Windows/System32/config/SAM
+  - C:/Windows/System32/config/SYSTEM
+  - C:/Windows/System32/config/SECURITY
+  - C:/Windows/System32/config/*
+
+  # ── User private keys & credential stores ──────────────────────────────────
+  - C:/Users/*/.ssh/*
+  - C:/Users/*/.gnupg/*
+  - C:/Users/*/.aws/credentials
+  - C:/Users/*/.aws/config
+  - C:/Users/*/.kube/config
+  - C:/Users/*/.kube/**
+  - C:/Users/*/.azure/**
+  - C:/Users/*/.config/gcloud/**
+  - C:/Users/*/.docker/config.json
+  - C:/Users/*/AppData/Roaming/Microsoft/Protect/**
+  - C:/Users/*/AppData/Roaming/Microsoft/Credentials/**
+
+  # ── Private-key / certificate file extensions ───────────────────────────────
+  - "*.pem"
+  - "*.key"
+  - "*.p12"
+  - "*.pfx"
+  - "*.pkcs12"
+  - "*.jks"
+  - "*.keystore"
+  - "*.der"
+
+  # ── Secret environment / config files ───────────────────────────────────────
+  - .env
+  - .env.*
+  - "*.secret"
+  - "*.secrets"
+  - secrets.yaml
+  - secrets.yml
+  - secrets.json
+  - secret.yaml
+  - secret.json
+  - vault.yaml
+  - vault.json
+
+  # ── Password / credential / token files (name-based wildcards) ──────────────
+  - "*password*"
+  - "*credentials*"
+  - "*apikey*"
+  - "*api_key*"
+  - "*secret_key*"
+  - "*private_key*"
+
+  # ── Windows registry hives (sensitive system state) ─────────────────────────
+  - C:/Windows/System32/config/**
+
+  # ── OpenClaw credentials & session transcripts ──────────────────────────────
+  - ".openclaw/openclaw.json"
+  - ".openclaw/credentials/**"
+  - ".openclaw/agents/*/sessions/**"
+
+  # ── ArbiterOS kernel config ─────────────────────────────────────────────────
+  - C:/Users/*/.arbiteros/**
+
+  # ── Event logs ──────────────────────────────────────────────────────────────
+  - C:/Windows/System32/winevt/Logs/**
+
+  # ── User AppData (contains app credentials, tokens, configs) ────────────────
+  - C:/Users/*/AppData/**
+
+  # ── OpenClaw workspace — agent memory & identity files ──────────────────────
+  - C:/Users/*/.openclaw/workspace/SOUL.md
+  - C:/Users/*/.openclaw/workspace/MEMORY.md
+  - C:/Users/*/.openclaw/workspace/AGENTS.md
+  - C:/Users/*/.openclaw/workspace/USER.md
+  - C:/Users/*/.openclaw/workspace/IDENTITY.md
+  - C:/Users/*/.openclaw/workspace/HEARTBEAT.md
+  - C:/Users/*/.openclaw/workspace/BOOT.md
+  - C:/Users/*/.openclaw/workspace/memory/**
+  - C:/Users/*/.openclaw/workspace-*/memory/**
+
+  # ── OpenClaw managed skills ──────────────────────────────────────────────────
+  - C:/Users/*/.openclaw/skills/**
+
+LOW:
+  # ── Temporary directories ───────────────────────────────────────────────────
+  - C:/Temp/*
+  - C:/Temp/**
+  - C:/Windows/Temp/*
+  - C:/Users/*/AppData/Local/Temp/*
+  - C:/Users/*/AppData/Local/Temp/**
+
+  # ── System binaries / libraries (public) ────────────────────────────────────
+  - C:/Windows/System32/*
+  - C:/Windows/SysWOW64/*
+  - C:/Program Files/**
+  - C:/Program Files (x86)/**
+
+  # ── Public user folder ──────────────────────────────────────────────────────
+  - C:/Users/Public/**
+
+  # ── TLS certificates (public part only) ─────────────────────────────────────
+  - "*.crt"
+  - "*.cer"

@@ -1,0 +1,94 @@
+# File-path trustworthiness classification for macOS (Darwin).
+#
+# Keys   : HIGH | LOW
+# Values : glob patterns (forward slashes; backslashes normalised before match).
+#
+# LOW  — content from external / untrusted / user-controlled / temporary areas.
+# HIGH — system-managed or package-manager-installed paths.
+# Default: UNKNOWN.
+
+LOW:
+  # ── External URLs (untrusted by definition) ──────────────────────────────────
+  - "http://*"
+  - "https://*"
+  - "ftp://*"
+  - "ftps://*"
+
+  # ── Downloads / received content ─────────────────────────────────────────────
+  - ~/Downloads/*
+  - ~/Downloads/**
+  - ~/Download/*
+  - /Users/*/Downloads/*
+  - /Users/*/Downloads/**
+  - /Users/*/Desktop/Downloads/*
+  - /Users/*/Desktop/downloads/*
+
+  # ── Upload / import staging directories ──────────────────────────────────────
+  - /tmp/upload/*
+  - /tmp/uploads/*
+
+  # ── Temporary directories ─────────────────────────────────────────────────────
+  - /tmp/*
+  - /tmp/**
+  - /var/tmp/*
+  - /var/tmp/**
+  - /private/tmp/*
+  - /private/tmp/**
+  - /private/var/tmp/*
+  - /private/var/tmp/**
+
+  # ── Removable / external storage ──────────────────────────────────────────────
+  - /Volumes/*/Downloads/**
+  - /Volumes/Untitled/**       # typical default name for unmounted volumes
+
+  # ── Container / socket boundaries ────────────────────────────────────────────
+  - /var/run/docker.sock
+  - /run/docker.sock
+
+HIGH:
+  # ── macOS system (Apple-signed, SIP-protected) ────────────────────────────────
+  - /System/**
+  - /System/Library/**
+  - /System/Library/Frameworks/**
+  - /System/Library/Extensions/**
+  - /System/Library/CoreServices/**
+
+  # ── Admin-installed frameworks and libraries ──────────────────────────────────
+  - /Library/**
+  - /Library/Frameworks/**
+  - /Library/Extensions/**
+  - /Library/Application Support/**
+
+  # ── Package-manager-installed system binaries ─────────────────────────────────
+  - /usr/bin/*
+  - /usr/sbin/*
+  - /usr/lib/*
+  - /usr/lib/**
+  - /usr/share/*
+  - /usr/share/**
+  - /usr/local/bin/*
+  - /usr/local/lib/*
+  - /usr/local/**              # Intel Homebrew install root
+  - /bin/*
+  - /sbin/*
+
+  # ── Homebrew (Apple Silicon) ──────────────────────────────────────────────────
+  - /opt/homebrew/**
+
+  # ── Installed applications (App Store or notarised) ──────────────────────────
+  - /Applications/**
+
+  # ── System configuration (admin-controlled) ───────────────────────────────────
+  - /etc/*
+  - /etc/**
+  - /private/etc/*
+  - /private/etc/**
+
+  # ── OpenClaw managed resources ───────────────────────────────────────────────
+  - ".openclaw/openclaw.json"
+  - ".openclaw/skills/**"
+  - ".openclaw/workspace/**"
+  - ".openclaw/workspace-*/**"
+
+  # ── ArbiterOS kernel config ────────────────────────────────────────────────
+  - ~/.arbiteros/*

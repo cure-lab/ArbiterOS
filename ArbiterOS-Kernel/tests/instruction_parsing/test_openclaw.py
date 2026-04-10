@@ -3,22 +3,22 @@
 import pytest
 
 from arbiteros_kernel.instruction_parsing.tool_parsers import parse_tool_instruction
-from arbiteros_kernel.instruction_parsing.tool_parsers.linux_registry import (
+from arbiteros_kernel.instruction_parsing.registries._base import (
     _path_matches,
 )
-from arbiteros_kernel.instruction_parsing.tool_parsers.linux_registry import (
+from arbiteros_kernel.instruction_parsing.registries.linux import (
     classify_confidentiality as _classify_confidentiality,
 )
-from arbiteros_kernel.instruction_parsing.tool_parsers.linux_registry import (
+from arbiteros_kernel.instruction_parsing.registries.linux import (
     classify_exe as _classify_exe,
 )
-from arbiteros_kernel.instruction_parsing.tool_parsers.linux_registry import (
+from arbiteros_kernel.instruction_parsing.registries.linux import (
     classify_exe_risk as _classify_exe_risk,
 )
-from arbiteros_kernel.instruction_parsing.tool_parsers.linux_registry import (
+from arbiteros_kernel.instruction_parsing.registries.linux import (
     classify_trustworthiness as _classify_trustworthiness,
 )
-from arbiteros_kernel.instruction_parsing.tool_parsers.linux_registry import (
+from arbiteros_kernel.instruction_parsing.registries.linux import (
     get_user_registered_paths,
 )
 from arbiteros_kernel.instruction_parsing.shell_parsers.bash import (
@@ -363,16 +363,17 @@ class TestClassifyExeRisk:
     @pytest.mark.parametrize(
         "exe",
         ["ls", "ll", "dir", "cd", "pwd", "echo", "printf", "which", "whereis",
-         "date", "uname", "uptime", "id", "whoami", "env", "printenv", "true", "false"],
+         "date", "uname", "uptime", "id", "whoami", "printenv", "true", "false"],
     )
     def test_low_risk_commands(self, exe):
         assert _classify_exe_risk(exe, None) == "LOW"
 
     # Safe commands that are not explicitly listed default to UNKNOWN;
     # cat/grep/git-log are explicitly LOW in the registry and excluded here.
+    # env is UNKNOWN because it can launch arbitrary commands (env CMD ...)
     @pytest.mark.parametrize(
         "exe",
-        ["python", "bash", "cp", "mv", "chmod"],
+        ["python", "bash", "cp", "mv", "chmod", "env"],
     )
     def test_safe_commands_return_unknown(self, exe):
         assert _classify_exe_risk(exe, None) == "UNKNOWN"

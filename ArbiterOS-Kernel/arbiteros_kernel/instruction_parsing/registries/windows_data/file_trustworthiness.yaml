@@ -1,0 +1,61 @@
+# File-path trustworthiness classification for Windows paths.
+#
+# Keys   : HIGH | LOW
+# Values : glob patterns (forward slashes; backslashes normalised before match).
+#
+# LOW  — content from external / untrusted / user-controlled / temporary areas.
+# HIGH — system-managed or package-manager-installed paths.
+# Default: UNKNOWN.
+
+LOW:
+  # ── External URLs (untrusted by definition) ──────────────────────────────────
+  - "http://*"
+  - "https://*"
+  - "ftp://*"
+  - "ftps://*"
+
+  # ── Downloads / received content ─────────────────────────────────────────────
+  - C:/Users/*/Downloads/*
+  - C:/Users/*/Downloads/**
+  - C:/Users/*/Desktop/Downloads/*
+  - C:/Users/*/Desktop/downloads/*
+
+  # ── Temporary directories ─────────────────────────────────────────────────────
+  - C:/Temp/*
+  - C:/Temp/**
+  - C:/Windows/Temp/*
+  - C:/Users/*/AppData/Local/Temp/*
+  - C:/Users/*/AppData/Local/Temp/**
+
+  # ── Removable / external storage ──────────────────────────────────────────────
+  - D:/**
+  - E:/**
+  - F:/**
+  - G:/**
+
+  # ── Shared / network paths ────────────────────────────────────────────────────
+  - //*//**
+
+  # ── Container / socket boundaries ────────────────────────────────────────────
+  - //./pipe/docker_engine
+
+HIGH:
+  # ── System binaries / libraries (OS-installed) ────────────────────────────────
+  - C:/Windows/System32/*
+  - C:/Windows/System32/**
+  - C:/Windows/SysWOW64/*
+  - C:/Windows/SysWOW64/**
+  - C:/Windows/**
+
+  # ── Installed application binaries ────────────────────────────────────────────
+  - C:/Program Files/**
+  - C:/Program Files (x86)/**
+
+  # ── OpenClaw managed resources ────────────────────────────────────────────────
+  - ".openclaw/openclaw.json"
+  - ".openclaw/skills/**"
+  - ".openclaw/workspace/**"
+  - ".openclaw/workspace-*/**"
+
+  # ── ArbiterOS kernel config ────────────────────────────────────────────────────
+  - C:/Users/*/.arbiteros/**

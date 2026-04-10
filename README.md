@@ -31,8 +31,8 @@ This repository contains two main modules:
 - [x] Evaluate on ToolEmu
 - [x] Use skill-scanner for skill safety analysis
 - [x] Support Linux system
-- [ ] Support Windows system
-- [ ] Support MacOS
+- [x] Support Windows system
+- [x] Support MacOS
 - [x] Protect the long-term memory files in the agent
 - [ ] Periodically analyze the consistency of agent role positioning, intent, and behavior
 - [ ] Prompt injection detection by using the clustered information in the dataflow

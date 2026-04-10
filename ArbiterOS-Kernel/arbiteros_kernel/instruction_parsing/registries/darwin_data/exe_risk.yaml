@@ -1,4 +1,4 @@
-# Execution risk classification for shell commands.
+# Execution risk classification for shell commands on macOS (Darwin).
 #
 # Keys   : HIGH (only one level; unmatched commands default to UNKNOWN)
 # Values : list of command patterns — either a bare executable basename
@@ -20,18 +20,11 @@ HIGH:
   - rmdir
 
   # ---------------------------------------------------------------------------
-  # Destructive disk / filesystem operations
+  # Destructive disk / volume operations (macOS-specific)
   # ---------------------------------------------------------------------------
-  - dd
-  - mkfs
-  - mke2fs
-  - mkswap
-  - fdisk
-  - parted
-  - gdisk
-  - sgdisk
-  - wipefs
-  - blkdiscard
+  - diskutil    # diskutil eraseVolume / eraseDisk / partitionDisk / zeroDisk
+  - hdiutil     # hdiutil create -format with destructive conversion
+  - dd          # raw disk overwrite
 
   # ---------------------------------------------------------------------------
   # System shutdown / reboot
@@ -39,8 +32,6 @@ HIGH:
   - shutdown
   - reboot
   - halt
-  - poweroff
-  - init
 
   # ---------------------------------------------------------------------------
   # Process termination
@@ -48,12 +39,21 @@ HIGH:
   - kill
   - pkill
   - killall
-  - skill
 
   # ---------------------------------------------------------------------------
   # File truncation / zeroing
   # ---------------------------------------------------------------------------
   - truncate
+
+  # ---------------------------------------------------------------------------
+  # Keychain / credentials manipulation
+  # ---------------------------------------------------------------------------
+  - security    # can silently read or delete Keychain entries
+
+  # ---------------------------------------------------------------------------
+  # macOS arbitrary code execution
+  # ---------------------------------------------------------------------------
+  - osascript   # AppleScript / JXA: system-level control, UI scripting
 
   # ---------------------------------------------------------------------------
   # Dangerous git subcommands (destructive local state)
@@ -67,11 +67,10 @@ HIGH:
   - sudo rm
   - sudo shred
   - sudo dd
-  - sudo mkfs
+  - sudo diskutil
   - sudo shutdown
   - sudo reboot
   - sudo halt
-  - sudo poweroff
 
 LOW:
   # ---------------------------------------------------------------------------
@@ -103,11 +102,12 @@ LOW:
   - uptime
   - id
   - whoami
+  - sw_vers
+  - system_profiler
 
   # ---------------------------------------------------------------------------
   # Environment (read-only)
   # ---------------------------------------------------------------------------
-  - env
   - printenv
 
   # ---------------------------------------------------------------------------
@@ -142,10 +142,9 @@ LOW:
   - wc
   - du
   - df
-  - lsblk
   - lsof
-  - lsattr
-  - lsmod
+  - mdfind
+  - mdls
 
   # ---------------------------------------------------------------------------
   # Text search
@@ -190,15 +189,13 @@ LOW:
   # ---------------------------------------------------------------------------
   # Checksums and digests
   # ---------------------------------------------------------------------------
+  - md5
   - md5sum
+  - shasum
   - sha1sum
-  - sha224sum
   - sha256sum
-  - sha384sum
   - sha512sum
-  - b2sum
   - cksum
-  - sum
 
   # ---------------------------------------------------------------------------
   # Process and system information
@@ -207,14 +204,9 @@ LOW:
   - pgrep
   - top
   - htop
-  - free
-  - vmstat
+  - vm_stat
   - iostat
-  - mpstat
   - nproc
-  - lscpu
-  - lspci
-  - lsusb
   - hostname
 
   # ---------------------------------------------------------------------------
@@ -240,7 +232,6 @@ LOW:
   - dig
   - host
   - netstat
-  - ss
 
   # ---------------------------------------------------------------------------
   # Git read-only subcommands
@@ -257,14 +248,11 @@ LOW:
   - git reflog
 
   # ---------------------------------------------------------------------------
-  # systemctl read-only subcommands
+  # launchctl read-only subcommands
   # ---------------------------------------------------------------------------
-  - systemctl status
-  - systemctl list-units
-  - systemctl list-sockets
-  - systemctl list-timers
-  - systemctl is-active
-  - systemctl is-enabled
+  - launchctl list
+  - launchctl print
+  - launchctl print-disabled
 
   # ---------------------------------------------------------------------------
   # Package information (read-only subcommands)
@@ -272,6 +260,8 @@ LOW:
   - pip list
   - pip show
   - pip check
-  - apt list
+  - brew list
+  - brew info
+  - brew outdated
   - npm list
   - npm ls

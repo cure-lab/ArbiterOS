@@ -1,0 +1,367 @@
+# Instruction-type classification for PowerShell cmdlets and aliases.
+#
+# Keys   : EXEC | WRITE | READ
+# Values : list of cmdlet/alias patterns (all lowercase for case-insensitive
+#          matching).  Matching is done on the lowercased command name, then on
+#          "name subcommand" when a non-flag second token exists.
+#
+# Priority: EXEC > WRITE > READ.  Default when nothing matches: EXEC.
+
+EXEC:
+  # ---------------------------------------------------------------------------
+  # Script / expression execution (run arbitrary code)
+  # ---------------------------------------------------------------------------
+  - invoke-expression    # iex alias
+  - iex
+  - invoke-command       # icm alias
+  - icm
+  - invoke-scriptblock
+  - start-job
+  - start-threadjob
+  - invoke-item          # opens file with associated app
+  - ii
+
+  # ---------------------------------------------------------------------------
+  # Process management with side effects
+  # ---------------------------------------------------------------------------
+  - start-process        # saps / start aliases
+  - saps
+  - stop-process         # kill / spps aliases
+  - kill
+  - spps
+  - wait-process
+  - debug-process
+
+  # ---------------------------------------------------------------------------
+  # Language runtimes (same as Linux)
+  # ---------------------------------------------------------------------------
+  - python
+  - python3
+  - python.exe
+  - python3.exe
+  - node
+  - node.exe
+  - deno
+  - bun
+  - ruby
+  - php
+  - java
+  - julia
+  - Rscript
+
+  # ---------------------------------------------------------------------------
+  # Remote execution / file transfer
+  # ---------------------------------------------------------------------------
+  - enter-pssession      # etsn alias
+  - etsn
+  - invoke-wmimethod
+  - new-cimsession
+  - invoke-restmethod    # irm alias — may POST/PUT/DELETE
+  - irm
+  - invoke-webrequest    # wget / curl / iwr aliases
+  - wget
+  - curl
+  - iwr
+
+  # ---------------------------------------------------------------------------
+  # System management
+  # ---------------------------------------------------------------------------
+  - stop-computer        # shutdown equivalent
+  - restart-computer     # reboot equivalent
+  - suspend-bitlocker
+  - enable-bitlocker
+  - disable-bitlocker
+  - set-executionpolicy
+  - register-scheduledjob
+  - new-scheduledjob
+  - unregister-scheduledjob
+  - enable-scheduledtask
+  - disable-scheduledtask
+  - start-scheduledtask
+  - stop-scheduledtask
+
+  # ---------------------------------------------------------------------------
+  # Service management
+  # ---------------------------------------------------------------------------
+  - start-service        # sasv alias
+  - sasv
+  - stop-service         # spsv alias
+  - spsv
+  - restart-service
+  - suspend-service
+  - resume-service
+  - new-service
+  - remove-service
+
+  # ---------------------------------------------------------------------------
+  # PowerShell sessions / remoting
+  # ---------------------------------------------------------------------------
+  - new-pssession
+  - remove-pssession
+  - disconnect-pssession
+  - connect-pssession
+
+  # ---------------------------------------------------------------------------
+  # Package / module management
+  # ---------------------------------------------------------------------------
+  - install-module
+  - install-package
+  - install-script
+  - uninstall-module
+  - uninstall-package
+  - update-module
+  - update-package
+  - update-script
+  - publish-module
+  - register-psrepository
+  - unregister-psrepository
+
+  # ---------------------------------------------------------------------------
+  # Destructive file / disk operations
+  # ---------------------------------------------------------------------------
+  - remove-item          # rm / del / rd / ri / erase / rmdir aliases
+  - rm
+  - del
+  - rd
+  - ri
+  - erase
+  - rmdir
+  - clear-content
+
+  # ---------------------------------------------------------------------------
+  # Disk / volume operations
+  # ---------------------------------------------------------------------------
+  - format-volume
+  - initialize-disk
+  - new-partition
+  - remove-partition
+  - resize-partition
+
+WRITE:
+  # ---------------------------------------------------------------------------
+  # File creation / modification
+  # ---------------------------------------------------------------------------
+  - set-content          # sc alias (but sc also means sc.exe — be cautious)
+  - add-content          # ac alias
+  - ac
+  - new-item             # ni alias
+  - ni
+  - copy-item            # cp / copy / cpi aliases
+  - cp
+  - copy
+  - cpi
+  - move-item            # mv / move / mi aliases
+  - mv
+  - move
+  - mi
+  - rename-item          # ren / rni aliases
+  - ren
+  - rni
+  - rename-computer
+
+  # ---------------------------------------------------------------------------
+  # ACL / permissions
+  # ---------------------------------------------------------------------------
+  - set-acl
+  - set-itemproperty     # sp alias
+  - sp
+  - new-itemproperty
+  - remove-itemproperty
+  - clear-itemproperty
+  - set-location         # cd / sl / chdir aliases (write to CWD state)
+  - sl
+  - chdir
+
+  # ---------------------------------------------------------------------------
+  # Archive / compression
+  # ---------------------------------------------------------------------------
+  - compress-archive
+  - expand-archive
+
+  # ---------------------------------------------------------------------------
+  # Registry editing
+  # ---------------------------------------------------------------------------
+  - new-item             # already listed above; also creates registry keys
+  - set-item
+  - remove-item          # already listed; also deletes registry keys
+
+  # ---------------------------------------------------------------------------
+  # Git — local write subcommands
+  # ---------------------------------------------------------------------------
+  - git add
+  - git commit
+  - git reset
+  - git restore
+  - git checkout
+  - git switch
+  - git merge
+  - git rebase
+  - git cherry-pick
+  - git stash
+  - git stash pop
+  - git stash drop
+  - git tag
+  - git rm
+  - git mv
+  - git init
+  - git config
+  - git clean
+
+READ:
+  # ---------------------------------------------------------------------------
+  # Directory navigation (no side effects)
+  # ---------------------------------------------------------------------------
+  - cd                   # set-location alias — included in WRITE above for CWD
+                         # but READ classification wins for security analysis
+  - push-location        # pushd alias
+  - pushd
+  - pop-location         # popd alias
+  - popd
+
+  # ---------------------------------------------------------------------------
+  # File content inspection
+  # ---------------------------------------------------------------------------
+  - get-content          # gc / cat / type aliases
+  - gc
+  - cat
+  - type
+  - select-string        # grep equivalent — sls alias
+  - sls
+
+  # ---------------------------------------------------------------------------
+  # Directory / filesystem metadata
+  # ---------------------------------------------------------------------------
+  - get-childitem        # ls / dir / gci aliases
+  - ls
+  - dir
+  - gci
+  - get-item             # gi alias
+  - gi
+  - get-location         # pwd / gl alias
+  - pwd
+  - gl
+  - get-itemproperty     # gp alias
+  - gp
+  - test-path            # tp alias
+  - tp
+  - resolve-path
+  - split-path
+  - join-path
+  - get-psdrive
+  - get-psprovider
+
+  # ---------------------------------------------------------------------------
+  # Process / system info (read-only)
+  # ---------------------------------------------------------------------------
+  - get-process          # ps / gps aliases
+  - ps
+  - gps
+  - get-service          # gsv alias
+  - gsv
+  - get-job
+  - get-eventlog
+  - get-winevent
+  - get-hotfix
+  - get-computername
+  - get-date
+  - get-uptime
+  - get-host
+  - get-culture
+
+  # ---------------------------------------------------------------------------
+  # Output / formatting (no side effects)
+  # ---------------------------------------------------------------------------
+  - write-output         # echo / write aliases
+  - echo
+  - write
+  - write-host
+  - write-verbose
+  - write-debug
+  - write-information
+  - out-host
+  - out-string
+  - out-null
+  - format-list          # fl alias
+  - fl
+  - format-table         # ft alias
+  - ft
+  - format-wide          # fw alias
+  - fw
+  - format-custom        # fc alias
+  - fc
+
+  # ---------------------------------------------------------------------------
+  # Object pipeline (no side effects)
+  # ---------------------------------------------------------------------------
+  - select-object        # select alias
+  - select
+  - where-object         # where / ? aliases
+  - where
+  - foreach-object       # foreach / % aliases
+  - foreach
+  - sort-object          # sort alias
+  - sort
+  - group-object         # group alias
+  - group
+  - measure-object       # measure alias
+  - measure
+  - compare-object       # compare / diff aliases
+  - compare
+  - tee-object
+  - convertto-json
+  - convertfrom-json
+  - convertto-csv
+  - convertfrom-csv
+  - convertto-xml
+  - convertto-html
+
+  # ---------------------------------------------------------------------------
+  # Environment / variables (read-only)
+  # ---------------------------------------------------------------------------
+  - get-variable         # gv alias
+  - gv
+  - get-alias            # gal alias
+  - gal
+  - get-command          # gcm alias
+  - gcm
+  - get-help             # help / man aliases
+  - help
+  - man
+  - get-member           # gm alias
+  - gm
+  - get-module
+  - get-psrepository
+  - get-installedmodule
+  - get-installedscript
+
+  # ---------------------------------------------------------------------------
+  # Network diagnostics (read-only / passive)
+  # ---------------------------------------------------------------------------
+  - test-connection      # ping equivalent
+  - test-netconnection
+  - resolve-dnsname
+  - get-netadapter
+  - get-netipaddress
+  - get-nettcpconnection
+  - get-netroute
+
+  # ---------------------------------------------------------------------------
+  # Git — read-only subcommands
+  # ---------------------------------------------------------------------------
+  - git log
+  - git status
+  - git diff
+  - git show
+  - git branch
+  - git describe
+  - git ls-files
+  - git ls-tree
+  - git ls-remote
+  - git rev-parse
+  - git rev-list
+  - git shortlog
+  - git stash list
+  - git remote -v
+  - git remote show
+  - git blame
+  - git grep
