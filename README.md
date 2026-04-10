@@ -74,7 +74,9 @@ Default (recommended for quick start):
 
 ```bash
 cd ArbiterOS/langfuse
+cp .env.prob.example .env
 
+docker compose -f docker-compose.yml up -d --build
 ```
 
 
