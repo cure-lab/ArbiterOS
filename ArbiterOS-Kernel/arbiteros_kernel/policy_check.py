@@ -10,7 +10,11 @@ from typing import TYPE_CHECKING, Any, Optional
 if TYPE_CHECKING:
     from arbiteros_kernel.policy import Policy
 
-__all__ = ["PolicyCheckResult", "check_response_policy", "apply_policy_enforcement_mode"]
+__all__ = [
+    "PolicyCheckResult",
+    "check_response_policy",
+    "apply_policy_enforcement_mode",
+]
 
 
 @dataclass
@@ -135,6 +139,17 @@ def check_response_policy(
     """
     if latest_instructions is None:
         latest_instructions = []
+
+    # Policy interface: optional taint ablation (prop_* := base *), same layer as
+    # user_approval — copies only when enabled; does not mutate caller's lists.
+    from arbiteros_kernel.taint_ablation import (
+        apply_taint_inheritance_ablation_for_policy,
+    )
+
+    instructions, latest_instructions = apply_taint_inheritance_ablation_for_policy(
+        instructions=instructions,
+        latest_instructions=latest_instructions,
+    )
 
     if policy_classes is None:
         # Dynamic lookup so policy_registry.json changes can take effect
