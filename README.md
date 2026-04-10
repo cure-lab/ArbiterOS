@@ -113,7 +113,7 @@ docker compose -f docker-compose.yml up -d --build
 
 ## Links
 
-- Home: [arbiteros.ai](https://arbiteros.ai/)
+- Landing Page: [arbiteros.ai](https://arbiteros.ai/)
 - Live Demo: [selected cases](https://arbiteros.ai/demo/selected-cases/index.html?demoLang=en)
 - GitHub: [cure-lab/ArbiterOS](https://github.com/cure-lab/ArbiterOS)
 - Paper: [arXiv:2510.13857](https://arxiv.org/abs/2510.13857)
