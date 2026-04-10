@@ -3,3 +3,4 @@ stack.env
 run-kernel.sh
 __pycache__/
 *.pyc
+demo

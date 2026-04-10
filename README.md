@@ -1,8 +1,54 @@
-# ArbiterOS One-Command Installer
+<div align="center">
 
-This installer lives at the `ArbiterOS` level and sets up `ArbiterOS-Kernel` automatically, without requiring `sudo`.
+# 🛡️ ArbiterOS
 
-It will:
+### ArbiterOS: One-Command Safety Harness for AI Agents
+
+#### Autonomy under control: LLMs reason, ArbiterOS enforces.
+
+[![platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows%20%7C%20macOS-blue)](https://github.com/cure-lab/ArbiterOS)
+[![python](https://img.shields.io/badge/python-%3E%3D3.12-3776AB)](https://www.python.org/)
+[![license](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
+[![status](https://img.shields.io/badge/status-active-success)](https://github.com/cure-lab/ArbiterOS)
+[![kernel](https://img.shields.io/badge/module-ArbiterOS--Kernel-orange)](./ArbiterOS-Kernel)
+[![ui](https://img.shields.io/badge/optional-langfuse-6e56cf)](./langfuse)
+[![openclaw](https://img.shields.io/badge/integrates-OpenClaw-8a2be2)](https://github.com/cure-lab/ArbiterOS)
+
+</div>
+
+🦾 ArbiterOS provides an ultra-lightweight, one-command installation for `ArbiterOS-Kernel`, without requiring `sudo`.
+
+⚡ Delivers practical runtime safety and governance for agent systems while keeping local setup simple.
+
+📊 Optional `langfuse` integration adds trace visualization and governance observability.
+
+🧭 Deterministic rules for probabilistic AI, with instruction-level governance before execution.
+
+## Why ArbiterOS
+
+- Zero code intrusion for full-scope agents like OpenClaw and Nanobot.
+- Instruction-flow parsing plus taint-aware data-flow policy enforcement.
+- Policy outcomes support allow, deny, rewrite, or confirmation.
+- 100% support for local private deployment.
+
+## Benchmarks
+
+ArbiterOS improves interception and warning coverage across multiple agent safety evaluations:
+
+- Native OpenClaw (GPT + Claude): **6.17% -> 92.95%**
+- Agent-SafetyBench (Claude Sonnet 4): **0% -> 94.25%**
+- AgentDojo (GPT-4o): **0% -> 93.94%**
+- WildClawBench (GPT-5.2): **55% -> 100%** (warning-oriented metric)
+
+## News
+
+- 2026-04-10: Refreshed README with nanobot-style layout, badges, and quick-start structure.
+- 2026-04-08: Improved cross-platform bootstrap flow (`install.sh` / `install-windows.ps1`).
+- 2026-04-06: Added optional `langfuse` module support for runtime trace visualization.
+
+## What It Does
+
+The installer at the repository root will:
 
 - verify required commands (`curl`, `git`) and install `uv` to user space
 - ensure Python 3.12+ (install via `uv` when needed)
@@ -12,17 +58,84 @@ It will:
 - guide you to fill the first model entry in `ArbiterOS-Kernel/litellm_config.yaml`
 - update `~/.openclaw/openclaw.json` for `arbiteros` provider and model defaults
 - restart OpenClaw gateway and run `openclaw dashboard`
-- create a runnable script `run-kernel.sh`/`run-kernel.ps1`
+- create runnable scripts: `run-kernel.sh` / `run-kernel.ps1`
 
-## Project structure
+## Project Structure
 
-This repository contains two main modules:
+- **`ArbiterOS-Kernel`**: core security/governance module. Use `install.sh` + `run-kernel.sh` (or Windows equivalents) to install and run it in background.
+- **`langfuse`**: optional module for Langfuse-style UI, governance details, and runtime trace visualization.
 
-- **`ArbiterOS-Kernel`**: the core security/governance module. Use `install.sh` + `run-kernel.sh` (or the Windows equivalents) to install and run it. It runs in the background.
-- **`langfuse`**: optional. Install it if you want a Langfuse-style UI to visualize governance details and trace agent runtime. It is independent from the core security module (`ArbiterOS-Kernel`).
+## Quick Start
 
+### Get Started in 3 Steps
 
-## TODO List
+1. Install and start `ArbiterOS-Kernel` (default port: `4000`).
+2. Configure models, API keys, and policy rules in `ArbiterOS-Kernel/litellm_config.yaml`.
+3. Point your agent model provider to `http://127.0.0.1:4000/v1`.
+
+### Install
+
+```bash
+# Linux / macOS
+git clone https://github.com/cure-lab/ArbiterOS.git
+cd ArbiterOS
+chmod +x install.sh
+./install.sh
+```
+
+```powershell
+# Windows (PowerShell)
+git clone https://github.com/cure-lab/ArbiterOS.git
+cd ArbiterOS
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\install-windows.ps1
+```
+
+### Start Kernel
+
+```bash
+# Linux / macOS
+./run-kernel.sh
+```
+
+```powershell
+# Windows (PowerShell)
+.\run-kernel.ps1
+```
+
+## Optional: Langfuse UI
+
+```bash
+cd ArbiterOS/langfuse
+cp .env.prob.example .env
+docker compose -f docker-compose.yml up -d --build
+```
+
+## Links
+
+- Home: [arbiteros.ai](https://arbiteros.ai/)
+- Live Demo: [selected cases](https://arbiteros.ai/demo/selected-cases/index.html?demoLang=en)
+- GitHub: [cure-lab/ArbiterOS](https://github.com/cure-lab/ArbiterOS)
+- Paper: [arXiv:2510.13857](https://arxiv.org/abs/2510.13857)
+
+## Optional: User systemd Service
+
+If you want background auto-restart and easier operations, use a user-level service:
+
+- service name: `arbiteros-kernel`
+- service file: `~/.config/systemd/user/arbiteros-kernel.service`
+- working directory: `ArbiterOS/ArbiterOS-Kernel`
+- start command: `uv run poe litellm`
+
+Useful commands:
+
+```bash
+systemctl --user status arbiteros-kernel
+journalctl --user -u arbiteros-kernel -f
+systemctl --user restart arbiteros-kernel
+```
+
+## TODO
 
 - [x] Support NanoBot
 - [x] Evaluate on Agent SafetyBench
@@ -32,67 +145,10 @@ This repository contains two main modules:
 - [x] Use skill-scanner for skill safety analysis
 - [x] Support Linux system
 - [x] Support Windows system
-- [x] Support MacOS
-- [x] Protect the long-term memory files in the agent
-- [ ] Periodically analyze the consistency of agent role positioning, intent, and behavior
-- [ ] Prompt injection detection by using the clustered information in the dataflow
-- [ ] Pre-checking on input data
-- [ ] Policy self-evolving
+- [x] Support macOS
+- [x] Protect long-term memory files in agents
+- [ ] Periodically analyze consistency of role positioning, intent, and behavior
+- [ ] Detect prompt injection using clustered dataflow information
+- [ ] Pre-check input data
+- [ ] Self-evolving policy mechanism
 - [ ] Support multi-modal models
-
-## Installation: The ArbiterOS Kernel to Provide Safety Harness
-
-### Run (install kernel and setup, please check your OS to use the correct install script)
-
-```bash
-# For Linux and MacOS
-git clone https://github.com/cure-lab/ArbiterOS.git
-cd ArbiterOS
-chmod +x install.sh
-./install.sh
-
-# For Windows (powershell)
-git clone https://github.com/cure-lab/ArbiterOS.git
-cd ArbiterOS
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
-.\install-windows.ps1
-```
-
-### Start Kernel
-
-Default (recommended for quick start):
-
-```bash
-# For Linux and MacOS
-./run-kernel.sh
-
-# For Windows (powershell)
-.\run-kernel.ps1
-```
-
-## (Optional) Installation: The langfuse UI for Visualization
-
-```bash
-cd ArbiterOS/langfuse
-cp .env.prob.example .env
-
-docker compose -f docker-compose.yml up -d --build
-```
-
-
-## (Optional) User Systemd Service
-
-If you want background auto-restart and easier ops, use the user service:
-
-- Service name: `arbiteros-kernel`
-- Service file: `~/.config/systemd/user/arbiteros-kernel.service`
-- Working directory: `ArbiterOS/ArbiterOS-Kernel`
-- Start command: `uv run poe litellm`
-
-Useful commands:
-
-```bash
-systemctl --user status arbiteros-kernel
-journalctl --user -u arbiteros-kernel -f
-systemctl --user restart arbiteros-kernel
-```
