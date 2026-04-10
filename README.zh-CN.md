@@ -28,6 +28,10 @@
 
 🧭 以确定性规则约束概率式 AI，在指令执行前进行治理。
 
+## ArbiterOS 在 Agent 系统中的位置
+
+![ArbiterOS 在 Agent 系统中的定位](./assets/readme/position_of_arbiteros_zh.png)
+
 ## 为什么选择 ArbiterOS
 
 - 对 OpenClaw、Nanobot 这类全能力 Agent 实现零代码侵入。

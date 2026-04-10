@@ -28,6 +28,10 @@
 
 🧭 Deterministic rules for probabilistic AI, with instruction-level governance before execution.
 
+## ArbiterOS in Agent Systems
+
+![ArbiterOS Positioning in Agent Systems](./assets/readme/position_of_arbiteros_en.png)
+
 ## Why ArbiterOS
 
 - Zero code intrusion for full-scope agents like OpenClaw and Nanobot.
