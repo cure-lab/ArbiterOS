@@ -12,7 +12,14 @@ It will:
 - guide you to fill the first model entry in `ArbiterOS-Kernel/litellm_config.yaml`
 - update `~/.openclaw/openclaw.json` for `arbiteros` provider and model defaults
 - restart OpenClaw gateway and run `openclaw dashboard`
-- create a runnable script `./run-kernel.sh` (and optional user-level `systemd` service)
+- create a runnable script `run-kernel.sh`/`run-kernel.ps1`
+
+## Project structure
+
+This repository contains two main modules:
+
+- **`ArbiterOS-Kernel`**: the core security/governance module. Use `install.sh` + `run-kernel.sh` (or the Windows equivalents) to install and run it. It runs in the background.
+- **`langfuse`**: optional. Install it if you want a Langfuse-style UI to visualize governance details and trace agent runtime. It is independent from the core security module (`ArbiterOS-Kernel`).
 
 
 ## TODO List
@@ -25,7 +32,7 @@ It will:
 - [x] Use skill-scanner for skill safety analysis
 - [x] Support Linux system
 - [ ] Support Windows system
-- [ ] Sypport MacOS
+- [ ] Support MacOS
 - [x] Protect the long-term memory files in the agent
 - [ ] Periodically analyze the consistency of agent role positioning, intent, and behavior
 - [ ] Prompt injection detection by using the clustered information in the dataflow
@@ -33,30 +40,45 @@ It will:
 - [ ] Policy self-evolving
 - [ ] Support multi-modal models
 
-## Run (install kernel and setup)
+## Installation: The ArbiterOS Kernel to Provide Safety Harness
+
+### Run (install kernel and setup, please check your OS to use the correct install script)
 
 ```bash
+# For Linux and MacOS
 git clone https://github.com/cure-lab/ArbiterOS.git
 cd ArbiterOS
 chmod +x install.sh
 ./install.sh
+
+# For Windows (powershell)
+git clone https://github.com/cure-lab/ArbiterOS.git
+cd ArbiterOS
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\install-windows.ps1
 ```
 
-Or remote:
-
-```bash
-curl -fsSL <YOUR_ARBITEROS_INSTALL_SH_RAW_URL> | bash
-```
-
-## Start Kernel
+### Start Kernel
 
 Default (recommended for quick start):
 
 ```bash
+# For Linux and MacOS
 ./run-kernel.sh
+
+# For Windows (powershell)
+.\run-kernel.ps1
 ```
 
-## Optional: user systemd service
+## (Optional) Installation: The langfuse UI for Visualization
+
+```bash
+cd ArbiterOS/langfuse
+
+```
+
+
+## (Optional) User Systemd Service
 
 If you want background auto-restart and easier ops, use the user service:
 
