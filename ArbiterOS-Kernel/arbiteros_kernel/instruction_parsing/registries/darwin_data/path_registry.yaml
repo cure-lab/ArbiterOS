@@ -1,0 +1,110 @@
+version: 1
+
+path_rules:
+  instructions:
+    READ:
+      allow_prefixes:
+        - ~/.openclaw/workspace
+        - 're:^/Users/[^/]+/\.openclaw/workspace($|/)'
+        - /var/log
+        - /private/var/log
+      deny_prefixes:
+        - ~/.ssh
+        - ~/.aws
+        - ~/.gnupg
+        - 're:^/Users/[^/]+/\.(?:ssh|aws|gnupg)($|/)'
+        - 're:^/(?:etc|private/etc)($|/)'
+
+    WRITE:
+      allow_prefixes:
+        - ~/.openclaw/workspace
+        - 're:^/Users/[^/]+/\.openclaw/workspace($|/)'
+      deny_prefixes:
+        - ~/.ssh
+        - ~/.aws
+        - 're:^/Users/[^/]+/\.(?:ssh|aws)($|/)'
+        - 're:^/(?:etc|private/etc)($|/)'
+        - 're:^/usr($|/)'
+
+    EXEC:
+      default:
+        allow_prefixes:
+          - ~/.openclaw/workspace
+          - 're:^/Users/[^/]+/\.openclaw/workspace($|/)'
+        deny_prefixes:
+          - /
+          - ~/.ssh
+          - ~/.aws
+          - 're:^/Users/[^/]+/\.(?:ssh|aws)($|/)'
+          - 're:^/(?:etc|private/etc)($|/)'
+          - 're:^/(?:root|var/root)($|/)'
+
+      profiles:
+        READ_LIKE:
+          match:
+            commands: [cat, less, head, tail, grep, find, ls]
+          allow_prefixes:
+            - ~/.openclaw/workspace
+            - 're:^/Users/[^/]+/\.openclaw/workspace($|/)'
+            - /var/log
+            - /private/var/log
+          deny_prefixes:
+            - ~/.ssh
+            - ~/.gnupg
+            - 're:^/Users/[^/]+/\.(?:ssh|gnupg)($|/)'
+
+        WRITE_LIKE:
+          match:
+            commands: [cp, mv, tee, sed, tar, unzip]
+          allow_prefixes:
+            - ~/.openclaw/workspace
+            - 're:^/Users/[^/]+/\.openclaw/workspace($|/)'
+          deny_prefixes:
+            - 're:^/(?:etc|private/etc)($|/)'
+            - 're:^/usr($|/)'
+            - ~/.ssh
+            - 're:^/Users/[^/]+/\.ssh($|/)'
+
+        DELETE_LIKE:
+          match:
+            commands: [rm, unlink, rmdir]
+          allow_prefixes:
+            - ~/.openclaw/workspace/tmp
+            - 're:^/Users/[^/]+/\.openclaw/workspace/tmp($|/)'
+          deny_prefixes:
+            - /
+            - ~/.openclaw/workspace/important
+            - 're:^/Users/[^/]+/\.openclaw/workspace/important($|/)'
+            - ~/.ssh
+            - 're:^/Users/[^/]+/\.ssh($|/)'
+
+        SCRIPT_EXEC:
+          match:
+            interpreters: [python, python3, bash, sh, zsh, node]
+            script_suffixes: [.py, .sh, .bash, .zsh, .js, .mjs, .cjs, .ts]
+          allow_prefixes:
+            - ~/.openclaw/workspace/scripts
+            - 're:^/Users/[^/]+/\.openclaw/workspace/scripts($|/)'
+          deny_prefixes:
+            - /
+            - ~/.ssh
+            - 're:^/Users/[^/]+/\.ssh($|/)'
+
+        INLINE_CODE_EXEC:
+          match:
+            interpreters: [python, python3, bash, sh, node]
+            inline_flags: [-c, -e]
+          deny_prefixes:
+            - /
+            - ~/.ssh
+            - ~/.aws
+            - 're:^/Users/[^/]+/\.(?:ssh|aws)($|/)'
+
+        UNKNOWN_EXEC:
+          match:
+            fallback: true
+          deny_prefixes:
+            - /
+            - ~/.ssh
+            - ~/.aws
+            - 're:^/Users/[^/]+/\.(?:ssh|aws)($|/)'
