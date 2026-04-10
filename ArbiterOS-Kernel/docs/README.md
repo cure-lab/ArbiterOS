@@ -288,19 +288,19 @@ web:dev:   7 | import { CloudConfigSchema } from "@langfuse/shared";
 
 or
 ```json
-worker:dev: Error: Cannot find module '/home/xiangyu/langfuse/worker/node_modules/@langfuse/shared/dist/src/index.js'
+worker:dev: Error: Cannot find module '/home/user/langfuse/worker/node_modules/@langfuse/shared/dist/src/index.js'
 worker:dev:     at createEsmNotFoundErr (node:internal/modules/cjs/loader:1458:15)
 worker:dev:     at finalizeEsmResolution (node:internal/modules/cjs/loader:1447:9)
 worker:dev:     at resolveExports (node:internal/modules/cjs/loader:679:14)
 worker:dev:     at Module._findPath (node:internal/modules/cjs/loader:746:31)
 worker:dev:     at node:internal/modules/cjs/loader:1406:27
-worker:dev:     at nextResolveSimple (/home/xiangyu/langfuse/node_modules/.pnpm/tsx@4.20.5/node_modules/tsx/dist/register-D46fvsV_.cjs:4:1004)
-worker:dev:     at /home/xiangyu/langfuse/node_modules/.pnpm/tsx@4.20.5/node_modules/tsx/dist/register-D46fvsV_.cjs:3:2630
-worker:dev:     at /home/xiangyu/langfuse/node_modules/.pnpm/tsx@4.20.5/node_modules/tsx/dist/register-D46fvsV_.cjs:3:1542
-worker:dev:     at resolveTsPaths (/home/xiangyu/langfuse/node_modules/.pnpm/tsx@4.20.5/node_modules/tsx/dist/register-D46fvsV_.cjs:4:760)
-worker:dev:     at /home/xiangyu/langfuse/node_modules/.pnpm/tsx@4.20.5/node_modules/tsx/dist/register-D46fvsV_.cjs:4:1102 {
+worker:dev:     at nextResolveSimple (/home/user/langfuse/node_modules/.pnpm/tsx@4.20.5/node_modules/tsx/dist/register-D46fvsV_.cjs:4:1004)
+worker:dev:     at /home/user/langfuse/node_modules/.pnpm/tsx@4.20.5/node_modules/tsx/dist/register-D46fvsV_.cjs:3:2630
+worker:dev:     at /home/user/langfuse/node_modules/.pnpm/tsx@4.20.5/node_modules/tsx/dist/register-D46fvsV_.cjs:3:1542
+worker:dev:     at resolveTsPaths (/home/user/langfuse/node_modules/.pnpm/tsx@4.20.5/node_modules/tsx/dist/register-D46fvsV_.cjs:4:760)
+worker:dev:     at /home/user/langfuse/node_modules/.pnpm/tsx@4.20.5/node_modules/tsx/dist/register-D46fvsV_.cjs:4:1102 {
 worker:dev:   code: 'MODULE_NOT_FOUND',
-worker:dev:   path: '/home/xiangyu/langfuse/worker/node_modules/@langfuse/shared'
+worker:dev:   path: '/home/user/langfuse/worker/node_modules/@langfuse/shared'
 worker:dev: }
 worker:dev:
 ```
@@ -313,7 +313,7 @@ pnpm -w run build --filter @langfuse/shared
 
 Before this, if you use sudo, please:
 ```bash
-sudo chown -R xiangyu:xiangyu /home/xiangyu/langfuse
+sudo chown -R user:group /home/user/langfuse
 ```
 
 **ERROR 3** : 
