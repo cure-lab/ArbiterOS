@@ -32,8 +32,8 @@
 
 - Zero code intrusion for full-scope agents like OpenClaw and Nanobot.
 - Instruction-flow parsing plus taint-aware data-flow policy enforcement.
-- Policy outcomes support allow, deny, rewrite, or confirmation.
 - 100% support for local private deployment.
+- Full lifecycle inspection, analysis, and update support for governance processes and policy strategies.
 
 ## Benchmarks
 
@@ -43,12 +43,6 @@ ArbiterOS improves interception and warning coverage across multiple agent safet
 - Agent-SafetyBench (Claude Sonnet 4): **0% -> 94.25%**
 - AgentDojo (GPT-4o): **0% -> 93.94%**
 - WildClawBench (GPT-5.2): **55% -> 100%** (warning-oriented metric)
-
-## News
-
-- 2026-04-10: Refreshed README with nanobot-style layout, badges, and quick-start structure.
-- 2026-04-08: Improved cross-platform bootstrap flow (`install.sh` / `install-windows.ps1`).
-- 2026-04-06: Added optional `langfuse` module support for runtime trace visualization.
 
 ## What It Does
 

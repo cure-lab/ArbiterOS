@@ -32,8 +32,8 @@
 
 - 对 OpenClaw、Nanobot 这类全能力 Agent 实现零代码侵入。
 - 基于指令流解析 + 污点感知数据流的策略执行机制。
-- 策略结果支持 allow、deny、rewrite、confirmation。
 - 100% 支持本地私有化部署。
+- 深度支持对治理过程的全程监管, 分析, 以及治理策略的更新。
 
 ## 基准结果
 
@@ -43,12 +43,6 @@ ArbiterOS 在多项 Agent 安全评测中显著提升拦截与告警覆盖率：
 - Agent-SafetyBench (Claude Sonnet 4): **0% -> 94.25%**
 - AgentDojo (GPT-4o): **0% -> 93.94%**
 - WildClawBench (GPT-5.2): **55% -> 100%**（告警导向指标）
-
-## 更新动态
-
-- 2026-04-10: README 改为 nanobot 风格布局，更新徽章与快速开始结构。
-- 2026-04-08: 优化跨平台引导流程（`install.sh` / `install-windows.ps1`）。
-- 2026-04-06: 增加可选 `langfuse` 模块支持，用于运行时追踪可视化。
 
 ## 功能说明
 
