@@ -1,73 +1,72 @@
 # Kernel Policy Interface
 
-This document describes how the ArbiterOS kernel integrates with the policy layer for checking and optionally modifying LLM assistant responses.
+How the ArbiterOS kernel wires **user-approval preprocessing**, **`check_response_policy`**, **policies**, and **observe-only (“warning”)** behavior. For instruction JSON shape and global kernel flow, see **`docs/kernel.md`**.
 
 ---
 
 ## 1. Overview
 
-
-| Component             | Location                               | Role                                                                                                                                                                                                 |
-| --------------------- | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Kernel**            | `arbiteros_kernel/litellm_callback.py` | Intercepts LLM responses in `post_call_success` (and the streaming equivalent) and runs policy checks before returning the response to the upper-layer Agent.                                        |
-| **Policy layer**      | `arbiteros_kernel/policy/`             | Contains one or more policy classes that inspect and optionally **modify** assistant responses (e.g., block or redact tool calls, schema validation, path budgets, allow/deny rules, rate limiting). |
-| **Check entry point** | `arbiteros_kernel/policy_check.py`     | Exposes `check_response_policy()` and `PolicyCheckResult`. The kernel calls only this entry point and never invokes individual policy classes directly.                                              |
-
-
-### Data flow
-
-```
-LLM response → response_transform → check_response_policy → PolicyCheckResult → Send to Agent
-```
-
-- **modified=True**: Update message, rebuild instructions, set `policy_protected`, then send to Agent.
-- **modified=False**: Skip update; send original response to Agent.
+| Piece | Where | Role |
+| ----- | ----- | ---- |
+| Kernel | `arbiteros_kernel/litellm_callback.py` | After each assistant response: run **`apply_user_approval_preprocessing`**, then **`check_response_policy`**, apply the result; accumulate **`inactivate_error_type`** into pending warnings and flush them on a later **pure-text** reply. |
+| User approval | `arbiteros_kernel/user_approval.py` | **`apply_user_approval_preprocessing()`** — deep-copy instructions and adjust **`prop_*`** when the user previously approved a blocked action. Runs in the **callback**, immediately **before** `check_response_policy`. |
+| Registry + enforce | `arbiteros_kernel/policy_registry.json` | Each row: a policy class and **`enabled`** (enforce vs observe-only). Loaded via **`get_policy_registry()`**. |
+| Policies | `arbiteros_kernel/policy/*` | Concrete **`Policy`** subclasses; implement **`check()`** below. |
+| Entry point | `arbiteros_kernel/policy_check.py` | **`check_response_policy()`** — loops registry entries, **`apply_policy_enforcement_mode`** per row, returns one **`PolicyCheckResult`**. |
 
 ---
 
-## 2. Kernel integration
+## 2. Registry `enabled`: enforce vs observe-only
 
-**Module:** `arbiteros_kernel/litellm_callback.py`
+Each row in **`policy_registry.json`** has **`"enabled": true`** or **`false`**. The policy’s **`check()`** always runs; what differs is whether the kernel **applies** a blocking/redaction result.
 
-This section describes when and how the kernel invokes the policy layer.
+| `enabled` | Meaning | User-visible response | What gets recorded |
+| --------- | ------- | ---------------------- | ------------------ |
+| **`true`** | **Enforce** | If **`check()`** returns **`modified=True`**, the assistant message is **replaced** with **`result.response`** (block/redact tool calls or text). | Aggregated into **`PolicyCheckResult.error_type`** → **`policy_protected`** on instructions, normal policy block flow. |
+| **`false`** | **Observe-only** (“dry run”) | Response text / tool calls sent to the agent stay **unchanged** (pre-check snapshot is restored). | The text that **would** have been the violation goes to **`inactivate_error_type`** → queued for **warning append** (Section 3 pipeline) and related metadata — **not** a hard block for that turn. |
 
-### When policies run
-
-Policies run in **post_call_success** (and the streaming post_call equivalent), after:
-
-- The assistant message dict has been built (`final_msg_dict` / `msg_dict`).
-- Optional `response_transform` has been applied (e.g., stripping internal fields).
-
-The kernel exposes to policies the **final message structure** that would otherwise be returned to the Agent.
-
-### Arguments passed by the kernel
-
-
-| Argument              | Source                                                                                                                                    |
-| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| `trace_id`            | `metadata.get("arbiteros_trace_id")`; must be a non-empty string.                                                                         |
-| `instructions`        | `list(builder.instructions)` for the trace.                                                                                               |
-| `current_response`    | The message dict at this stage (`final_msg_dict` or `msg_dict`).                                                                          |
-| `latest_instructions` | The instruction slice for this response (from `_policy_instruction_count_before` / `_policy_instruction_count_before_stream` to the end). |
-
-
-The kernel does **not** pass `policy_classes`; it always uses the default list from `policy.defaults`.
-
-### When `policy_result.modified` is True
-
-1. **Replace response:** The kernel uses `policy_result.response` as the new message and writes it back to the LiteLLM response (e.g., `response.choices[0].message = Message(**final_msg_dict)`).
-2. **Sync instructions:** Calls `_replace_instructions_from_modified_response(builder, modified_response, instruction_start_index)` to regenerate and replace the instructions added in this turn from the modified response (tool_calls before content).
-3. **Mark instructions:** Each new instruction in this turn gets `instr["policy_protected"] = error_type_str`, where `error_type_str` comes from the aggregated `policy_result.error_type`.
-4. **Tool-call-level protection:** If the original response had `tool_calls`, the kernel stores `trace_id -> { tool_call_id: error_type_str }` in `_policy_protected_tool_call_ids`. When the **tool result** instruction for that `tool_call_id` is recorded later, it sets `builder.instructions[-1]["policy_protected"] = error_type` and removes the entry. Thus both the assistant's tool-call instruction and the subsequent tool-result instruction can carry the `policy_protected` marker.
-5. **Persist:** The updated instructions are written back to the trace file.
+So: **`enabled`** does not skip the policy; it switches **apply modification** vs **report only**.
 
 ---
 
-## 3. Entry Function:  `check_response_policy`
+## 3. Post-call pipeline
+
+```
+InstructionBuilder → instructions / latest_instructions
+       │
+       ▼
+apply_user_approval_preprocessing(instructions, latest_instructions)
+       │  (deep copy; prop_* elevation for user_approved / reference_tool_id)
+       ▼
+check_response_policy(trace_id, instructions, current_response, latest_instructions)
+       │  for each PolicyEntry: instantiate policy → policy.check(...) → apply_policy_enforcement_mode(entry.enabled, …)
+       ▼
+PolicyCheckResult → kernel: replace response / policy_protected / Langfuse metadata
+                  → if inactivate_error_type: append to pending_warning_texts
+                  → later: _append_pending_warnings_to_assistant_content_if_needed (pure text only; skip policy-confirmation “ask”)
+```
+
+Same behavior as the table in Section 2; see also **`apply_policy_enforcement_mode`** in **`policy_check.py`**.
+
+---
+
+## 4. User approval
+
+**Module:** `arbiteros_kernel/user_approval.py`
+
+**Function:** `apply_user_approval_preprocessing(*, instructions, latest_instructions) -> (instructions_for_policy, latest_for_policy)`
+
+- Deep-copies the instruction list when non-empty.
+- Elevates **`security_type.prop_*`** for instructions tied to **`user_approved`** flows (and related **`tool_call_id` / `reference_tool_id`**).
+- Recomputes propagated taint for the current tail when **`reference_tool_id`** is present.
+
+Persisted **`log/{trace_id}.json`** is updated by the normal builder save path; this function only supplies the lists passed into **`check_response_policy`**.
+
+---
+
+## 5. Entry function: `check_response_policy`
 
 **Module:** `arbiteros_kernel/policy_check.py`
-
-The kernel does not instantiate or call policy classes directly. It uses this single entry point:
 
 ```python
 def check_response_policy(
@@ -80,54 +79,47 @@ def check_response_policy(
 ) -> PolicyCheckResult:
 ```
 
-### Arguments
+| Argument | Typical source |
+| -------- | -------------- |
+| `trace_id` | Non-empty `arbiteros_trace_id` for the trace. |
+| `instructions` | After **`apply_user_approval_preprocessing`** in production (full history). |
+| `current_response` | Assistant message dict for this turn (post **`response_transform`**). |
+| `latest_instructions` | Suffix of `instructions` for **this** response only. |
+| `policy_classes` | **`None`** → load **`get_policy_registry()`** from **`policy_registry.json`**. Non-**`None`** → run only those classes, all treated as **enforced** (`enabled=True`). |
 
-- Same as `Policy.check()` for the first four parameters. `latest_instructions` defaults to `[]` when omitted.
-- `policy_classes`: List of policy **classes** to run in order. If `None`, uses `arbiteros_kernel.policy.defaults.DEFAULT_POLICY_CLASSES`.
-
-### Execution flow
-
-1. **Initialize:** `response = current_response`.
-2. **Iterate:** For each policy class in `policy_classes`, instantiate it and call `policy.check(...)`. The `current_response` passed to each policy is the `response` produced by the previous one.
-3. **On modification:** If a policy returns `modified=True`, set `response = result.response` and append `result.error_type` (if present) to an error list.
-4. **Return:** A single aggregated `PolicyCheckResult`:
-  - `modified = (len(errors) > 0)`
-  - `response` = the final response after all policies have run
-  - `error_type` = `"\n".join(errors)` when errors exist, otherwise `None`
-
-Policies run **in sequence**; each one sees the output of the previous. The kernel receives one combined `PolicyCheckResult`.
+**Execution:** Walk each registry entry in order; for each, **`response_before = deepcopy(current_response)`**, run **`policy.check(...)`**, then **`apply_policy_enforcement_mode(entry.enabled, response_before, result)`**. Aggregate enforced errors into **`error_type`**, observe-only strings into **`inactivate_error_type`**, and record **`policy_names` / `policy_sources`** for policies that enforced a change.
 
 ---
 
-## 4. `PolicyCheckResult`
+## 6. `PolicyCheckResult`
 
 **Module:** `arbiteros_kernel/policy_check.py`
-
-This is the return type of `check_response_policy` (and of each `Policy.check()`):
 
 ```python
 @dataclass
 class PolicyCheckResult:
-    modified: bool          # True if the response was modified by the policy
-    response: dict[str, Any]  # The response to pass onward (original or modified)
-    error_type: Optional[str] = None  # When modified=True, describes the reason for modification
+    modified: bool
+    response: dict[str, Any]
+    error_type: Optional[str] = None
+    policy_names: list[str] = field(default_factory=list)
+    policy_sources: dict[str, str] = field(default_factory=dict)
+    inactivate_error_type: Optional[str] = None
 ```
 
-
-| Field        | Description                                                                                                                                                   |
-| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `modified`   | Whether the policy changed the response (e.g., blocked tool calls, redacted content).                                                                         |
-| `response`   | The response object used by the kernel downstream. If `modified=True`, this must be the modified version.                                                     |
-| `error_type` | Optional string describing the reason (e.g., `"POLICY_BLOCK tool=read reason=..."`). Appears in metadata and in the `policy_protected` field of instructions. |
-
+| Field | Meaning |
+| ----- | ------- |
+| `modified` | **`True`** if any **enforced** policy changed the response after observe-only handling. |
+| `response` | Message dict to return downstream. |
+| `error_type` | Joined enforced violation text(s); feeds **`policy_protected`** / logging. |
+| `policy_names` | Policy class names that enforced a modification. |
+| `policy_sources` | Optional map **name → source location** (debugging). |
+| `inactivate_error_type` | Joined observe-only “would have blocked” text; feeds **pending warnings** (Section 3 pipeline). |
 
 ---
 
-## 5. Base class: `Policy`
+## 7. Base class: `Policy`
 
 **Module:** `arbiteros_kernel/policy/policy.py`
-
-All policies inherit from `Policy` and implement the unified `check` method:
 
 ```python
 class Policy(ABC):
@@ -144,14 +136,22 @@ class Policy(ABC):
         ...
 ```
 
-### Parameters
+Implementations return **`PolicyCheckResult`**; the kernel never calls concrete policy classes except through **`check_response_policy`**.
 
+**Inputs:** `instructions` / `latest_instructions` are the lists produced after **`apply_user_approval_preprocessing`** in normal runs.
 
-| Parameter             | Description                                                                                                                                  |
-| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `instructions`        | Full instruction history for the current trace (from the instruction builder). Includes `latest_instructions`.                               |
-| `current_response`    | The assistant message dict to be checked. Passed after any `response_transform`; may contain `content`, `tool_calls`, `function_call`, etc.  |
-| `latest_instructions` | Instructions derived from **this** response only (e.g., new tool_calls + content from this turn). Usually a suffix subset of `instructions`. |
-| `trace_id`            | Trace ID for the current request (used for auditing, logging, etc.).                                                                         |
+---
 
+## 8. Kernel when `modified=True` (enforced)
 
+Roughly: replace the LiteLLM message with **`policy_result.response`**, rebuild instructions for the turn from the modified message, set **`policy_protected`** on new instructions with **`error_type`**, track **`_policy_protected_tool_call_ids`** so the following **tool result** instruction can also carry **`policy_protected`**, and persist **`log/{trace_id}.json`**.
+
+---
+
+## 9. Configuration
+
+| What | File |
+| ---- | ---- |
+| Policy order and **`enabled`** (enforce vs observe-only) | `arbiteros_kernel/policy_registry.json` |
+
+See **`docs/kernel.md`** for LiteLLM callbacks, logging, and instruction schema.
