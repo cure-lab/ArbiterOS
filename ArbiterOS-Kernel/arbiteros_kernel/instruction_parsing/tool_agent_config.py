@@ -1,7 +1,8 @@
 """
-Resolve which tool parser set to use (OpenClaw vs nanobot) from litellm_config.yaml.
+Resolve which tool parser set to use (OpenClaw vs nanobot vs hermes) from litellm_config.yaml.
 
-Override with environment variable ``ARBITEROS_TOOL_AGENT=openclaw|nanobot`` (highest priority).
+Override with environment variable
+``ARBITEROS_TOOL_AGENT=openclaw|nanobot|hermes`` (highest priority).
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 _DEFAULT_AGENT = "openclaw"
-_VALID = frozenset({"openclaw", "nanobot"})
+_VALID = frozenset({"openclaw", "nanobot", "hermes"})
 
 _config_path: Optional[Path] = None
 _cached_mtime: Optional[float] = None
@@ -51,7 +52,7 @@ def _read_tool_agent_from_yaml(path: Path) -> Optional[str]:
 
 
 def get_tool_agent() -> str:
-    """Return ``openclaw`` or ``nanobot`` (default ``openclaw``)."""
+    """Return configured tool agent id (default ``openclaw``)."""
     global _cached_mtime, _cached_value, _config_path
 
     env = os.environ.get("ARBITEROS_TOOL_AGENT", "").strip().lower()
