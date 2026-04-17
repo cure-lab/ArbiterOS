@@ -31,9 +31,8 @@ model_list:
             additionalProperties: false
           strict: true
 
-# ArbiterOS kernel: which agent tool names to parse (instruction_parsing).
-# openclaw — OpenClaw tool names (read, write, …). nanobot — nanobot names (read_file, …).
-# Override: ARBITEROS_TOOL_AGENT=openclaw|nanobot
+# ArbiterOS kernel: which agent tool names to parse (instruction_parsing). 
+# Now support : openclaw, nanobot, hermes
 arbiteros_config:
   tool_agent: openclaw
 
