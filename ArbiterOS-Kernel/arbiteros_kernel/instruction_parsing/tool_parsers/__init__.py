@@ -2,7 +2,7 @@
 
 Each sub-module implements parsers for a specific toolset.
 Agent selection: ``arbiteros_config.tool_agent`` in ``litellm_config.yaml``
-(``openclaw`` | ``nanobot``), or env ``ARBITEROS_TOOL_AGENT``. Default: openclaw.
+(``openclaw`` | ``nanobot`` | ``hermes``), or env ``ARBITEROS_TOOL_AGENT``. Default: openclaw.
 """
 
 import logging
@@ -10,6 +10,7 @@ from typing import Any, Dict, Optional
 
 from ..tool_agent_config import get_tool_agent
 from ..types import TaintStatus, ToolParseResult, make_security_type
+from .hermes import HERMES_TOOL_PARSER_REGISTRY
 from .nanobot import NANOBOT_TOOL_PARSER_REGISTRY
 from .openclaw import TOOL_PARSER_REGISTRY
 
@@ -32,6 +33,27 @@ def parse_tool_instruction(
     parsers ignore fields they do not need, same as OpenClaw.
     """
     agent = get_tool_agent()
+    if agent == "hermes":
+        args = arguments or {}
+        parser = HERMES_TOOL_PARSER_REGISTRY.get(tool_name)
+        if not parser:
+            logger.warning(
+                "No hermes parser for tool %r; falling back to EXEC", tool_name
+            )
+            return ToolParseResult(
+                "EXEC",
+                make_security_type(
+                    confidentiality="UNKNOWN",
+                    trustworthiness="UNKNOWN",
+                    confidence="UNKNOWN",
+                    reversible=False,
+                    authority="UNKNOWN",
+                ),
+            )
+        result = parser(args, taint_status)
+        logger.debug("Parsed (hermes) tool call %r(%r): %r", tool_name, args, result)
+        return result
+
     if agent == "nanobot":
         args = arguments or {}
         parser = NANOBOT_TOOL_PARSER_REGISTRY.get(tool_name)
@@ -75,5 +97,6 @@ def parse_tool_instruction(
 __all__ = [
     "TOOL_PARSER_REGISTRY",
     "NANOBOT_TOOL_PARSER_REGISTRY",
+    "HERMES_TOOL_PARSER_REGISTRY",
     "parse_tool_instruction",
 ]
