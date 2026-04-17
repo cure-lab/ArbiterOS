@@ -6,7 +6,24 @@
       "write_file": "write",
       "edit_file": "edit",
       "read_file": "read",
-      "spawn": "sessions_spawn"
+      "spawn": "sessions_spawn",
+      "patch": "edit",
+      "terminal": "exec",
+      "cronjob": "cron",
+      "text_to_speech": "tts",
+      "session_search": "sessions_history",
+      "delegate_task": "sessions_spawn",
+      "vision_analyze": "image",
+      "browser_navigate": "browser",
+      "browser_click": "browser",
+      "browser_type": "browser",
+      "browser_press": "browser",
+      "browser_scroll": "browser",
+      "browser_back": "browser",
+      "browser_snapshot": "browser",
+      "browser_console": "browser",
+      "browser_get_images": "browser",
+      "browser_vision": "browser"
     }
   },
   
