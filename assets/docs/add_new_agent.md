@@ -1,18 +1,25 @@
 # How to add a new agent
 
-**The main difference between agents is the tool list.** You need to make ArbiterOS understand your new agent’s tool definitions—a new toolset. Follow the same approach we use for nanobot. Concretely, do these things:
+Scope: teach the kernel to support a new tool name set (→ `instruction_type` / `security_type`). Not about changing the LLM model (LiteLLM / provider config).
 
-## Parsing (registry)
+## What you do
 
-1. **Define a registry** — e.g. `arbiteros_kernel/instruction_parsing/tool_parsers/<agent>.py`, exporting `YOUR_AGENT_TOOL_PARSER_REGISTRY: Dict[str, ToolParser]` (tool name → parser function).
-2. **`tool_parsers/__init__.py`** — Import the registry and handle the branch where `get_tool_agent() == "<agent>"` inside `parse_tool_instruction`.
-3. **`tool_agent_config.py`** — Add the new agent id to **`_VALID`** (lowercase). Values not in the set are rejected and the runtime falls back to **`openclaw`**.
-4. **Runtime selection** — Set `arbiteros_config.tool_agent` in `litellm_config.yaml`, or use the **`ARBITEROS_TOOL_AGENT`** environment variable (overrides YAML).
+Same layout as `nanobot.py` / `hermes.py`: new registry module + wire it in. For each tool in that agent’s list: if it matches an OpenClaw tool or behavior (read/write/exec/browser/…), add a parser that yields the same `instruction_type` / `security_type` patterns as `openclaw.py`; if it doesn’t map cleanly, don’t register it and let the default fallback apply (`EXEC` + conservative `UNKNOWN` security).
 
-## Policy
+## What to change
 
-- **`unary_gate.tool_aliases`** (in the policy JSON that is actually loaded, e.g. `policy.json`) — Maps **New tool names** to **canonical names** used in `unary_gate_rules.json` `selector.tool` (OpenClaw-style vocabulary). UnaryGate reads this from `RUNTIME.cfg["unary_gate"]["tool_aliases"]`.
 
-## Do not
+| Place                                          | Change                                                                                             |
+| ---------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `instruction_parsing/tool_parsers/<agent>.py`  | New file: export `<AGENT>_TOOL_PARSER_REGISTRY`.                                                   |
+| `instruction_parsing/tool_parsers/__init__.py` | Import registry; in `parse_tool_instruction`, branch on `get_tool_agent() == "<agent>"`.           |
+| `instruction_parsing/tool_agent_config.py`     | Add `"<agent>"` to `_VALID`.                                                                       |
+| `litellm_config.yaml` or env                   | `arbiteros_config.tool_agent: <agent>` or `ARBITEROS_TOOL_AGENT` (env overrides YAML).             |
+| Loaded policy JSON (e.g. `policy.json`)        | `unary_gate.tool_aliases`: map your API tool names → OpenClaw-style names for UnaryGate selectors. |
 
-Do not change `openclaw.py` or `nanobot.py`, they are examples of how to add an agent.
+
+## Notes
+
+- Parsers are `.py` only; `openclaw.json` is not used by `parse_tool_instruction`.
+- Don’t refactor `openclaw.py` / `nanobot.py` / `hermes.py` to add an agent—add a new file and hook it up.
+
