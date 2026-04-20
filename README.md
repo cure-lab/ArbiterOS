@@ -4,9 +4,9 @@
 
 # 🛡️ ArbiterOS
 
-### ArbiterOS: One-Command Safety Harness for AI Agents
+### ArbiterOS: Governance Kernel for AI Agents
 
-#### Autonomy under control: LLMs reason, ArbiterOS enforces.
+#### ArbiterOS sits beneath or beside your agent runtime to enforce policy, emit authoritative traces, and intercept unsafe actions before side effects occur.
 
 [![platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows%20%7C%20macOS-blue)](https://github.com/cure-lab/ArbiterOS)
 [![python](https://img.shields.io/badge/python-%3E%3D3.12-3776AB)](https://www.python.org/)
@@ -20,13 +20,13 @@
 
 </div>
 
-🦾 ArbiterOS provides an ultra-lightweight, one-command installation for `ArbiterOS-Kernel`.
+ArbiterOS is not another agent framework. It is a runtime governance layer for agent systems that route model calls through an OpenAI-compatible endpoint.
 
-⚡ Delivers practical runtime safety and governance for agent systems while keeping local setup simple.
+It focuses on three things first:
 
-📊 Optional `langfuse` integration adds trace visualization and governance observability.
-
-🧭 Deterministic rules for probabilistic AI, with instruction-level governance before execution.
+- **Authoritative trace** for what the agent planned, called, and returned.
+- **Policy enforcement** over parsed instructions, tool calls, and taint-propagated dataflow.
+- **Unsafe action interception** before sensitive side effects happen.
 
 ## ArbiterOS in Agent Systems
 
@@ -34,46 +34,65 @@
 
 ## Why ArbiterOS
 
-- Zero code intrusion for full-scope agents like OpenClaw and Nanobot.
-- Instruction-flow parsing plus taint-aware data-flow policy enforcement.
-- 100% support for local private deployment.
-- Full lifecycle inspection, analysis, and update support for governance processes and policy strategies.
+- Drop-in governance boundary for agent runtimes that can customize LLM base URL and API key.
+- Taint-aware policy checks over instruction flow and tool execution.
+- Full local deployment support across Linux, macOS, and Windows.
+- Auditable runtime logs and optional Langfuse-based visualization.
+- Minimal host changes: point the agent runtime to ArbiterOS, then enforce policy before execution.
+
+## Supported Integration Pattern
+
+ArbiterOS Kernel currently works best with agent runtimes that can override the model endpoint per request or per profile.
+
+- Supported in current repository: `OpenClaw`, `Nanobot`, and additional parser mappings documented in the Kernel codebase.
+- Compatible serving pattern: OpenAI-compatible / LiteLLM-based routing.
+- Default local endpoint after startup: `http://127.0.0.1:4000/v1`
+
+## See Value Quickly
+
+The fastest path is:
+
+1. Install and start `ArbiterOS-Kernel`.
+2. Configure one upstream model in `ArbiterOS-Kernel/litellm_config.yaml`.
+3. Point your agent runtime to `http://127.0.0.1:4000/v1`.
+4. Run a tool-using workflow and inspect the resulting trace, policy decisions, and runtime logs.
 
 ## Benchmarks
 
-ArbiterOS improves interception and warning coverage across multiple agent safety evaluations:
+ArbiterOS has shown strong interception or warning gains in multiple agent safety evaluations:
 
 - Native OpenClaw (GPT + Claude): **6.17% -> 92.95%**
 - Agent-SafetyBench (Claude Sonnet 4): **0% -> 94.25%**
 - AgentDojo (GPT-4o): **0% -> 93.94%**
 - WildClawBench (GPT-5.2): **55% -> 100%** (warning-oriented metric)
 
-## What It Does
+These numbers should be interpreted with their benchmark-specific metric definitions and baselines. In the current repository, benchmark results are presented as headline outcomes rather than a standalone reproducibility pack.
 
-The installer at the repository root will:
+## What the Root Installer Does
 
-- verify required commands (`curl`, `git`) and install `uv` to user space
-- ensure Python 3.12+ (install via `uv` when needed)
-- clone or update `ArbiterOS`
-- install kernel dependencies (`uv sync --group dev`)
-- create `ArbiterOS-Kernel/.env` from `.env.example`
-- guide you to fill the first model entry in `ArbiterOS-Kernel/litellm_config.yaml`
-- update `~/.openclaw/openclaw.json` for `arbiteros` provider and model defaults
-- restart OpenClaw gateway and run `openclaw dashboard`
-- create runnable scripts: `run-kernel.sh` / `run-kernel.ps1`
+The root installer helps you bootstrap the Kernel quickly:
+
+- verifies required commands (`curl`, `git`) and installs `uv` to user space when needed
+- ensures Python `3.12+`
+- clones or updates `ArbiterOS`
+- installs Kernel dependencies with `uv sync --group dev`
+- creates `ArbiterOS-Kernel/.env` from `.env.example` when available
+- guides you through the first model entry in `ArbiterOS-Kernel/litellm_config.yaml`
+- configures `~/.openclaw/openclaw.json` for the `arbiteros` provider
+- restarts the OpenClaw gateway and opens the dashboard when `openclaw` is installed
+- generates runnable scripts such as `run-kernel.sh` / `run-kernel.ps1`
 
 ## Project Structure
 
-- **`ArbiterOS-Kernel`**: core security/governance module. Use `install.sh` + `run-kernel.sh` (or Windows equivalents) to install and run it in background.
-- **`langfuse`**: optional module for Langfuse-style UI, governance details, and runtime trace visualization.
+- **`ArbiterOS-Kernel`**: the core governance kernel, including instruction parsing, taint propagation, policy checks, replay assets, and runtime hooks.
+- **`assets/docs`**: technical docs for architecture, policy interfaces, registry behavior, new-agent integration, and visualization.
+- **`langfuse`**: optional visualization and observability stack for traces and governance workflows.
+- **`scripts`**: helper scripts for environment generation and local setup.
+- **`assets/readme`**: README images and supporting assets.
+
+If you are new to the codebase, start from `ArbiterOS-Kernel` as the product core, then `assets/docs` for architecture and extension details.
 
 ## Quick Start
-
-### Get Started in 3 Steps
-
-1. Install and start `ArbiterOS-Kernel` (default port: `4000`).
-2. Configure models, API keys, and policy rules in `ArbiterOS-Kernel/litellm_config.yaml`.
-3. Point your agent model provider to `http://127.0.0.1:4000/v1`.
 
 ### Install
 
@@ -105,6 +124,14 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 .\run-kernel.ps1
 ```
 
+### Connect Your Agent Runtime
+
+After the Kernel starts:
+
+1. Edit `ArbiterOS-Kernel/litellm_config.yaml` and fill in the upstream model, API key, and base URL.
+2. Point your agent runtime or provider profile to `http://127.0.0.1:4000/v1`.
+3. Run a tool-using task and inspect the Kernel output under runtime logs or Langfuse.
+
 ## Optional: Langfuse UI
 
 ```bash
@@ -113,9 +140,18 @@ cp .env.prob.example .env
 docker compose -f docker-compose.yml up -d --build
 ```
 
+## Documentation
+
+- Kernel architecture: `assets/docs/kernel.md`
+- Policy interface: `assets/docs/kernel-policy_interface.md`
+- Registry and taint labels: `assets/docs/registry_usage.md`
+- Add support for a new agent: `assets/docs/add_new_agent.md`
+- Visualization guide: `assets/docs/visualization.md`
+- Documentation index: `assets/docs/README.md`
+
 ## Optional: User systemd Service
 
-If you want background auto-restart and easier operations, use a user-level service:
+If you want background auto-restart and simpler day-to-day operation, use a user-level service:
 
 - service name: `arbiteros-kernel`
 - service file: `~/.config/systemd/user/arbiteros-kernel.service`
@@ -130,20 +166,18 @@ journalctl --user -u arbiteros-kernel -f
 systemctl --user restart arbiteros-kernel
 ```
 
-## TODO
+## Roadmap
 
-- [x] Support NanoBot
-- [x] Evaluate on Agent SafetyBench
-- [x] Evaluate on AgentDojo
-- [x] Evaluate on Wild Claw Bench
-- [x] Evaluate on ToolEmu
-- [x] Use skill-scanner for skill safety analysis
-- [x] Support Linux system
-- [x] Support Windows system
-- [x] Support macOS
-- [x] Protect long-term memory files in agents
-- [ ] Periodically analyze consistency of role positioning, intent, and behavior
-- [ ] Detect prompt injection using clustered dataflow information
-- [ ] Pre-check input data
-- [ ] Self-evolving policy mechanism
-- [ ] Support multi-modal models
+### Near-Term
+
+- Reproducible benchmark packaging and clearer metric definitions
+- Hardening across Linux, macOS, and Windows environments
+- More policy packs for common risky operations
+- Better operator-facing trace and policy inspection workflows
+
+### Research Direction
+
+- Long-term memory protection improvements
+- Prompt-injection detection with clustered dataflow signals
+- Self-evolving policy mechanisms
+- Multimodal model support
