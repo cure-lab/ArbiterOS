@@ -15,6 +15,19 @@ try:
 except Exception:
     jsonschema = None
 
+_HERMES_BROWSER_TOOL_TO_ACTION: Dict[str, str] = {
+    "browser_navigate": "open",
+    "browser_click": "act",
+    "browser_type": "act",
+    "browser_press": "act",
+    "browser_scroll": "act",
+    "browser_back": "act",
+    "browser_snapshot": "snapshot",
+    "browser_console": "console",
+    "browser_get_images": "snapshot",
+    "browser_vision": "screenshot",
+}
+
 
 def _now() -> float:
     return time.time()
@@ -336,10 +349,42 @@ class KernelPolicyRuntime:
         if isinstance(raw_args, str):
             parsed = _safe_json_loads(raw_args)
             args = parsed if isinstance(parsed, dict) else {}
+            tool_name, args = self._canonicalize_tool_call_for_policy(tool_name, args)
             return (tool_name, tool_call_id, args, True)
         if isinstance(raw_args, dict):
-            return (tool_name, tool_call_id, dict(raw_args), False)
+            args = dict(raw_args)
+            tool_name, args = self._canonicalize_tool_call_for_policy(tool_name, args)
+            return (tool_name, tool_call_id, args, False)
         return (tool_name, tool_call_id, {}, False)
+
+    def _canonicalize_tool_call_for_policy(
+        self, tool_name: str, args: Dict[str, Any]
+    ) -> Tuple[str, Dict[str, Any]]:
+        """
+        Pre-policy tool normalization.
+
+        Keep this runtime-level and agent-gated so we don't need policy-side
+        code changes for Hermes split browser tools.
+        """
+        try:
+            from arbiteros_kernel.instruction_parsing.tool_agent_config import (
+                get_tool_agent,
+            )
+            agent = get_tool_agent()
+        except Exception:
+            agent = "openclaw"
+
+        if agent != "hermes":
+            return tool_name, args
+
+        action = _HERMES_BROWSER_TOOL_TO_ACTION.get(tool_name)
+        if action is None:
+            return tool_name, args
+
+        out_args = dict(args)
+        out_args.setdefault("action", action)
+        out_args.setdefault("_arbiteros_raw_tool_name", tool_name)
+        return "browser", out_args
 
     def write_back_tool_args(
         self, tc: Dict[str, Any], args: Dict[str, Any], was_json_str: bool
