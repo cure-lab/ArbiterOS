@@ -181,3 +181,4 @@ systemctl --user restart arbiteros-kernel
 - Prompt-injection detection with clustered dataflow signals
 - Self-evolving policy mechanisms
 - Multimodal model support
+- Optimize memory and resource management to support long-runing agent
