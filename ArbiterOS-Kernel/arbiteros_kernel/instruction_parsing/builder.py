@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from .tool_parsers import parse_tool_instruction
+from .tool_agent_config import get_tool_agent
 from .types import (
     INSTRUCTION_TYPE_TO_CATEGORY,
     Instruction,
@@ -23,6 +24,44 @@ from .types import (
     compute_prop_taint_for_instruction,
     make_security_type,
 )
+
+
+_HERMES_BROWSER_TOOL_TO_ACTION: Dict[str, str] = {
+    "browser_navigate": "open",
+    "browser_click": "act",
+    "browser_type": "act",
+    "browser_press": "act",
+    "browser_scroll": "act",
+    "browser_back": "act",
+    "browser_snapshot": "snapshot",
+    "browser_console": "console",
+    "browser_get_images": "snapshot",
+    "browser_vision": "screenshot",
+}
+
+
+def _canonicalize_tool_for_policy(
+    tool_name: str, arguments: Dict[str, Any]
+) -> tuple[str, Dict[str, Any]]:
+    """
+    Pre-policy normalization for Hermse split browser tools.
+
+    Keep parser input unchanged (handled by caller), but normalize instruction
+    content so policies that expect OpenClaw-style browser(action=...) semantics
+    can still classify flow kinds consistently.
+    """
+    if get_tool_agent() != "hermes":
+        return tool_name, arguments
+
+    action = _HERMES_BROWSER_TOOL_TO_ACTION.get(tool_name)
+    if action is None:
+        return tool_name, arguments
+
+    out_args = dict(arguments)
+    out_args.setdefault("action", action)
+    out_args.setdefault("_arbiteros_raw_tool_name", tool_name)
+    return "browser", out_args
+
 
 class InstructionBuilder:
     """Accumulates Instructions for a single trace, ready to be serialised."""
@@ -158,10 +197,13 @@ class InstructionBuilder:
         runtime_step: Optional[int] = None,
     ) -> Instruction:
         """Build an Instruction from a tool call, delegating to the registered parser."""
+        policy_tool_name, policy_arguments = _canonicalize_tool_for_policy(
+            tool_name, arguments
+        )
         content: Dict[str, Any] = {
-            "tool_name": tool_name,
+            "tool_name": policy_tool_name,
             "tool_call_id": tool_call_id,
-            "arguments": arguments,
+            "arguments": policy_arguments,
         }
         if result is not None:
             content["result"] = result
