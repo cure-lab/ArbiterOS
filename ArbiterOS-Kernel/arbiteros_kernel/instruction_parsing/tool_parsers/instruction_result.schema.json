@@ -32,7 +32,6 @@
       "properties": {
         "confidentiality": { "$ref": "#/$defs/Level" },
         "trustworthiness":  { "$ref": "#/$defs/Level" },
-        "confidence":       { "$ref": "#/$defs/Level" },
         "risk":             { "$ref": "#/$defs/Level" },
         "reversible": { "type": "boolean" }
       }
