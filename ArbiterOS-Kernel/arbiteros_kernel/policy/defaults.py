@@ -20,6 +20,7 @@ from .unary_gate_policy import UnaryGatePolicy
 from .relational_policy import RelationalPolicy
 from .openclaw_policy import OpenClawPolicy
 from .nanobot_policy import NanobotPolicy
+from .alignment_sentinel_policy import AlignmentSentinelPolicy
 if TYPE_CHECKING:
     from .policy import Policy
 
@@ -55,6 +56,7 @@ POLICY_CLASS_MAP: dict[str, type["Policy"]] = {
     "RelationalPolicy": RelationalPolicy,
     "OpenClawPolicy": OpenClawPolicy,
     "NanobotPolicy": NanobotPolicy,
+    "AlignmentSentinelPolicy": AlignmentSentinelPolicy,
 }
 
 
@@ -147,6 +149,13 @@ def _default_registry_data() -> list[dict[str, object]]:
             "name": "NanobotPolicy",
             "enabled": True,
             "description": "Implements Nanobot response-layer guards: exec deny patterns, URL/SSRF checks, and repeated external lookup blocking."
+        },
+        {
+            "name": "AlignmentSentinelPolicy",
+            "enabled": False,
+            "description": (
+                "LLM-based pre-exec alignment check for planned tool calls against recent user objective."
+            ),
         },
     ]
 
