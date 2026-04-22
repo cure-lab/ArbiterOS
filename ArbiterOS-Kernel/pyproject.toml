@@ -41,5 +41,8 @@ args = [{ name = "replay_args", positional = true, multiple = true }]
 cmd = "uv run python -m arbiteros_kernel.policy_test_harness ${spec_file}"
 args = [{ name = "spec_file", positional = true }]
 
+[tool.ty]
+environment = { python = ".venv" }
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
