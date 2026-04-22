@@ -20,7 +20,7 @@ def main() -> int:
 
     # Local import so ``uv run python -m arbiteros_kernel.warm_skill_trust`` works
     # without pulling heavy deps before we know we need them.
-    from arbiteros_kernel.instruction_parsing.tool_parsers import skill_trust
+    from arbiteros_kernel.instruction_parsing.helpers import skill_trust
 
     root = skill_trust.get_skills_root()
     if not root:

@@ -509,7 +509,7 @@ class RegistrySet:
             )
             return "UNKNOWN"
 
-        from ..tool_parsers import skill_trust  # local import to avoid circular dependency
+        from ..helpers import skill_trust  # local import to avoid circular dependency
 
         skills_root = skill_trust.get_skills_root()
         per_path: List[SecurityLevel] = []
