@@ -1006,6 +1006,58 @@ def _extract_text_from_responses_input(input_payload: Any) -> str:
     return ""
 
 
+def _extract_all_user_messages_from_request(request_data: Any) -> list[str]:
+    """Extract all user-message texts from current precall payload."""
+    if not isinstance(request_data, dict):
+        return []
+
+    out: list[str] = []
+    messages = request_data.get("messages")
+    if isinstance(messages, list):
+        for msg in messages:
+            if not isinstance(msg, dict):
+                continue
+            if msg.get("role") != "user":
+                continue
+            text = _extract_text_from_message_content(msg.get("content")).strip()
+            if text:
+                out.append(text)
+        return out
+
+    # Responses API fallback
+    if _is_responses_api_request(request_data):
+        input_payload = request_data.get("input")
+        if isinstance(input_payload, str):
+            text = input_payload.strip()
+            if text:
+                out.append(text)
+            return out
+        if isinstance(input_payload, dict):
+            role = input_payload.get("role")
+            if isinstance(role, str) and role != "user":
+                return out
+            text = _extract_text_from_message_content(input_payload.get("content")).strip()
+            if text:
+                out.append(text)
+            return out
+        if isinstance(input_payload, list):
+            for item in input_payload:
+                if isinstance(item, str):
+                    text = item.strip()
+                    if text:
+                        out.append(text)
+                    continue
+                if not isinstance(item, dict):
+                    continue
+                role = item.get("role")
+                if isinstance(role, str) and role != "user":
+                    continue
+                text = _extract_text_from_message_content(item.get("content")).strip()
+                if text:
+                    out.append(text)
+    return out
+
+
 def _extract_stream_text_from_responses_chunk(
     chunk: Any, chunk_dump: Optional[dict]
 ) -> str:
@@ -4864,9 +4916,11 @@ class MyCustomHandler(CustomLogger):
     ]:  # raise exception if invalid, return a str for the user to receive - if rejected, or return a modified dictionary for passing into litellm
         # Some upstreams (e.g. gpt-5.2-chat-latest) reject non-default temperature; clients often send 0.7.
         _m = data.get("model")
+        '''
         if isinstance(_m, str) and _m.split("/")[-1] == "gpt-5.2-chat-latest":
             if data.get("temperature") is not None and data.get("temperature") != 1:
                 data = {**data, "temperature": 1}
+        '''
         # 1) Policy confirmation: detect Yes/No (不删除确认消息和用户回复，precall 里每条都包)
         _policy_confirm_apply: Optional[bool] = None
         messages = data.get("messages")
@@ -5444,7 +5498,9 @@ class MyCustomHandler(CustomLogger):
                         latest_instructions=latest_instructions,
                     )
                 )
+                extracted_user_messages = _extract_all_user_messages_from_request(data)
                 policy_result = check_response_policy(
+                    user_messages=extracted_user_messages,
                     trace_id=trace_id,
                     instructions=instructions_for_policy,
                     current_response=final_msg_dict,
@@ -5969,7 +6025,11 @@ class MyCustomHandler(CustomLogger):
                         latest_instructions=latest_instructions,
                     )
                 )
+                extracted_user_messages = _extract_all_user_messages_from_request(
+                    request_data
+                )
                 policy_result = check_response_policy(
+                    user_messages=extracted_user_messages,
                     trace_id=trace_id,
                     instructions=instructions_for_policy,
                     current_response=msg_dict,
