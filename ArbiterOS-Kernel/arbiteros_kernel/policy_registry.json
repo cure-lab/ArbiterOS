@@ -48,12 +48,16 @@
   {
     "name": "RelationalPolicy",
     "enabled": true,
-    "description": "Applies relational taint / propagated-security checks using kernel-lowered metadata."
+    "description": 
+          "Applies relational taint / propagated-security checks using kernel-lowered metadata."
+      
   },
   {
     "name": "UnaryGatePolicy",
     "enabled":true,
-    "description": "Applies declarative unary rules over instruction metadata and reports the matched rule."
+    "description": 
+          "Applies declarative unary rules over instruction metadata and reports the matched rule."
+      
   },
   {
     "name": "OpenClawPolicy",
@@ -64,5 +68,10 @@
     "name": "NanobotPolicy",
     "enabled": false,
     "description": "Implements Nanobot response-layer guards: exec deny patterns, URL/SSRF checks, and repeated external lookup blocking."        
+  },
+  {
+    "name": "AlignmentSentinelPolicy",
+    "enabled": true,
+    "description": "LLM-based pre-exec alignment check for planned tool calls against recent user objective."
   }
 ]
