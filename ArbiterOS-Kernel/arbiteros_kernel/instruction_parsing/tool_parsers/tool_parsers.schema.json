@@ -195,7 +195,7 @@
       }
     },
     "Result": {
-      "$ref": "#/$defs/Result"
+      "$ref": "instruction_result.schema.json#/$defs/Result"
     }
   }
 }
