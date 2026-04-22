@@ -1,96 +1,37 @@
 """
-Resolve which tool parser set to use (OpenClaw vs nanobot vs hermes) from litellm_config.yaml.
-
-Override with environment variable
-``ARBITEROS_TOOL_AGENT=openclaw|nanobot|hermes`` (highest priority).
+Resolve which tool parser set to use (openclaw | nanobot | hermes) from litellm_config.yaml.
 """
 
 from __future__ import annotations
 
 import logging
-import os
 from pathlib import Path
-from typing import Optional
+import yaml
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_AGENT = "openclaw"
 _VALID = frozenset({"openclaw", "nanobot", "hermes"})
-
-_config_path: Optional[Path] = None
-_cached_mtime: Optional[float] = None
-_cached_value: Optional[str] = None
+_DEFAULT_AGENT = "openclaw"
 
 
-def _litellm_config_path() -> Path:
-    env = os.environ.get("ARBITEROS_LITELLM_CONFIG", "").strip()
-    if env:
-        return Path(env).expanduser().resolve()
-    # arbiteros_kernel/instruction_parsing/tool_agent_config.py -> parents[2] = ArbiterOS-Kernel
-    return Path(__file__).resolve().parents[2] / "litellm_config.yaml"
-
-
-def _read_tool_agent_from_yaml(path: Path) -> Optional[str]:
-    if not path.is_file():
-        logger.debug("litellm config not found at %s", path)
-        return None
+def _load() -> str:
+    env_path = __import__("os").environ.get("ARBITEROS_LITELLM_CONFIG", "").strip()
+    path = Path(env_path).expanduser().resolve() if env_path else Path(__file__).resolve().parents[2] / "litellm_config.yaml"
     try:
-        import yaml
-
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+        block = raw.get("arbiteros_config") if isinstance(raw, dict) else None
+        v = block.get("tool_agent", "").strip().lower() if isinstance(block, dict) else ""
+        if v in _VALID:
+            return v
+        if v:
+            logger.warning("Invalid arbiteros_config.tool_agent %r in %s; using %s", v, path, _DEFAULT_AGENT)
     except Exception as e:
-        logger.warning("Failed to read %s: %s", path, e)
-        return None
-    if not isinstance(raw, dict):
-        return None
-    block = raw.get("arbiteros_config")
-    if isinstance(block, dict):
-        v = block.get("tool_agent")
-        if isinstance(v, str) and v.strip():
-            return v.strip().lower()
-    return None
-
-
-def get_tool_agent() -> str:
-    """Return configured tool agent id (default ``openclaw``)."""
-    global _cached_mtime, _cached_value, _config_path
-
-    env = os.environ.get("ARBITEROS_TOOL_AGENT", "").strip().lower()
-    if env in _VALID:
-        return env
-
-    path = _litellm_config_path()
-    try:
-        mtime = path.stat().st_mtime
-    except OSError:
-        mtime = None
-
-    if _cached_value is not None and path == _config_path and mtime == _cached_mtime:
-        return _cached_value
-
-    _config_path = path
-    _cached_mtime = mtime
-
-    yaml_val = _read_tool_agent_from_yaml(path)
-    if yaml_val in _VALID:
-        _cached_value = yaml_val
-        return yaml_val
-
-    if yaml_val:
-        logger.warning(
-            "Invalid arbiteros_config.tool_agent %r in %s; using %s",
-            yaml_val,
-            path,
-            _DEFAULT_AGENT,
-        )
-
-    _cached_value = _DEFAULT_AGENT
+        logger.debug("Could not read tool_agent from %s: %s", path, e)
     return _DEFAULT_AGENT
 
 
-def invalidate_tool_agent_cache() -> None:
-    """Testing / hot-reload hook."""
-    global _cached_mtime, _cached_value, _config_path
-    _cached_mtime = None
-    _cached_value = None
-    _config_path = None
+_TOOL_AGENT: str = _load()
+
+
+def get_tool_agent() -> str:
+    return _TOOL_AGENT
