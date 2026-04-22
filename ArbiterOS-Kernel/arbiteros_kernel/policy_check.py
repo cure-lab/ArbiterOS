@@ -118,6 +118,7 @@ def check_response_policy(
     current_response: dict[str, Any],
     latest_instructions: list[dict[str, Any]] | None = None,
     policy_classes: Optional[list[type["Policy"]]] = None,
+    user_messages: list[str] | None = None,
 ) -> PolicyCheckResult:
     """
     Policy check on post_call_success response before returning to agent.
@@ -133,6 +134,8 @@ def check_response_policy(
             ``enabled`` controls observe-only vs enforce **outside** policies via
             :func:`apply_policy_enforcement_mode` (no kwargs passed into
             ``Policy.check``).
+        user_messages: Optional full user-message history from current precall payload.
+            Passed through to policy.check via kwargs for policies that need it.
 
     Output:
         PolicyCheckResult: modified, response, error_type (when modified).
@@ -180,6 +183,7 @@ def check_response_policy(
             current_response=response,
             latest_instructions=latest_instructions,
             trace_id=trace_id,
+            user_messages=user_messages or [],
         )
         result = apply_policy_enforcement_mode(entry.enabled, response_before, result)
 
