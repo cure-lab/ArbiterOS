@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "instruction_result.schema.json",
+  "title": "ArbiterOS Instruction Classification Result",
+  "description": "Defines the structured output of instruction parsing: the instruction type and its associated security metadata.",
+
+  "$defs": {
+
+    "Result": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Partial or full classification result. Both fields are optional to allow targeted deep-merge overrides.",
+      "properties": {
+        "instruction_type": { "$ref": "#/$defs/InstructionType" },
+        "metadata":         { "$ref": "#/$defs/Metadata" }
+      }
+    },
+
+    "InstructionType": {
+      "type": "string",
+      "enum": [
+        "READ", "WRITE", "EXEC", "WAIT", "ASK", "RESPOND", "DELEGATE",
+        "REASON", "PLAN", "CRITIQUE", "STORE", "RETRIEVE", "COMPRESS", "PRUNE",
+        "SUBSCRIBE", "RECEIVE", "USER_MESSAGE"
+      ]
+    },
+
+    "Metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Security classification fields. All fields are optional to allow partial deep-merge.",
+      "properties": {
+        "confidentiality": { "$ref": "#/$defs/Level" },
+        "trustworthiness":  { "$ref": "#/$defs/Level" },
+        "confidence":       { "$ref": "#/$defs/Level" },
+        "risk":             { "$ref": "#/$defs/Level" },
+        "reversible": { "type": "boolean" }
+      }
+    },
+
+    "Level": {
+      "type": "string",
+      "enum": ["HIGH", "LOW", "UNKNOWN"]
+    }
+
+  }
+}

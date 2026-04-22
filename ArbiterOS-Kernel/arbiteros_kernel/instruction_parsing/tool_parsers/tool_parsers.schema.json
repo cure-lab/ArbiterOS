@@ -1,0 +1,201 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "tool_parsers.schema.json",
+  "title": "ArbiterOS Tool Parser Rules",
+  "description": "Declarative parsing rules that classify tool calls into instruction types and security metadata. Each tool definition contains an ordered list of passes applied in sequence; later passes deep-merge over earlier results.",
+  "type": "array",
+  "items": {
+    "$ref": "#/$defs/ToolParserDef"
+  },
+  "$defs": {
+    "ToolParserDef": {
+      "type": "object",
+      "required": [
+        "tool",
+        "passes"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "tool": {
+          "type": "string",
+          "description": "Exact tool name this definition applies to."
+        },
+        "passes": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Ordered list of parser passes. Applied in sequence; each matching pass deep-merges its result into the accumulated output. At least one DefaultPass must be present to guarantee instruction_type is always set.",
+          "items": {
+            "$ref": "#/$defs/Pass"
+          }
+        }
+      }
+    },
+    "Pass": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/DefaultPass"
+        },
+        {
+          "$ref": "#/$defs/RegexPass"
+        },
+        {
+          "$ref": "#/$defs/NumericPass"
+        },
+        {
+          "$ref": "#/$defs/PathPass"
+        },
+        {
+          "$ref": "#/$defs/ShellPass"
+        }
+      ]
+    },
+    "DefaultPass": {
+      "type": "object",
+      "required": [
+        "match_type",
+        "result"
+      ],
+      "additionalProperties": false,
+      "description": "Unconditional baseline result. Always matches. Typically the first pass in a definition.",
+      "properties": {
+        "match_type": {
+          "const": "default"
+        },
+        "result": {
+          "$ref": "#/$defs/Result"
+        }
+      }
+    },
+    "RegexPass": {
+      "type": "object",
+      "required": [
+        "match_type",
+        "cases"
+      ],
+      "additionalProperties": false,
+      "description": "Matches individual argument values against regex patterns. All matching cases within this pass are applied in order.",
+      "properties": {
+        "match_type": {
+          "const": "regex"
+        },
+        "cases": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/RegexCase"
+          }
+        }
+      }
+    },
+    "RegexCase": {
+      "type": "object",
+      "required": [
+        "arg",
+        "pattern",
+        "result"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "arg": {
+          "type": "string",
+          "description": "Dot-notation path to the argument value to match against (e.g. 'action', 'request.kind', 'request.fields[0].ref'). If the path does not exist in the args, this case is skipped."
+        },
+        "pattern": {
+          "type": "string",
+          "description": "Regex matched against the string value at arg path. Evaluated case-sensitive, DOTALL off, multiline off."
+        },
+        "result": {
+          "$ref": "#/$defs/Result"
+        }
+      }
+    },
+    "NumericPass": {
+      "type": "object",
+      "required": [
+        "match_type",
+        "cases"
+      ],
+      "additionalProperties": false,
+      "description": "Compares individual numeric argument values against thresholds. All matching cases within this pass are applied in order.",
+      "properties": {
+        "match_type": {
+          "const": "numeric"
+        },
+        "cases": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/NumericCase"
+          }
+        }
+      }
+    },
+    "NumericCase": {
+      "type": "object",
+      "required": [
+        "arg",
+        "op",
+        "value",
+        "result"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "arg": {
+          "type": "string",
+          "description": "Dot-notation path to the argument value to compare (e.g. 'yieldMs', 'request.width'). If the path does not exist or the value is not a number, this case is skipped."
+        },
+        "op": {
+          "type": "string",
+          "enum": ["eq", "neq", "lt", "lte", "gt", "gte"],
+          "description": "Comparison operator: eq (==), neq (!=), lt (<), lte (<=), gt (>), gte (>=)."
+        },
+        "value": {
+          "type": "number",
+          "description": "Threshold to compare against."
+        },
+        "result": {
+          "$ref": "#/$defs/Result"
+        }
+      }
+    },
+    "PathPass": {
+      "type": "object",
+      "required": [
+        "match_type",
+        "arg"
+      ],
+      "additionalProperties": false,
+      "description": "Classifies a single file path or URL argument via the path registry. One arg per pass; use multiple PathPass entries for alias args (e.g. 'path' and 'file_path'). Outputs: metadata.confidentiality, metadata.trustworthiness.",
+      "properties": {
+        "match_type": {
+          "const": "path"
+        },
+        "arg": {
+          "type": "string",
+          "description": "Dot-notation path to the argument containing the file path or URL to classify (e.g. 'path', 'request.url'). Top-level args are the common case."
+        }
+      }
+    },
+    "ShellPass": {
+      "type": "object",
+      "required": [
+        "match_type",
+        "arg"
+      ],
+      "additionalProperties": false,
+      "description": "Delegates shell command analysis to the shell_parsers engine. Typically the first pass; subsequent passes refine its output. Outputs: instruction_type, metadata.confidentiality, metadata.trustworthiness, metadata.risk.",
+      "properties": {
+        "match_type": {
+          "const": "shell"
+        },
+        "arg": {
+          "type": "string",
+          "description": "Dot-notation path to the argument containing the shell command string to analyse (e.g. 'command'). Top-level args are the common case."
+        }
+      }
+    },
+    "Result": {
+      "$ref": "#/$defs/Result"
+    }
+  }
+}
