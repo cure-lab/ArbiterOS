@@ -71,7 +71,7 @@
   },
   {
     "name": "AlignmentSentinelPolicy",
-    "enabled": true,
+    "enabled": false,
     "description": "LLM-based pre-exec alignment check for planned tool calls against recent user objective."
   }
 ]
