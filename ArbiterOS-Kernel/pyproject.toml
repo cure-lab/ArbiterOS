@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "cisco-ai-skill-scanner==1.0.2",
+    "jsonschema>=4.26.0",
     "langfuse>=3.14.1",
     "litellm[proxy]>=1.81.5",
     "mlflow[genai]>=3.9.0",

@@ -1,0 +1,75 @@
+- tool: bash
+  passes:
+  - match_type: shell
+    arg: command
+  - match_type: regex
+    cases:
+    - arg: command
+      pattern: ^sudo\s
+      result:
+        metadata:
+          risk: HIGH
+          reversible: false
+    - arg: command
+      pattern: ^(cat|ls|echo|pwd|which)\b
+      result:
+        instruction_type: READ
+        metadata:
+          risk: LOW
+          reversible: true
+- tool: read_file
+  passes:
+  - match_type: default
+    result:
+      instruction_type: READ
+      metadata:
+        confidentiality: UNKNOWN
+        trustworthiness: HIGH
+        risk: LOW
+        reversible: true
+  - match_type: path
+    arg: path
+- tool: write_file
+  passes:
+  - match_type: default
+    result:
+      instruction_type: WRITE
+      metadata:
+        confidentiality: UNKNOWN
+        risk: HIGH
+        reversible: false
+  - match_type: path
+    arg: path
+  - match_type: numeric
+    cases:
+    - arg: byte_count
+      op: gt
+      value: 1048576
+      result:
+        metadata:
+          risk: HIGH
+- tool: ask_user
+  passes:
+  - match_type: default
+    result:
+      instruction_type: ASK
+      metadata:
+        confidentiality: LOW
+        risk: LOW
+        reversible: true
+- tool: sleep
+  passes:
+  - match_type: default
+    result:
+      instruction_type: WAIT
+      metadata:
+        risk: LOW
+        reversible: true
+  - match_type: numeric
+    cases:
+    - arg: yieldMs
+      op: gt
+      value: 30000
+      result:
+        metadata:
+          risk: HIGH

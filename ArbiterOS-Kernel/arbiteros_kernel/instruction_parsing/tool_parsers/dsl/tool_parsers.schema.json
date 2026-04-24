@@ -23,7 +23,7 @@
         "passes": {
           "type": "array",
           "minItems": 1,
-          "description": "Ordered list of parser passes. Applied in sequence; each matching pass deep-merges its result into the accumulated output. At least one DefaultPass must be present to guarantee instruction_type is always set.",
+          "description": "Ordered list of parser passes. Applied in sequence; each matching pass deep-merges its result into the accumulated output. At least one Pass must be present to guarantee instruction_type is always set.",
           "items": {
             "$ref": "#/$defs/Pass"
           }
