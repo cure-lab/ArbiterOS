@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import copy
 import inspect
+import json
+import threading
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
@@ -14,7 +17,16 @@ __all__ = [
     "PolicyCheckResult",
     "check_response_policy",
     "apply_policy_enforcement_mode",
+    "resolve_role_policy_enabled_override",
+    "split_model_and_role",
 ]
+
+_ROLE_POLICY_SETS_PATH = (
+    Path(__file__).resolve().parent / "role_policy_sets.json"
+)
+_ROLE_POLICY_SETS_LOCK = threading.Lock()
+_ROLE_POLICY_SETS_CACHE_MTIME_NS: Optional[int] = None
+_ROLE_POLICY_SETS_CACHE: list[dict[str, Any]] = []
 
 
 @dataclass
@@ -111,6 +123,108 @@ def apply_policy_enforcement_mode(
     )
 
 
+def split_model_and_role(model_value: Any) -> tuple[Optional[str], Optional[str]]:
+    """
+    Parse ``model;role`` from request model field.
+
+    Returns ``(base_model, role_name)``.
+    If no valid role suffix exists, role_name is None and base_model keeps legacy behavior.
+    """
+    if not isinstance(model_value, str):
+        return None, None
+    raw = model_value.strip()
+    if not raw:
+        return None, None
+    if ";" not in raw:
+        return raw, None
+
+    left, right = raw.split(";", 1)
+    base_model = left.strip()
+    role_name = right.strip()
+    if not base_model:
+        base_model = raw
+    if not role_name:
+        return base_model, None
+    return base_model, role_name
+
+
+def _load_role_policy_sets() -> list[dict[str, Any]]:
+    if not _ROLE_POLICY_SETS_PATH.exists():
+        return []
+    try:
+        mtime_ns = _ROLE_POLICY_SETS_PATH.stat().st_mtime_ns
+    except Exception:
+        return []
+
+    with _ROLE_POLICY_SETS_LOCK:
+        global _ROLE_POLICY_SETS_CACHE_MTIME_NS, _ROLE_POLICY_SETS_CACHE
+        if _ROLE_POLICY_SETS_CACHE_MTIME_NS == mtime_ns:
+            return list(_ROLE_POLICY_SETS_CACHE)
+
+        try:
+            parsed = json.loads(_ROLE_POLICY_SETS_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            parsed = []
+        if isinstance(parsed, dict):
+            parsed = parsed.get("roles", [])
+        if not isinstance(parsed, list):
+            parsed = []
+        normalized = [x for x in parsed if isinstance(x, dict)]
+        _ROLE_POLICY_SETS_CACHE_MTIME_NS = mtime_ns
+        _ROLE_POLICY_SETS_CACHE = list(normalized)
+        return list(normalized)
+
+
+def resolve_role_policy_enabled_override(
+    role_name: Optional[str],
+) -> tuple[Optional[dict[str, bool]], Optional[str]]:
+    """
+    Resolve per-request policy enabled overrides for a role.
+
+    Returns:
+      - override map (policy_name -> enforce bool), or None when fallback to defaults
+      - warning reason string when fallback happened
+    """
+    normalized_role = role_name.strip() if isinstance(role_name, str) else ""
+    if not normalized_role:
+        return None, None
+
+    from arbiteros_kernel.policy.defaults import get_policy_registry
+
+    registry_entries = list(get_policy_registry(force_reload=False))
+    known_policy_names = {
+        entry.policy.__name__ for entry in registry_entries if hasattr(entry, "policy")
+    }
+    role_defs = _load_role_policy_sets()
+    matched: Optional[dict[str, Any]] = None
+    for row in role_defs:
+        if str(row.get("name") or "").strip() == normalized_role:
+            matched = row
+            break
+
+    if not isinstance(matched, dict):
+        return None, f"role_not_found:{normalized_role}"
+
+    enabled_raw = matched.get("enabled_policies")
+    if not isinstance(enabled_raw, list):
+        return None, f"invalid_enabled_policies:{normalized_role}"
+
+    enabled_set = {
+        str(item).strip()
+        for item in enabled_raw
+        if isinstance(item, str) and str(item).strip()
+    }
+    unknown_policies = sorted(enabled_set - known_policy_names)
+    if unknown_policies:
+        return None, (
+            f"unknown_policies:{normalized_role}:"
+            + ",".join(unknown_policies)
+        )
+
+    override = {name: (name in enabled_set) for name in known_policy_names}
+    return override, None
+
+
 def check_response_policy(
     *,
     trace_id: str,
@@ -119,6 +233,7 @@ def check_response_policy(
     latest_instructions: list[dict[str, Any]] | None = None,
     policy_classes: Optional[list[type["Policy"]]] = None,
     user_messages: list[str] | None = None,
+    policy_enabled_override: Optional[dict[str, bool]] = None,
 ) -> PolicyCheckResult:
     """
     Policy check on post_call_success response before returning to agent.
@@ -185,7 +300,13 @@ def check_response_policy(
             trace_id=trace_id,
             user_messages=user_messages or [],
         )
-        result = apply_policy_enforcement_mode(entry.enabled, response_before, result)
+        enforce = entry.enabled
+        if (
+            isinstance(policy_enabled_override, dict)
+            and policy_cls.__name__ in policy_enabled_override
+        ):
+            enforce = bool(policy_enabled_override.get(policy_cls.__name__))
+        result = apply_policy_enforcement_mode(enforce, response_before, result)
 
         if result.modified:
             response = result.response
