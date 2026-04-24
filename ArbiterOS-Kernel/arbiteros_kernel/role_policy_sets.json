@@ -1,0 +1,10 @@
+{
+  "roles": [
+    {
+      "name": "semantic_protected",
+      "enabled_policies": [
+        "AlignmentSentinelPolicy"
+      ]
+    }
+  ]
+}
