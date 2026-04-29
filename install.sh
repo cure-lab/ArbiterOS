@@ -317,7 +317,6 @@ main() {
   setup_kernel
   configure_litellm_yaml
   configure_openclaw_json
-  restart_openclaw_gateway_and_open_dashboard
   write_user_run_script
   if [ "$ENABLE_USER_SERVICE" = "1" ]; then
     create_user_service || true
