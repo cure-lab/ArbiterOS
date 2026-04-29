@@ -75,7 +75,6 @@ ArbiterOS 在多项 Agent 安全评测中展现出较强的拦截或告警提升
 - 在存在 `.env.example` 时生成 `ArbiterOS-Kernel/.env`
 - 引导配置 `ArbiterOS-Kernel/litellm_config.yaml` 中的第一个模型项
 - 为 `~/.openclaw/openclaw.json` 写入 `arbiteros` provider 配置
-- 如果本机已安装 `openclaw`，则尝试重启 OpenClaw gateway 并打开 dashboard
 - 生成可直接运行的脚本，如 `run-kernel.sh` / `run-kernel.ps1`
 
 ## 项目结构

@@ -79,7 +79,6 @@ The root installer helps you bootstrap the Kernel quickly:
 - creates `ArbiterOS-Kernel/.env` from `.env.example` when available
 - guides you through the first model entry in `ArbiterOS-Kernel/litellm_config.yaml`
 - configures `~/.openclaw/openclaw.json` for the `arbiteros` provider
-- restarts the OpenClaw gateway and opens the dashboard when `openclaw` is installed
 - generates runnable scripts such as `run-kernel.sh` / `run-kernel.ps1`
 
 ## Project Structure
