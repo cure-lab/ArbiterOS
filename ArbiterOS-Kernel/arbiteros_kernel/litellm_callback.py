@@ -44,6 +44,9 @@ from rich.panel import Panel
 from rich.pretty import Pretty
 
 from arbiteros_kernel.langfuse_env import ensure_langfuse_env_compat
+from arbiteros_kernel.policy.alignment_trigger import (
+    should_trigger_postexec_sentinel,
+)
 from arbiteros_kernel.policy.defaults import get_policy_descriptions, get_policy_enabled
 from arbiteros_kernel.policy_check import (
     check_response_policy,
@@ -503,6 +506,25 @@ def _resolve_alignment_sentinel_threshold_and_timeout() -> tuple[float, float]:
     return threshold, timeout_seconds
 
 
+def _is_alignment_sentinel_postexec_enabled() -> bool:
+    """
+    Global gate for post-exec Alignment Sentinel screening.
+
+    This is intentionally separate from the trigger config:
+    - alignment_sentinel.postexec_enabled = false  => skip the entire post-exec chain
+    - alignment_sentinel_trigger.postexec.enabled = false => legacy full review behavior
+    """
+    try:
+        runtime = get_runtime()
+        cfg = getattr(runtime, "cfg", {}) if runtime is not None else {}
+        block = cfg.get("alignment_sentinel") if isinstance(cfg, dict) else {}
+        if isinstance(block, dict) and block.get("postexec_enabled") is not None:
+            return bool(block.get("postexec_enabled"))
+    except Exception:
+        pass
+    return True
+
+
 def _is_alignment_sentinel_policy_enabled(
     policy_enabled_override: Optional[dict[str, bool]] = None,
 ) -> bool:
@@ -574,16 +596,42 @@ def _build_postexec_replacement_text(
 
 def _evaluate_tool_result_postexec_once(
     *,
+    trace_id: Optional[str],
+    tool_call_id: Optional[str],
     user_objective: str,
     body: Any,
     threshold: float,
     timeout_seconds: float,
 ) -> Optional[dict[str, Any]]:
+    def _log_postexec_failure(
+        failure_stage: str,
+        **extra: Any,
+    ) -> None:
+        payload = {
+            "trace_id": trace_id,
+            "tool_call_id": tool_call_id,
+            "failure_stage": failure_stage,
+            "threshold": threshold,
+            "timeout_seconds": timeout_seconds,
+        }
+        payload.update(extra)
+        try:
+            _save_json("alignment_sentinel_postexec_failure_detail", payload)
+        except Exception:
+            pass
+
     model, api_base, api_key = _read_skill_scanner_llm_triple_from_litellm_config()
     if not model or not api_base or not api_key:
+        _log_postexec_failure(
+            "missing_llm_config",
+            has_model=bool(model),
+            has_api_base=bool(api_base),
+            has_api_key=bool(api_key),
+        )
         return None
     url = _chat_completions_url(api_base)
     if not url:
+        _log_postexec_failure("invalid_api_base", api_base=api_base)
         return None
     api_model = _upstream_model_name_for_chat_api(model)
     payload = {
@@ -599,7 +647,7 @@ def _evaluate_tool_result_postexec_once(
         "response_format": {"type": "json_object"},
     }
     if any(x in api_model.lower() for x in ("gpt-5", "o1", "o3")):
-        body_json["max_completion_tokens"] = 512
+        body_json["max_completion_tokens"] = 4096
     else:
         body_json["max_tokens"] = 512
         body_json["temperature"] = 0
@@ -616,22 +664,64 @@ def _evaluate_tool_result_postexec_once(
     try:
         with urllib.request.urlopen(req, timeout=timeout_seconds) as resp:
             raw_payload = json.loads(resp.read().decode("utf-8", errors="replace"))
-    except Exception:
+    except urllib.error.HTTPError as exc:
+        response_text = ""
+        try:
+            response_text = exc.read().decode("utf-8", errors="replace")
+        except Exception:
+            response_text = ""
+        _log_postexec_failure(
+            "http_error",
+            exception_type=type(exc).__name__,
+            status_code=getattr(exc, "code", None),
+            reason=getattr(exc, "reason", ""),
+            response_preview=response_text[:1000],
+        )
+        return None
+    except Exception as exc:
+        _log_postexec_failure(
+            "request_exception",
+            exception_type=type(exc).__name__,
+            exception_message=str(exc),
+        )
         return None
     try:
-        raw_msg = ((raw_payload.get("choices") or [{}])[0].get("message") or {}).get(
-            "content"
-        )
+        choice0 = (raw_payload.get("choices") or [{}])[0]
+        finish_reason = choice0.get("finish_reason")
+        message = choice0.get("message") or {}
+        raw_msg = message.get("content")
+        if raw_msg in (None, ""):
+            _log_postexec_failure(
+                "empty_message_content",
+                finish_reason=finish_reason,
+                usage=raw_payload.get("usage"),
+                response_keys=sorted(raw_payload.keys()) if isinstance(raw_payload, dict) else [],
+            )
+            return None
         parsed = (
             raw_msg
             if isinstance(raw_msg, dict)
             else (_safe_json_loads(raw_msg) if isinstance(raw_msg, str) else None)
         )
         if not isinstance(parsed, dict):
+            _log_postexec_failure(
+                "non_json_message_content",
+                finish_reason=finish_reason,
+                raw_content_type=type(raw_msg).__name__,
+                raw_content_preview=(
+                    raw_msg[:1000] if isinstance(raw_msg, str) else str(raw_msg)[:1000]
+                ),
+                usage=raw_payload.get("usage"),
+            )
             return None
         alarm = bool(parsed.get("alarm", False))
         suspicion = float(parsed.get("suspicion", 0.0))
-    except Exception:
+    except Exception as exc:
+        _log_postexec_failure(
+            "response_parse_exception",
+            exception_type=type(exc).__name__,
+            exception_message=str(exc),
+        )
         return None
     parsed["threshold"] = threshold
     parsed["block"] = alarm and suspicion >= threshold
@@ -647,6 +737,8 @@ def _screen_tool_results_with_alignment(
 ) -> dict[str, Any]:
     if not _is_alignment_sentinel_policy_enabled(policy_enabled_override):
         return data
+    if not _is_alignment_sentinel_postexec_enabled():
+        return data
 
     messages = data.get("messages")
     if not isinstance(messages, list):
@@ -654,6 +746,7 @@ def _screen_tool_results_with_alignment(
 
     objective = _build_user_objective_from_user_messages(user_messages)
     threshold, timeout_seconds = _resolve_alignment_sentinel_threshold_and_timeout()
+    runtime = get_runtime()
     new_messages = list(messages)
     modified = False
     state_changed = False
@@ -677,7 +770,59 @@ def _screen_tool_results_with_alignment(
             continue
 
         screen_body = _extract_tool_result_body_for_screening(msg.get("content"))
+        tool_meta = _lookup_tool_instruction_metadata_for_trace(
+            state.trace_id,
+            tool_call_id,
+        )
+        trigger_decision = should_trigger_postexec_sentinel(
+            tool_name=str(tool_meta.get("tool_name") or ""),
+            args_dict=tool_meta.get("args_dict") if isinstance(tool_meta.get("args_dict"), dict) else {},
+            body=screen_body,
+            trustworthiness=str(tool_meta.get("trustworthiness") or "UNKNOWN"),
+            instruction_type=str(tool_meta.get("instruction_type") or "EXEC"),
+        )
+        try:
+            runtime.audit(
+                phase="policy.alignment_sentinel_trigger.postexec",
+                trace_id=state.trace_id,
+                tool=str(tool_meta.get("tool_name") or "@tool"),
+                decision="RUN" if trigger_decision.run else "SKIP",
+                reason=",".join(trigger_decision.reasons) or "no trigger conditions matched",
+                args={
+                    "tool_call_id": tool_call_id,
+                    "arguments": tool_meta.get("args_dict") if isinstance(tool_meta.get("args_dict"), dict) else {},
+                },
+                extra={
+                    "triggered": bool(trigger_decision.run),
+                    "trigger_reasons": list(trigger_decision.reasons),
+                    "instruction_type": str(tool_meta.get("instruction_type") or "EXEC"),
+                    "trustworthiness": str(tool_meta.get("trustworthiness") or "UNKNOWN"),
+                    "ingress_like": bool(trigger_decision.ingress_like),
+                    "prompt_injection_marker_hit": bool(trigger_decision.prompt_injection_marker_hit),
+                    "oversized": bool(trigger_decision.oversized),
+                    "semi_structured": bool(trigger_decision.semi_structured),
+                    "unknown_source": bool(trigger_decision.unknown_source),
+                },
+            )
+        except Exception:
+            pass
+        if not trigger_decision.run:
+            state.tool_result_alignment_by_call_id[tool_call_id] = {
+                "block": False,
+                "alarm": False,
+                "suspicion": 0.0,
+                "threshold": threshold,
+                "summary": "trigger_skipped",
+                "justification": ",".join(trigger_decision.reasons) or "post-exec trigger skipped",
+                "replacement_text": "",
+                "updated_at": datetime.now().isoformat(),
+            }
+            state_changed = True
+            continue
+
         verdict = _evaluate_tool_result_postexec_once(
+            trace_id=state.trace_id,
+            tool_call_id=tool_call_id,
             user_objective=objective,
             body=screen_body,
             threshold=threshold,
@@ -4335,6 +4480,51 @@ def _peek_instruction_builder_for_trace(trace_id: str) -> Optional[Any]:
         return None
     with _instruction_builders_lock:
         return _instruction_builders_by_trace.get(trace_id)
+
+
+def _lookup_tool_instruction_metadata_for_trace(
+    trace_id: str,
+    tool_call_id: str,
+) -> dict[str, Any]:
+    builder = _peek_instruction_builder_for_trace(trace_id)
+    instructions = list(getattr(builder, "instructions", []) or []) if builder else []
+    target = tool_call_id.strip() if isinstance(tool_call_id, str) else ""
+    if not target:
+        return {
+            "tool_name": "",
+            "args_dict": {},
+            "trustworthiness": "UNKNOWN",
+            "instruction_type": "EXEC",
+        }
+    for instr in reversed(instructions):
+        if not isinstance(instr, dict):
+            continue
+        content = instr.get("content")
+        if not isinstance(content, dict):
+            continue
+        tcid = content.get("tool_call_id")
+        if not isinstance(tcid, str) or tcid.strip() != target:
+            continue
+        args_dict = content.get("arguments")
+        args_dict = dict(args_dict) if isinstance(args_dict, dict) else {}
+        st = instr.get("security_type")
+        st = st if isinstance(st, dict) else {}
+        return {
+            "tool_name": str(content.get("tool_name") or "").strip(),
+            "args_dict": args_dict,
+            "trustworthiness": str(
+                st.get("prop_trustworthiness") or st.get("trustworthiness") or "UNKNOWN"
+            ).strip()
+            or "UNKNOWN",
+            "instruction_type": str(instr.get("instruction_type") or "EXEC").strip()
+            or "EXEC",
+        }
+    return {
+        "tool_name": "",
+        "args_dict": {},
+        "trustworthiness": "UNKNOWN",
+        "instruction_type": "EXEC",
+    }
 
 
 def _build_instruction_parser_snapshot(

@@ -257,7 +257,7 @@ class KernelPolicyRuntime:
                 cfg = json.loads(inline)
             except Exception:
                 cfg = {}
-            audit_path = os.getenv("ARBITEROS_POLICY_AUDIT_PATH", "").strip()
+            audit_path = _resolve_policy_audit_path(cfg if isinstance(cfg, dict) else {})
             return KernelPolicyRuntime(
                 cfg if isinstance(cfg, dict) else {}, audit_path=audit_path
             )
@@ -276,7 +276,7 @@ class KernelPolicyRuntime:
                 cfg = parsed
         except Exception:
             cfg = {}
-        audit_path = os.getenv("ARBITEROS_POLICY_AUDIT_PATH", "").strip()
+        audit_path = _resolve_policy_audit_path(cfg)
         return KernelPolicyRuntime(cfg, audit_path=audit_path)
 
     # -------------------------
@@ -1339,8 +1339,37 @@ def _resolve_policy_config_path() -> str:
     return _expand_home(path)
 
 
-def _resolve_policy_audit_path() -> str:
-    return os.getenv("ARBITEROS_POLICY_AUDIT_PATH", "").strip()
+def _env_flag_true(name: str) -> Optional[bool]:
+    raw = os.getenv(name)
+    if raw is None:
+        return None
+    value = raw.strip().lower()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off"}:
+        return False
+    return None
+
+
+def _resolve_policy_audit_path(cfg: Optional[Dict[str, Any]] = None) -> str:
+    cfg = cfg if isinstance(cfg, dict) else {}
+    audit_cfg = cfg.get("audit")
+    audit_cfg = audit_cfg if isinstance(audit_cfg, dict) else {}
+
+    env_enabled = _env_flag_true("ARBITEROS_POLICY_AUDIT_ENABLED")
+    env_path = os.getenv("ARBITEROS_POLICY_AUDIT_PATH", "").strip()
+    cfg_enabled = bool(audit_cfg.get("enabled", False))
+    cfg_path = _expand_home(str(audit_cfg.get("path") or "").strip())
+
+    if env_enabled is False:
+        return ""
+    if env_enabled is True:
+        return _expand_home(env_path) if env_path else cfg_path
+    if env_path:
+        return _expand_home(env_path)
+    if not cfg_enabled:
+        return ""
+    return cfg_path
 
 
 def _runtime_reload_key() -> str:

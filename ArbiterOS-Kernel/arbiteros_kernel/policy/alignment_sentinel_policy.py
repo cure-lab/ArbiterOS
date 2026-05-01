@@ -9,6 +9,7 @@ from openai import OpenAI
 from arbiteros_kernel.policy_check import PolicyCheckResult
 from arbiteros_kernel.policy_runtime import RUNTIME, canonicalize_args
 
+from .alignment_trigger import should_trigger_preexec_sentinel
 from .policy import Policy
 
 try:
@@ -330,6 +331,36 @@ class AlignmentSentinelPolicy(Policy):
         if not planned_ops:
             return PolicyCheckResult(modified=False, response=current_response, error_type=None)
 
+        trigger_decision = should_trigger_preexec_sentinel(
+            instructions=instructions,
+            latest_instructions=latest_instructions,
+            current_response=current_response,
+            planned_ops=planned_ops,
+        )
+        try:
+            RUNTIME.audit(
+                phase="policy.alignment_sentinel_trigger.preexec",
+                trace_id=trace_id,
+                tool="@tool",
+                decision="RUN" if trigger_decision.run else "SKIP",
+                reason=",".join(trigger_decision.reasons) or "no trigger conditions matched",
+                args={"planned_ops": trigger_decision.reviewed_ops if trigger_decision.run else []},
+                extra={
+                    "triggered": bool(trigger_decision.run),
+                    "trigger_reasons": list(trigger_decision.reasons),
+                    "candidate_tool_call_ids": [
+                        str(op.get("tool_call_id") or "").strip()
+                        for op in planned_ops
+                        if str(op.get("tool_call_id") or "").strip()
+                    ],
+                    "reviewed_tool_call_ids": list(trigger_decision.reviewed_tool_call_ids),
+                },
+            )
+        except Exception:
+            pass
+        if not trigger_decision.run:
+            return PolicyCheckResult(modified=False, response=current_response, error_type=None)
+
         cfg = RUNTIME.cfg.get("alignment_sentinel")
         cfg = cfg if isinstance(cfg, dict) else {}
         threshold = float(cfg.get("threshold", _DEFAULT_THRESHOLD))
@@ -346,7 +377,7 @@ class AlignmentSentinelPolicy(Policy):
         try:
             verdict = _call_alignment_sentinel(
                 objective=objective,
-                planned_ops=planned_ops,
+                planned_ops=trigger_decision.reviewed_ops,
                 threshold=threshold,
                 timeout_seconds=timeout_seconds,
                 model_override=model_override,
@@ -374,7 +405,7 @@ class AlignmentSentinelPolicy(Policy):
                 tool="@tool",
                 decision="BLOCK" if should_block else "ALLOW",
                 reason=str(verdict.get("justification") or ""),
-                args={"planned_ops": planned_ops},
+                args={"planned_ops": trigger_decision.reviewed_ops},
                 extra={
                     "alarm": bool(verdict.get("alarm", False)),
                     "suspicion": float(verdict.get("suspicion", 0.0)),
@@ -382,6 +413,8 @@ class AlignmentSentinelPolicy(Policy):
                     "objective_source": objective_source,
                     "model": verdict.get("model"),
                     "summary": verdict.get("summary"),
+                    "trigger_reasons": list(trigger_decision.reasons),
+                    "reviewed_tool_call_ids": list(trigger_decision.reviewed_tool_call_ids),
                 },
             )
         except Exception:
@@ -392,10 +425,19 @@ class AlignmentSentinelPolicy(Policy):
 
         block_msg = _build_unary_style_block_message(
             verdict=verdict,
-            planned_ops=planned_ops,
+            planned_ops=trigger_decision.reviewed_ops,
         )
-        response["tool_calls"] = None
-        response["function_call"] = None
+        reviewed_ids = set(trigger_decision.reviewed_tool_call_ids)
+        kept_tool_calls = []
+        for tc in list(RUNTIME.extract_tool_calls(response) or []):
+            _, tool_call_id, _, _ = RUNTIME.parse_tool_call(tc)
+            normalized_id = (tool_call_id or "").strip()
+            if normalized_id and normalized_id in reviewed_ids:
+                continue
+            kept_tool_calls.append(tc)
+        response["tool_calls"] = kept_tool_calls or None
+        if not kept_tool_calls:
+            response["function_call"] = None
         if not isinstance(response.get("content"), str) or not response.get("content"):
             response["content"] = block_msg
         return PolicyCheckResult(

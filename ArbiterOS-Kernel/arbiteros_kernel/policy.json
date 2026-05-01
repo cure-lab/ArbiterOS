@@ -1,5 +1,90 @@
 {
-  "audit": { "log_allow": true },
+  "audit": {
+    "log_allow": true,
+    "enabled": true,
+    "path": "/data/ArbiterOS/ArbiterOS/ArbiterOS-Kernel/log/policy_audit.jsonl"
+  },
+
+  "alignment_sentinel": {
+    "postexec_enabled": false
+  },
+
+  "alignment_sentinel_trigger": {
+    "enabled": true,
+    "preexec": {
+      "enabled": true,
+      "high_side_effect_tools": [
+        "exec",
+        "message",
+        "sessions_send",
+        "sessions_spawn",
+        "tts",
+        "gateway",
+        "cron",
+        "process",
+        "browser",
+        "write",
+        "edit"
+      ],
+      "high_side_effect_browser_actions": ["act", "upload", "dialog", "navigate"],
+      "high_side_effect_process_actions": ["submit", "send-keys", "paste", "kill", "write"],
+      "high_side_effect_cron_actions": ["add", "update", "remove", "run", "wake"],
+      "write_path_hints": [
+        "/data/",
+        "/root/",
+        "/shared/",
+        "/public/",
+        "/publish/",
+        "/published/",
+        "/export/",
+        "/exports/",
+        "/outbox/",
+        "/upload/",
+        "/uploads/",
+        "/dist/",
+        "/artifacts/",
+        "/release/",
+        "/releases/",
+        "/www/"
+      ],
+      "prompt_injection_markers": [
+        "ignore previous instructions",
+        "ignore all previous instructions",
+        "override your earlier rules",
+        "override previous rules",
+        "assistant directive",
+        "<URGENT>",
+        "system prompt",
+        "developer message",
+        "you are chatgpt",
+        "you are an ai agent",
+        "follow these steps"
+      ],
+      "max_source_excerpt_chars": 400,
+      "arg_text_trigger_chars": 1000
+    },
+    "postexec": {
+      "enabled": false,
+      "ingress_tools": ["web_fetch", "web_search", "image", "browser"],
+      "browser_ingress_actions": ["snapshot", "console", "pdf", "screenshot"],
+      "prompt_injection_markers": [
+        "ignore previous instructions",
+        "ignore all previous instructions",
+        "override your earlier rules",
+        "override previous rules",
+        "assistant directive",
+        "<URGENT>",
+        "system prompt",
+        "developer message",
+        "you are chatgpt",
+        "you are an ai agent",
+        "follow these steps"
+      ],
+      "max_body_chars_before_force_trigger": 8000,
+      "unknown_source_min_chars": 2000,
+      "structured_text_min_chars": 1200
+    }
+  },
 
   "unary_gate": {
     "tool_aliases": {
