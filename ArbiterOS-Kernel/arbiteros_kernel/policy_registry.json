@@ -8,7 +8,7 @@
   },
   {
     "name": "UnaryGatePolicy",
-    "enabled":true,
+    "enabled": true,
     "description": 
           "Applies declarative unary rules over instruction metadata and reports the matched rule."
       
@@ -17,5 +17,10 @@
     "name": "AlignmentSentinelPolicy",
     "enabled": true,
     "description": "LLM-based pre-exec alignment check for planned tool calls against recent user objective."
+  },
+  {
+    "name": "ResourceGuardPolicy",
+    "enabled": false,
+    "description": "Blocks when trace token/time/instruction-memory usage exceeds configured limits."
   }
 ]
