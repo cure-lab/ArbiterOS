@@ -233,6 +233,11 @@
   "delete_policy": {
     "enabled": true
   },
+  "resource_guard": {
+    "max_total_tokens": 12000000,
+    "max_trace_seconds": 6000,
+    "max_instruction_bytes": 1200000
+  },
   "nanobot_policy": {
     "enabled": true,
     "max_repeat_external_lookups": 2,
