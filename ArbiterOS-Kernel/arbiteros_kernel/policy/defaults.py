@@ -21,6 +21,7 @@ from .relational_policy import RelationalPolicy
 from .openclaw_policy import OpenClawPolicy
 from .nanobot_policy import NanobotPolicy
 from .alignment_sentinel_policy import AlignmentSentinelPolicy
+from .resource_guard_policy import ResourceGuardPolicy
 if TYPE_CHECKING:
     from .policy import Policy
 
@@ -57,6 +58,7 @@ POLICY_CLASS_MAP: dict[str, type["Policy"]] = {
     "OpenClawPolicy": OpenClawPolicy,
     "NanobotPolicy": NanobotPolicy,
     "AlignmentSentinelPolicy": AlignmentSentinelPolicy,
+    "ResourceGuardPolicy": ResourceGuardPolicy,
 }
 
 
@@ -155,6 +157,13 @@ def _default_registry_data() -> list[dict[str, object]]:
             "enabled": False,
             "description": (
                 "LLM-based pre-exec alignment check for planned tool calls against recent user objective."
+            ),
+        },
+        {
+            "name": "ResourceGuardPolicy",
+            "enabled": False,
+            "description": (
+                "Blocks when trace token/time/instruction-memory usage exceeds configured limits."
             ),
         },
     ]
