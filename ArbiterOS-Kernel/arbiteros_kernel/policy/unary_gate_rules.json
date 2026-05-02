@@ -43,7 +43,7 @@
     {
       "id": "UG-020",
       "title": "exec confidence gate",
-      "description": "EXEC requires confidence >= MID",
+      "description": "EXEC requires confidence >= UNKNOWN",
       "scope": "tool",
       "selector": {
         "instruction_type": [
@@ -56,17 +56,17 @@
             "var": "confidence"
           },
           {
-            "const": "MID"
+            "const": "UNKNOWN"
           }
         ]
       },
       "effect": "BLOCK",
-      "message": "EXEC requires confidence >= MID."
+      "message": "EXEC requires confidence >= UNKNOWN."
     },
     {
       "id": "UG-021",
       "title": "exec trust gate",
-      "description": "EXEC requires trustworthiness >= MID",
+      "description": "EXEC requires trustworthiness >= UNKNOWN",
       "scope": "tool",
       "selector": {
         "instruction_type": [
@@ -79,12 +79,12 @@
             "var": "trustworthiness"
           },
           {
-            "const": "MID"
+            "const": "UNKNOWN"
           }
         ]
       },
       "effect": "BLOCK",
-      "message": "EXEC requires trustworthiness >= MID."
+      "message": "EXEC requires trustworthiness >= UNKNOWN."
     },
     {
       "id": "UG-030",
@@ -181,7 +181,6 @@
       "effect": "BLOCK",
       "message": "blocked tag hit."
     },
-
     {
       "id": "UG-060",
       "title": "protected identity or control file direct mutation",
@@ -454,11 +453,10 @@
       "effect": "BLOCK",
       "message": "gateway config patch or apply must not introduce external proxy or upstream redirection without stronger review."
     },
-
     {
       "id": "UG-050",
       "title": "respond prop confidentiality",
-      "description": "RESPOND must keep propagated confidentiality <= MID",
+      "description": "RESPOND must keep propagated confidentiality <= UNKNOWN",
       "scope": "respond",
       "selector": {
         "instruction_type": [
@@ -471,7 +469,7 @@
             "var": "prop_confidentiality"
           },
           {
-            "const": "MID"
+            "const": "UNKNOWN"
           }
         ]
       },

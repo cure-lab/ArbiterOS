@@ -554,6 +554,75 @@ def _parse_tts(
 
 
 # ---------------------------------------------------------------------------
+# Agent-native financial actions
+# ---------------------------------------------------------------------------
+
+
+def _float_or_none(value: Any) -> Optional[float]:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_trade(
+    args: Dict[str, Any], taint_status: Optional[TaintStatus] = None
+) -> ToolParseResult:
+    """AI-Trader realtime signal wrapper → EXEC.
+
+    The local wrapper is expected to validate this structured tool call and
+    perform POST /api/signals/realtime. The parser lowers the tool call into
+    policy-friendly financial metadata so user-defined unary policies can
+    block oversized or unsupported trade actions before the HTTP side effect.
+    """
+    market = str(args.get("market") or "").strip().lower()
+    action = str(args.get("action") or "").strip().lower()
+    symbol = str(args.get("symbol") or "").strip().upper()
+    executed_at = str(args.get("executed_at") or "").strip()
+    price = _float_or_none(args.get("price"))
+    quantity = _float_or_none(args.get("quantity"))
+    notional = (
+        abs(price * quantity)
+        if price is not None and quantity is not None
+        else None
+    )
+    is_trade_action = action in {"buy", "sell", "short", "cover"}
+    is_simulated_trade = executed_at.lower() == "now" or price == 0
+    risk = "HIGH" if is_trade_action else "UNKNOWN"
+
+    policy_metadata = {
+        "ai_trader_market": market.upper() if market else "",
+        "ai_trader_action": action.upper() if action else "",
+        "ai_trader_symbol": symbol,
+        "ai_trader_price": price,
+        "ai_trader_quantity": quantity,
+        "ai_trader_notional": notional,
+        "ai_trader_executed_at": executed_at,
+        "ai_trader_is_simulated": is_simulated_trade,
+        "ai_trader_is_polymarket": market == "polymarket",
+        "ai_trader_is_short": action == "short",
+        "ai_trader_has_outcome": bool(str(args.get("outcome") or "").strip()),
+        "ai_trader_has_token_id": bool(str(args.get("token_id") or "").strip()),
+    }
+
+    return ToolParseResult(
+        "EXEC",
+        make_security_type(
+            confidentiality="LOW",
+            trustworthiness="HIGH",
+            confidence="HIGH" if is_trade_action and symbol else "UNKNOWN",
+            reversible=False,
+            authority="UNKNOWN",
+            risk=risk,
+            custom={
+                "io_kind": "financial_trade",
+                "policy_metadata": policy_metadata,
+            },
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Gateway management
 # ---------------------------------------------------------------------------
 
@@ -815,6 +884,8 @@ TOOL_PARSER_REGISTRY: Dict[str, ToolParser] = {
     "cron": _parse_cron,
     "message": _parse_message,
     "tts": _parse_tts,
+    "trade": _parse_trade,
+    "ai_trader_trade": _parse_trade,
     "gateway": _parse_gateway,
     "agents_list": _parse_agents_list,
     "sessions_list": _parse_sessions_list,

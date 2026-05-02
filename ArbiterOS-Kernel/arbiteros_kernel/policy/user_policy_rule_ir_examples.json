@@ -1,0 +1,231 @@
+{
+  "version": 1,
+  "source": "arbiteros-example-policy-pack",
+  "rules": [
+    {
+      "id": "USER-AI-TRADER-NOTIONAL-001",
+      "kind": "unary_tool_call",
+      "enabled": true,
+      "title": "block large ai trader notional",
+      "description": "block AI-Trader realtime trades whose notional value is greater than 5000",
+      "effect": "BLOCK",
+      "severity": "HIGH",
+      "message": "AI-Trader 单笔交易名义金额超过 5000，已拦截。",
+      "rule": {
+        "selector": {
+          "tools": ["trade"]
+        },
+        "predicate": {
+          "gt": [
+            { "var": "ai_trader_notional" },
+            { "const": 5000 }
+          ]
+        }
+      }
+    },
+    {
+      "id": "USER-AI-TRADER-SHORT-001",
+      "kind": "unary_tool_call",
+      "enabled": true,
+      "title": "block ai trader short actions",
+      "description": "block AI-Trader short actions unless a user explicitly changes this rule",
+      "effect": "BLOCK",
+      "severity": "HIGH",
+      "message": "当前策略不允许发布做空交易信号。",
+      "rule": {
+        "selector": {
+          "tools": ["trade"]
+        },
+        "predicate": {
+          "truthy": { "var": "ai_trader_is_short" }
+        }
+      }
+    },
+    {
+      "id": "USER-AI-TRADER-POLYMARKET-OUTCOME-001",
+      "kind": "unary_tool_call",
+      "enabled": true,
+      "title": "require polymarket outcome context",
+      "description": "block Polymarket trades when both outcome and token_id are missing",
+      "effect": "BLOCK",
+      "severity": "MEDIUM",
+      "message": "Polymarket 交易缺少 outcome 或 token_id，已拦截。",
+      "rule": {
+        "selector": {
+          "tools": ["trade"]
+        },
+        "predicate": {
+          "all": [
+            { "truthy": { "var": "ai_trader_is_polymarket" } },
+            { "falsy": { "var": "ai_trader_has_outcome" } },
+            { "falsy": { "var": "ai_trader_has_token_id" } }
+          ]
+        }
+      }
+    },
+    {
+      "id": "USER-PENTEST-OUT-OF-SCOPE-001",
+      "kind": "unary_tool_call",
+      "enabled": true,
+      "title": "block out of scope pentest actions",
+      "description": "block pentesting actions when the target is not explicitly in scope",
+      "effect": "BLOCK",
+      "severity": "CRITICAL",
+      "message": "目标不在授权测试范围内，已拦截。",
+      "rule": {
+        "selector": {
+          "instruction_types": ["EXEC"]
+        },
+        "predicate": {
+          "all": [
+            { "truthy": { "var": "pentest_action" } },
+            { "falsy": { "var": "pentest_target_in_scope" } }
+          ]
+        }
+      }
+    },
+    {
+      "id": "USER-PENTEST-DESTRUCTIVE-001",
+      "kind": "unary_tool_call",
+      "enabled": true,
+      "title": "block destructive pentest actions",
+      "description": "block destructive exploit actions even when a target is in scope",
+      "effect": "BLOCK",
+      "severity": "CRITICAL",
+      "message": "当前动作属于破坏性漏洞利用，已拦截。",
+      "rule": {
+        "selector": {
+          "instruction_types": ["EXEC"]
+        },
+        "predicate": {
+          "all": [
+            { "truthy": { "var": "pentest_action" } },
+            { "truthy": { "var": "pentest_destructive" } }
+          ]
+        }
+      }
+    }
+  ],
+  "required_metadata": [
+    {
+      "field": "ai_trader_notional",
+      "type": "number",
+      "description": "Absolute trade notional computed as price * quantity.",
+      "applies_to": {
+        "tools": ["trade"]
+      },
+      "source": {
+        "kind": "tool_arguments",
+        "paths": ["price", "quantity"]
+      },
+      "normalization": "Use absolute numeric price * quantity. Price 0 means platform simulated pricing and may produce 0 notional before execution.",
+      "on_missing": "no_match",
+      "required_for_rules": ["USER-AI-TRADER-NOTIONAL-001"]
+    },
+    {
+      "field": "ai_trader_is_short",
+      "type": "boolean",
+      "description": "True when the AI-Trader action is short.",
+      "applies_to": {
+        "tools": ["trade"]
+      },
+      "source": {
+        "kind": "tool_arguments",
+        "paths": ["action"]
+      },
+      "normalization": "action lowercased equals short.",
+      "on_missing": "fail_closed",
+      "required_for_rules": ["USER-AI-TRADER-SHORT-001"]
+    },
+    {
+      "field": "ai_trader_is_polymarket",
+      "type": "boolean",
+      "description": "True when market is polymarket.",
+      "applies_to": {
+        "tools": ["trade"]
+      },
+      "source": {
+        "kind": "tool_arguments",
+        "paths": ["market"]
+      },
+      "normalization": "market lowercased equals polymarket.",
+      "on_missing": "no_match",
+      "required_for_rules": ["USER-AI-TRADER-POLYMARKET-OUTCOME-001"]
+    },
+    {
+      "field": "ai_trader_has_outcome",
+      "type": "boolean",
+      "description": "True when a non-empty Polymarket outcome is present.",
+      "applies_to": {
+        "tools": ["trade"]
+      },
+      "source": {
+        "kind": "tool_arguments",
+        "paths": ["outcome"]
+      },
+      "normalization": "outcome is a non-empty string.",
+      "on_missing": "no_match",
+      "required_for_rules": ["USER-AI-TRADER-POLYMARKET-OUTCOME-001"]
+    },
+    {
+      "field": "ai_trader_has_token_id",
+      "type": "boolean",
+      "description": "True when a non-empty Polymarket token_id is present.",
+      "applies_to": {
+        "tools": ["trade"]
+      },
+      "source": {
+        "kind": "tool_arguments",
+        "paths": ["token_id"]
+      },
+      "normalization": "token_id is a non-empty string.",
+      "on_missing": "no_match",
+      "required_for_rules": ["USER-AI-TRADER-POLYMARKET-OUTCOME-001"]
+    },
+    {
+      "field": "pentest_action",
+      "type": "boolean",
+      "description": "True when the current tool call is part of a penetration testing or vulnerability validation action.",
+      "applies_to": {
+        "instruction_types": ["EXEC"]
+      },
+      "source": {
+        "kind": "llm_lowering",
+        "paths": ["command", "url", "target"]
+      },
+      "normalization": "Classify reconnaissance, scanning, exploitation, fuzzing, browser exploit validation, or vulnerability probing as pentest actions.",
+      "on_missing": "fail_closed",
+      "required_for_rules": ["USER-PENTEST-OUT-OF-SCOPE-001", "USER-PENTEST-DESTRUCTIVE-001"]
+    },
+    {
+      "field": "pentest_target_in_scope",
+      "type": "boolean",
+      "description": "True only when the target host, URL, IP, or repository is explicitly within the authorized test scope.",
+      "applies_to": {
+        "instruction_types": ["EXEC"]
+      },
+      "source": {
+        "kind": "llm_lowering",
+        "paths": ["command", "url", "target"]
+      },
+      "normalization": "Compare extracted targets against the configured authorized scope for the run.",
+      "on_missing": "fail_closed",
+      "required_for_rules": ["USER-PENTEST-OUT-OF-SCOPE-001"]
+    },
+    {
+      "field": "pentest_destructive",
+      "type": "boolean",
+      "description": "True when the action may destroy data, modify production state, persist payloads, or cause denial of service.",
+      "applies_to": {
+        "instruction_types": ["EXEC"]
+      },
+      "source": {
+        "kind": "llm_lowering",
+        "paths": ["command", "url", "target"]
+      },
+      "normalization": "Classify destructive exploit, DoS, data deletion, persistence, credential spraying, and privilege escalation attempts as destructive.",
+      "on_missing": "fail_closed",
+      "required_for_rules": ["USER-PENTEST-DESTRUCTIVE-001"]
+    }
+  ]
+}

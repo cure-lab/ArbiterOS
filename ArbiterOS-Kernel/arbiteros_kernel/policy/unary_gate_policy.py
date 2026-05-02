@@ -80,6 +80,43 @@ def _safe_dict(v: Any) -> Dict[str, Any]:
     return v if isinstance(v, dict) else {}
 
 
+def _safe_policy_metadata(custom: Dict[str, Any], reserved: Set[str]) -> Dict[str, Any]:
+    """
+    Business metadata supplied by kernel/parser lowering.
+
+    Contract:
+    - Stored under security_type.custom.policy_metadata.
+    - Flat lower_snake_case keys only.
+    - Never overrides built-in unary context fields.
+    - Values are JSON-like scalars or lists of scalars.
+    """
+    raw = custom.get("policy_metadata")
+    if not isinstance(raw, dict):
+        return {}
+
+    def valid_key(k: Any) -> bool:
+        if not isinstance(k, str) or not k:
+            return False
+        if k in reserved or k.startswith("_"):
+            return False
+        if not ("a" <= k[0] <= "z"):
+            return False
+        return all(ch.islower() or ch.isdigit() or ch == "_" for ch in k)
+
+    def valid_value(v: Any) -> bool:
+        if v is None or isinstance(v, (str, int, float, bool)):
+            return True
+        if isinstance(v, list):
+            return all(x is None or isinstance(x, (str, int, float, bool)) for x in v)
+        return False
+
+    out: Dict[str, Any] = {}
+    for key, value in raw.items():
+        if valid_key(key) and valid_value(value):
+            out[key] = value
+    return out
+
+
 def _latest_tool_instr_index(
     latest_instructions: List[Dict[str, Any]],
 ) -> Dict[str, Dict[str, Any]]:
@@ -309,6 +346,89 @@ def _read_rule_bundle_from_file(path: str) -> Dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+def _configured_rule_files(value: Any) -> List[str]:
+    if isinstance(value, str) and value.strip():
+        return [value.strip()]
+    if isinstance(value, (list, tuple)):
+        out: List[str] = []
+        for item in value:
+            if isinstance(item, str) and item.strip():
+                out.append(item.strip())
+        return out
+    return []
+
+
+def _optional_rule_bundle_from_file(path: str) -> Dict[str, Any]:
+    resolved = _resolve_rule_file_path(path)
+    if not os.path.exists(resolved):
+        logger.info("optional unary gate rule file not found: %s", resolved)
+        return {}
+    return _read_rule_bundle_from_file(path)
+
+
+def _bundle_source(bundle: Dict[str, Any], fallback: str) -> str:
+    return _safe_str(bundle.get("source"), fallback)
+
+
+def _rules_with_source(rules: Any, source: str) -> List[Dict[str, Any]]:
+    if not isinstance(rules, list):
+        return []
+    out: List[Dict[str, Any]] = []
+    for rule in rules:
+        if not isinstance(rule, dict):
+            continue
+        copied = dict(rule)
+        copied.setdefault("source", source)
+        out.append(copied)
+    return out
+
+
+def _merge_rule_bundles(
+    primary: Dict[str, Any],
+    secondary_bundles: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    merged = dict(primary)
+    sources: List[str] = []
+    seen_ids: Set[str] = set()
+    rules: List[Dict[str, Any]] = []
+
+    primary_source = _bundle_source(primary, "unary_gate_rules.json")
+    sources.append(primary_source)
+    for rule in _rules_with_source(primary.get("rules"), primary_source):
+        rule_id = _safe_str(rule.get("id"))
+        if rule_id:
+            seen_ids.add(rule_id)
+        rules.append(rule)
+
+    required_metadata: List[Any] = []
+    if isinstance(primary.get("required_metadata"), list):
+        required_metadata.extend(primary["required_metadata"])
+
+    for bundle in secondary_bundles:
+        source = _bundle_source(bundle, "user_unary_gate_rules.json")
+        sources.append(source)
+        if isinstance(bundle.get("required_metadata"), list):
+            required_metadata.extend(bundle["required_metadata"])
+        for rule in _rules_with_source(bundle.get("rules"), source):
+            rule_id = _safe_str(rule.get("id"))
+            if rule_id and rule_id in seen_ids:
+                logger.warning(
+                    "skipping duplicate unary gate rule id %s from %s",
+                    rule_id,
+                    source,
+                )
+                continue
+            if rule_id:
+                seen_ids.add(rule_id)
+            rules.append(rule)
+
+    merged["rules"] = rules
+    merged["source"] = " + ".join(dict.fromkeys(sources))
+    if required_metadata:
+        merged["required_metadata"] = required_metadata
+    return merged
+
+
 # ---------------------------------------------------------------------------
 # Declarative rule engine
 # ---------------------------------------------------------------------------
@@ -506,13 +626,25 @@ def _eval_predicate(pred: Any, ctx: Dict[str, Any]) -> bool:
     if op == "ne":
         return _compare_values(_resolve_value(arr[0], ctx), _resolve_value(arr[1], ctx)) != 0
     if op == "gt":
-        return _compare_values(_resolve_value(arr[0], ctx), _resolve_value(arr[1], ctx)) > 0
+        left, right = _resolve_value(arr[0], ctx), _resolve_value(arr[1], ctx)
+        if left is None or right is None:
+            return False
+        return _compare_values(left, right) > 0
     if op == "ge":
-        return _compare_values(_resolve_value(arr[0], ctx), _resolve_value(arr[1], ctx)) >= 0
+        left, right = _resolve_value(arr[0], ctx), _resolve_value(arr[1], ctx)
+        if left is None or right is None:
+            return False
+        return _compare_values(left, right) >= 0
     if op == "lt":
-        return _compare_values(_resolve_value(arr[0], ctx), _resolve_value(arr[1], ctx)) < 0
+        left, right = _resolve_value(arr[0], ctx), _resolve_value(arr[1], ctx)
+        if left is None or right is None:
+            return False
+        return _compare_values(left, right) < 0
     if op == "le":
-        return _compare_values(_resolve_value(arr[0], ctx), _resolve_value(arr[1], ctx)) <= 0
+        left, right = _resolve_value(arr[0], ctx), _resolve_value(arr[1], ctx)
+        if left is None or right is None:
+            return False
+        return _compare_values(left, right) <= 0
     if op == "in":
         lhs = _normalize_scalar_for_membership(_resolve_value(arr[0], ctx))
         rhs = [_normalize_scalar_for_membership(x) for x in _as_iterable(_resolve_value(arr[1], ctx))]
@@ -1100,6 +1232,35 @@ def _load_rule_bundle() -> Dict[str, Any]:
     if path:
         bundle = _read_rule_bundle_from_file(path)
         if bundle:
+            if unary_cfg.get("user_rules_enabled", True) is False:
+                return bundle
+
+            user_rule_files: List[str] = []
+            for key in (
+                "user_rule_file",
+                "user_rule_files",
+                "custom_rule_file",
+                "custom_rule_files",
+            ):
+                user_rule_files.extend(_configured_rule_files(unary_cfg.get(key)))
+            if not user_rule_files:
+                user_rule_files.append(
+                    "arbiteros_kernel/policy/user_unary_gate_rules.json"
+                )
+
+            seen_paths: Set[str] = set()
+            user_bundles: List[Dict[str, Any]] = []
+            for user_path in user_rule_files:
+                resolved = _resolve_rule_file_path(user_path)
+                if resolved in seen_paths:
+                    continue
+                seen_paths.add(resolved)
+                user_bundle = _optional_rule_bundle_from_file(user_path)
+                if user_bundle:
+                    user_bundles.append(user_bundle)
+
+            if user_bundles:
+                return _merge_rule_bundles(bundle, user_bundles)
             return bundle
     return _legacy_rule_bundle()
 
@@ -1522,7 +1683,7 @@ def _build_tool_context(
 
     canonical_tool_name = _canonical_tool_for_unary_gate(tool_name)
 
-    return {
+    ctx = {
         "scope": "tool",
         "tool_name": tool_name,
         "canonical_tool_name": canonical_tool_name,
@@ -1551,6 +1712,8 @@ def _build_tool_context(
         "custom_flow_role": _safe_upper(custom.get("flow_role"), ""),
         "custom_taint_role": _safe_upper(custom.get("taint_role"), ""),
     }
+    ctx.update(_safe_policy_metadata(custom, set(ctx.keys())))
+    return ctx
 
 def _build_respond_context(ins: Dict[str, Any]) -> Dict[str, Any]:
     md = _extract_metadata_view(ins)
@@ -1639,13 +1802,13 @@ def _localized_predicate_text(decision: RuleDecision) -> str:
     mapping = {
         "UG-001": "缺少指令元数据。",
         "UG-010": "参数总长度 > 4000。",
-        "UG-020": "confidence < MID。",
-        "UG-021": "trustworthiness < MID。",
+        "UG-020": "confidence < UNKNOWN。",
+        "UG-021": "trustworthiness < UNKNOWN。",
         "UG-030": "risk 属于 {HIGH, CRITICAL}。",
         "UG-031": "approval_required = true。",
         "UG-032": "destructive = true 且 reversible = false。",
         "UG-040": "标签集合与 {SECRET_LIKE, HIGH_RISK} 存在交集。",
-        "UG-050": "prop_confidentiality > MID。",
+        "UG-050": "prop_confidentiality > UNKNOWN。",
         "UG-060": "direct_target_basenames 与 {SOUL.MD, AGENTS.MD, IDENTITY.MD} 存在交集。",
         "UG-061": "exec_write_target_basenames 与 {SOUL.MD, AGENTS.MD, IDENTITY.MD} 存在交集。",
         "UG-062": "内容同时包含受保护文件名与修改动作关键词。",
