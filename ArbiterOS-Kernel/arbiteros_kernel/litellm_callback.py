@@ -149,6 +149,21 @@ class _TraceState:
     pending_warning_texts: list[str] = field(default_factory=list)
     # Session bootstrap scan: run once before the first pure-text reply.
     bootstrap_scan_done: bool = False
+    # Step1 backup-only fields (trace-id bound). Do not change runtime reads yet.
+    trace_started_at: Optional[str] = None
+    trace_total_tokens: int = 0
+    backup_role_name_requested: Optional[str] = None
+    backup_role_name_effective: Optional[str] = None
+    backup_instruction_file: Optional[str] = None
+    backup_instruction_count: int = 0
+    backup_stripped_categories: list[str] = field(default_factory=list)
+    backup_stripped_topics: list[Optional[str]] = field(default_factory=list)
+    backup_reference_tool_ids: dict[str, list[str]] = field(default_factory=dict)
+    backup_policy_protected_tool_call_ids: dict[str, str] = field(default_factory=dict)
+    backup_policy_confirmation_pending: Optional[dict[str, Any]] = None
+    backup_policy_confirmation_apply_info: Optional[dict[str, Any]] = None
+    backup_policy_confirmation_no_apply: bool = False
+    backup_updated_at: Optional[str] = None
     # Ephemeral handle to the current turn observation, for in-process updates.
     current_turn_handle: Any = None
 
@@ -252,6 +267,22 @@ def _trace_state_to_dict(state: _TraceState) -> dict[str, Any]:
         "tool_result_counter_by_tool": state.tool_result_counter_by_tool,
         "tool_result_alignment_by_call_id": state.tool_result_alignment_by_call_id,
         "bootstrap_scan_done": bool(state.bootstrap_scan_done),
+        "trace_started_at": state.trace_started_at,
+        "trace_total_tokens": state.trace_total_tokens,
+        "backup_role_name_requested": state.backup_role_name_requested,
+        "backup_role_name_effective": state.backup_role_name_effective,
+        "backup_instruction_file": state.backup_instruction_file,
+        "backup_instruction_count": state.backup_instruction_count,
+        "backup_stripped_categories": state.backup_stripped_categories,
+        "backup_stripped_topics": state.backup_stripped_topics,
+        "backup_reference_tool_ids": state.backup_reference_tool_ids,
+        "backup_policy_protected_tool_call_ids": state.backup_policy_protected_tool_call_ids,
+        "backup_policy_confirmation_pending": state.backup_policy_confirmation_pending,
+        "backup_policy_confirmation_apply_info": state.backup_policy_confirmation_apply_info,
+        "backup_policy_confirmation_no_apply": bool(
+            state.backup_policy_confirmation_no_apply
+        ),
+        "backup_updated_at": state.backup_updated_at,
     }
 
 
@@ -339,6 +370,79 @@ def _trace_state_from_dict(device_key: str, payload: Any) -> Optional[_TraceStat
         if isinstance(v, dict):
             cleaned_alignment[k.strip()] = dict(v)
     bootstrap_scan_done = bool(payload.get("bootstrap_scan_done", False))
+    trace_started_at = payload.get("trace_started_at")
+    if not isinstance(trace_started_at, str) or not trace_started_at.strip():
+        trace_started_at = datetime.now().isoformat()
+    trace_total_tokens = payload.get("trace_total_tokens")
+    if not isinstance(trace_total_tokens, int) or trace_total_tokens < 0:
+        trace_total_tokens = 0
+    backup_role_name_requested = payload.get("backup_role_name_requested")
+    if (
+        not isinstance(backup_role_name_requested, str)
+        or not backup_role_name_requested.strip()
+    ):
+        backup_role_name_requested = None
+    backup_role_name_effective = payload.get("backup_role_name_effective")
+    if (
+        not isinstance(backup_role_name_effective, str)
+        or not backup_role_name_effective.strip()
+    ):
+        backup_role_name_effective = None
+    backup_instruction_file = payload.get("backup_instruction_file")
+    if not isinstance(backup_instruction_file, str) or not backup_instruction_file.strip():
+        backup_instruction_file = None
+    backup_instruction_count = payload.get("backup_instruction_count")
+    if not isinstance(backup_instruction_count, int) or backup_instruction_count < 0:
+        backup_instruction_count = 0
+    backup_stripped_categories = payload.get("backup_stripped_categories")
+    if not isinstance(backup_stripped_categories, list):
+        backup_stripped_categories = []
+    backup_stripped_categories = [
+        x for x in backup_stripped_categories if isinstance(x, str)
+    ]
+    backup_stripped_topics = payload.get("backup_stripped_topics")
+    if not isinstance(backup_stripped_topics, list):
+        backup_stripped_topics = []
+    cleaned_backup_topics: list[Optional[str]] = []
+    for x in backup_stripped_topics:
+        if isinstance(x, str):
+            cleaned_backup_topics.append(x)
+        else:
+            cleaned_backup_topics.append(None)
+    backup_reference_tool_ids = payload.get("backup_reference_tool_ids")
+    if not isinstance(backup_reference_tool_ids, dict):
+        backup_reference_tool_ids = {}
+    cleaned_backup_reference_tool_ids: dict[str, list[str]] = {}
+    for k, v in backup_reference_tool_ids.items():
+        if not isinstance(k, str) or not k.strip() or not isinstance(v, list):
+            continue
+        cleaned_backup_reference_tool_ids[k.strip()] = [
+            str(item) for item in v if item is not None
+        ]
+    backup_policy_protected_tool_call_ids = payload.get(
+        "backup_policy_protected_tool_call_ids"
+    )
+    if not isinstance(backup_policy_protected_tool_call_ids, dict):
+        backup_policy_protected_tool_call_ids = {}
+    cleaned_backup_policy_protected: dict[str, str] = {}
+    for k, v in backup_policy_protected_tool_call_ids.items():
+        if not isinstance(k, str) or not k.strip():
+            continue
+        cleaned_backup_policy_protected[k.strip()] = str(v)
+    backup_policy_confirmation_pending = payload.get("backup_policy_confirmation_pending")
+    if not isinstance(backup_policy_confirmation_pending, dict):
+        backup_policy_confirmation_pending = None
+    backup_policy_confirmation_apply_info = payload.get(
+        "backup_policy_confirmation_apply_info"
+    )
+    if not isinstance(backup_policy_confirmation_apply_info, dict):
+        backup_policy_confirmation_apply_info = None
+    backup_policy_confirmation_no_apply = bool(
+        payload.get("backup_policy_confirmation_no_apply", False)
+    )
+    backup_updated_at = payload.get("backup_updated_at")
+    if not isinstance(backup_updated_at, str) or not backup_updated_at.strip():
+        backup_updated_at = None
 
     return _TraceState(
         trace_id=trace_id,
@@ -358,6 +462,20 @@ def _trace_state_from_dict(device_key: str, payload: Any) -> Optional[_TraceStat
         tool_result_alignment_by_call_id=cleaned_alignment,
         pending_warning_texts=[],
         bootstrap_scan_done=bootstrap_scan_done,
+        trace_started_at=trace_started_at,
+        trace_total_tokens=trace_total_tokens,
+        backup_role_name_requested=backup_role_name_requested,
+        backup_role_name_effective=backup_role_name_effective,
+        backup_instruction_file=backup_instruction_file,
+        backup_instruction_count=backup_instruction_count,
+        backup_stripped_categories=backup_stripped_categories,
+        backup_stripped_topics=cleaned_backup_topics,
+        backup_reference_tool_ids=cleaned_backup_reference_tool_ids,
+        backup_policy_protected_tool_call_ids=cleaned_backup_policy_protected,
+        backup_policy_confirmation_pending=backup_policy_confirmation_pending,
+        backup_policy_confirmation_apply_info=backup_policy_confirmation_apply_info,
+        backup_policy_confirmation_no_apply=backup_policy_confirmation_no_apply,
+        backup_updated_at=backup_updated_at,
     )
 
 
@@ -1281,6 +1399,168 @@ def _to_json(obj: Any) -> Any:
     return str(obj)
 
 
+def _extract_total_tokens_from_response_obj(response_obj: Any) -> int:
+    payload = _to_json(response_obj)
+    if not isinstance(payload, dict):
+        return 0
+    usage = payload.get("usage")
+    if isinstance(usage, dict):
+        total_tokens = usage.get("total_tokens")
+        if isinstance(total_tokens, int) and total_tokens > 0:
+            return total_tokens
+        prompt_tokens = usage.get("prompt_tokens")
+        completion_tokens = usage.get("completion_tokens")
+        if (
+            isinstance(prompt_tokens, int)
+            and prompt_tokens >= 0
+            and isinstance(completion_tokens, int)
+            and completion_tokens >= 0
+        ):
+            return prompt_tokens + completion_tokens
+    return 0
+
+
+def _snapshot_trace_backup_state(
+    trace_id: Optional[str], *, metadata: Optional[dict[str, Any]] = None
+) -> None:
+    """
+    Step1 (backup-only):
+    Copy trace-id bound runtime variables into TraceState persisted fields.
+    This does NOT change existing runtime read logic.
+    """
+    if not isinstance(trace_id, str) or not trace_id.strip():
+        return
+    tid = trace_id.strip()
+
+    instruction_file = str(_INSTRUCTION_LOG_DIR / f"{tid}.json")
+    instruction_count = 0
+    builder = _peek_instruction_builder_for_trace(tid)
+    if builder is not None:
+        instruction_count = len(getattr(builder, "instructions", []) or [])
+
+    with _stripped_categories_lock:
+        backup_categories = list(_stripped_categories_by_trace.get(tid, []))
+        backup_topics = list(_stripped_topics_by_trace.get(tid, []))
+        backup_reference_tool_ids = copy.deepcopy(
+            _stripped_reference_tool_ids_by_trace.get(tid, {})
+        )
+
+    with _policy_confirmation_lock:
+        backup_confirmation_pending = copy.deepcopy(
+            _policy_confirmation_pending.get(tid)
+        )
+        backup_confirmation_apply_info = copy.deepcopy(
+            _policy_confirmation_apply_info.get(tid)
+        )
+        backup_confirmation_no_apply = tid in _policy_confirmation_no_apply
+
+    backup_policy_protected = copy.deepcopy(
+        _policy_protected_tool_call_ids.get(tid, {})
+    )
+
+    role_requested = None
+    role_effective = None
+    if isinstance(metadata, dict):
+        requested_raw = metadata.get("arbiteros_role_name_requested")
+        if isinstance(requested_raw, str) and requested_raw.strip():
+            role_requested = requested_raw.strip()
+        effective_raw = metadata.get("arbiteros_role_name_effective")
+        if isinstance(effective_raw, str) and effective_raw.strip():
+            role_effective = effective_raw.strip()
+
+    with _trace_state_lock:
+        state: Optional[_TraceState] = None
+        for s in _trace_state_by_device.values():
+            if s.trace_id == tid:
+                state = s
+                break
+        if state is None:
+            return
+        if not isinstance(state.trace_started_at, str) or not state.trace_started_at:
+            state.trace_started_at = datetime.now().isoformat()
+        state.backup_instruction_file = instruction_file
+        state.backup_instruction_count = instruction_count
+        state.backup_stripped_categories = backup_categories
+        state.backup_stripped_topics = backup_topics
+        state.backup_reference_tool_ids = backup_reference_tool_ids
+        state.backup_policy_protected_tool_call_ids = backup_policy_protected
+        state.backup_policy_confirmation_pending = backup_confirmation_pending
+        state.backup_policy_confirmation_apply_info = backup_confirmation_apply_info
+        state.backup_policy_confirmation_no_apply = backup_confirmation_no_apply
+        if role_requested is not None:
+            state.backup_role_name_requested = role_requested
+        if role_effective is not None:
+            state.backup_role_name_effective = role_effective
+        state.backup_updated_at = datetime.now().isoformat()
+
+
+def _accumulate_trace_total_tokens(trace_id: Optional[str], response_obj: Any) -> None:
+    if not isinstance(trace_id, str) or not trace_id.strip():
+        return
+    delta = _extract_total_tokens_from_response_obj(response_obj)
+    if delta <= 0:
+        return
+    tid = trace_id.strip()
+    with _trace_state_lock:
+        for state in _trace_state_by_device.values():
+            if state.trace_id != tid:
+                continue
+            if not isinstance(state.trace_started_at, str) or not state.trace_started_at:
+                state.trace_started_at = datetime.now().isoformat()
+            state.trace_total_tokens = max(0, int(state.trace_total_tokens)) + delta
+            state.backup_updated_at = datetime.now().isoformat()
+            break
+
+
+def _persist_trace_backup_state(
+    trace_id: Optional[str], *, metadata: Optional[dict[str, Any]] = None
+) -> None:
+    _snapshot_trace_backup_state(trace_id, metadata=metadata)
+    _persist_trace_state_to_disk()
+
+
+def _build_policy_runtime_context(
+    trace_id: Optional[str], instructions: list[dict[str, Any]]
+) -> dict[str, Any]:
+    instruction_count = len(instructions) if isinstance(instructions, list) else 0
+    instruction_bytes = 0
+    try:
+        instruction_bytes = len(
+            json.dumps(instructions, ensure_ascii=False, default=str).encode("utf-8")
+        )
+    except Exception:
+        instruction_bytes = 0
+
+    total_tokens = 0
+    elapsed_seconds = 0.0
+    if isinstance(trace_id, str) and trace_id.strip():
+        tid = trace_id.strip()
+        with _trace_state_lock:
+            for state in _trace_state_by_device.values():
+                if state.trace_id != tid:
+                    continue
+                total_tokens = max(0, int(getattr(state, "trace_total_tokens", 0) or 0))
+                started_at = getattr(state, "trace_started_at", None)
+                if isinstance(started_at, str) and started_at:
+                    try:
+                        start_dt = datetime.fromisoformat(started_at)
+                        elapsed_seconds = max(
+                            0.0, (datetime.now() - start_dt).total_seconds()
+                        )
+                    except Exception:
+                        elapsed_seconds = 0.0
+                break
+
+    return {
+        "resource_guard": {
+            "total_tokens": total_tokens,
+            "elapsed_seconds": elapsed_seconds,
+            "instruction_bytes": instruction_bytes,
+            "instruction_count": instruction_count,
+        }
+    }
+
+
 def _save_json(hook: str, data: dict) -> None:
     """保存数据到 jsonl 文件"""
     entry = {
@@ -2010,6 +2290,7 @@ def _ensure_trace_state(context: _DeviceContext) -> tuple[_TraceState, bool]:
                 current_turn_observation_id=None,
                 turn_index=0,
                 latest_user_preview=None,
+                trace_started_at=datetime.now().isoformat(),
             )
             _trace_state_by_device[context.device_key] = current
             if current.channel != "unknown-channel" and not current.user_id.startswith(
@@ -2108,6 +2389,7 @@ def _resolve_trace_state_from_metadata(
                 current_turn_observation_id=None,
                 turn_index=0,
                 latest_user_preview=None,
+                trace_started_at=datetime.now().isoformat(),
             )
             _trace_state_by_device[device_key] = restored_state
             result = restored_state
@@ -5764,6 +6046,10 @@ class MyCustomHandler(CustomLogger):
             )
             _save_json("pre_call", {"call_type": call_type, "incoming": filtered_data})
         _inject_reference_tool_id_into_tools(data)
+        _persist_trace_backup_state(
+            state.trace_id if state is not None else None,
+            metadata=(data.get("metadata") if isinstance(data, dict) else None),
+        )
         _save_precall_to_log(data)
         return data
 
@@ -5856,6 +6142,7 @@ class MyCustomHandler(CustomLogger):
             _context = _build_device_context(data)
             _state, _ = _ensure_trace_state(_context)
             _trace_id = _state.trace_id if _state is not None else None
+        _accumulate_trace_total_tokens(_trace_id, response)
         _is_mock_response_path = False
         if isinstance(_trace_id, str) and _trace_id.strip():
             with _policy_confirmation_lock:
@@ -6083,6 +6370,9 @@ class MyCustomHandler(CustomLogger):
                 )
                 extracted_user_messages = _extract_all_user_messages_from_request(data)
                 role_policy_override = _extract_role_policy_override_from_request(data)
+                policy_runtime_context = _build_policy_runtime_context(
+                    trace_id, instructions_for_policy
+                )
                 policy_result = check_response_policy(
                     user_messages=extracted_user_messages,
                     trace_id=trace_id,
@@ -6090,6 +6380,7 @@ class MyCustomHandler(CustomLogger):
                     current_response=final_msg_dict,
                     latest_instructions=latest_for_policy,
                     policy_enabled_override=role_policy_override,
+                    policy_runtime_context=policy_runtime_context,
                 )
                 if not policy_result.modified:
                     _ia_policy = policy_result.inactivate_error_type
@@ -6234,6 +6525,10 @@ class MyCustomHandler(CustomLogger):
                         setattr(response, "output_text", final_msg_dict.get("content"))
             except Exception:
                 pass
+        _persist_trace_backup_state(
+            _trace_id,
+            metadata=(data.get("metadata") if isinstance(data, dict) else None),
+        )
         return response
 
     async def async_post_call_streaming_hook(
@@ -6364,6 +6659,27 @@ class MyCustomHandler(CustomLogger):
                 response_before_transform=synthesized_response,
                 response_after_transform=synthesized_response,
             )
+            _metadata_rsp = (
+                request_data.get("metadata") if isinstance(request_data, dict) else None
+            )
+            _trace_id_rsp = (
+                _metadata_rsp.get("arbiteros_trace_id")
+                if isinstance(_metadata_rsp, dict)
+                else None
+            )
+            if not isinstance(_trace_id_rsp, str) or not _trace_id_rsp.strip():
+                _context_rsp = _build_device_context(request_data)
+                _state_rsp, _ = _ensure_trace_state(_context_rsp)
+                _trace_id_rsp = _state_rsp.trace_id if _state_rsp is not None else None
+            _accumulate_trace_total_tokens(_trace_id_rsp, completed_response_obj)
+            _persist_trace_backup_state(
+                _trace_id_rsp,
+                metadata=(
+                    request_data.get("metadata")
+                    if isinstance(request_data, dict)
+                    else None
+                ),
+            )
             return
 
         if not collected:
@@ -6446,6 +6762,7 @@ class MyCustomHandler(CustomLogger):
             context = _build_device_context(request_data)
             _state, _ = _ensure_trace_state(context)
             trace_id_stream = _state.trace_id if _state is not None else None
+        _accumulate_trace_total_tokens(trace_id_stream, complete)
         with _policy_confirmation_lock:
             apply_info_stream = (
                 _policy_confirmation_apply_info.pop(trace_id_stream.strip(), None)
@@ -6616,6 +6933,9 @@ class MyCustomHandler(CustomLogger):
                 role_policy_override = _extract_role_policy_override_from_request(
                     request_data
                 )
+                policy_runtime_context = _build_policy_runtime_context(
+                    trace_id, instructions_for_policy
+                )
                 policy_result = check_response_policy(
                     user_messages=extracted_user_messages,
                     trace_id=trace_id,
@@ -6623,6 +6943,7 @@ class MyCustomHandler(CustomLogger):
                     current_response=msg_dict,
                     latest_instructions=latest_for_policy,
                     policy_enabled_override=role_policy_override,
+                    policy_runtime_context=policy_runtime_context,
                 )
                 if not policy_result.modified:
                     _ia_policy = policy_result.inactivate_error_type
@@ -6731,6 +7052,10 @@ class MyCustomHandler(CustomLogger):
             _state_warn_s,
             msg_dict,
             policy_confirmation_state=policy_confirmation_state_for_langfuse,
+        )
+        _persist_trace_backup_state(
+            trace_id_stream,
+            metadata=(request_data.get("metadata") if isinstance(request_data, dict) else None),
         )
 
         if apply_transform and msg_dict is not None:
