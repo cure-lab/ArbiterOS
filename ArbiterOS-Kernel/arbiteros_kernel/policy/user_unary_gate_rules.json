@@ -1,0 +1,304 @@
+{
+  "evaluation_mode": "first_match",
+  "source": "user_unary_gate_rules.json",
+  "description": "User-authored unary tool-call policy rules. Built-in UG rules stay in unary_gate_rules.json.",
+  "rules": [
+    {
+      "id": "USER-AI-TRADER-NOTIONAL-001",
+      "title": "block large AI-Trader realtime signal",
+      "description": "block AI-Trader trade tool calls whose lowered notional value is greater than 5000",
+      "scope": "tool",
+      "selector": {
+        "tool": [
+          "trade",
+          "ai_trader_trade"
+        ]
+      },
+      "predicate": {
+        "gt": [
+          {
+            "var": "ai_trader_notional"
+          },
+          {
+            "const": 5000
+          }
+        ]
+      },
+      "effect": "BLOCK",
+      "message": "AI-Trader 单笔交易名义金额超过 5000，已拦截。"
+    },
+    {
+      "id": "USER-AI-TRADER-SHORT-001",
+      "title": "block AI-Trader short actions",
+      "description": "block AI-Trader realtime signal tool calls that attempt short actions",
+      "scope": "tool",
+      "selector": {
+        "tool": [
+          "trade",
+          "ai_trader_trade"
+        ]
+      },
+      "predicate": {
+        "any": [
+          {
+            "truthy": {
+              "var": "ai_trader_is_short"
+            }
+          },
+          {
+            "eq": [
+              {
+                "var": "action"
+              },
+              {
+                "const": "SHORT"
+              }
+            ]
+          }
+        ]
+      },
+      "effect": "BLOCK",
+      "message": "当前策略不允许发布做空交易信号。"
+    },
+    {
+      "id": "USER-AI-TRADER-POLYMARKET-OUTCOME-001",
+      "title": "require Polymarket outcome context",
+      "description": "block AI-Trader Polymarket trade tool calls when both outcome and token_id are missing",
+      "scope": "tool",
+      "selector": {
+        "tool": [
+          "trade",
+          "ai_trader_trade"
+        ]
+      },
+      "predicate": {
+        "all": [
+          {
+            "any": [
+              {
+                "truthy": {
+                  "var": "ai_trader_is_polymarket"
+                }
+              },
+              {
+                "contains": [
+                  {
+                    "var": "arg_text_upper"
+                  },
+                  {
+                    "const": "POLYMARKET"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "falsy": {
+              "var": "ai_trader_has_outcome"
+            }
+          },
+          {
+            "falsy": {
+              "var": "ai_trader_has_token_id"
+            }
+          }
+        ]
+      },
+      "effect": "BLOCK",
+      "message": "Polymarket 交易缺少 outcome 或 token_id，已拦截。"
+    },
+    {
+      "id": "USER-PENTEST-OUT-OF-SCOPE-001",
+      "title": "block out-of-scope pentest actions",
+      "description": "block pentesting or vulnerability validation tool calls when no in-scope target metadata is present",
+      "scope": "tool",
+      "selector": {
+        "instruction_type": [
+          "EXEC"
+        ]
+      },
+      "predicate": {
+        "all": [
+          {
+            "any": [
+              {
+                "truthy": {
+                  "var": "pentest_action"
+                }
+              },
+              {
+                "contains": [
+                  {
+                    "var": "arg_text_upper"
+                  },
+                  {
+                    "const": "NMAP"
+                  }
+                ]
+              },
+              {
+                "contains": [
+                  {
+                    "var": "arg_text_upper"
+                  },
+                  {
+                    "const": "SQLMAP"
+                  }
+                ]
+              },
+              {
+                "contains": [
+                  {
+                    "var": "arg_text_upper"
+                  },
+                  {
+                    "const": "METASPLOIT"
+                  }
+                ]
+              },
+              {
+                "contains": [
+                  {
+                    "var": "arg_text_upper"
+                  },
+                  {
+                    "const": "MSFCONSOLE"
+                  }
+                ]
+              },
+              {
+                "contains": [
+                  {
+                    "var": "arg_text_upper"
+                  },
+                  {
+                    "const": "SCHEMATHESIS"
+                  }
+                ]
+              },
+              {
+                "contains": [
+                  {
+                    "var": "arg_text_upper"
+                  },
+                  {
+                    "const": "HYDRA"
+                  }
+                ]
+              },
+              {
+                "contains": [
+                  {
+                    "var": "arg_text_upper"
+                  },
+                  {
+                    "const": "GOBUSTER"
+                  }
+                ]
+              },
+              {
+                "contains": [
+                  {
+                    "var": "arg_text_upper"
+                  },
+                  {
+                    "const": "FFUF"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "falsy": {
+              "var": "pentest_target_in_scope"
+            }
+          }
+        ]
+      },
+      "effect": "BLOCK",
+      "message": "渗透测试或漏洞验证目标不在授权范围内，已拦截。"
+    },
+    {
+      "id": "USER-PENTEST-DESTRUCTIVE-001",
+      "title": "block destructive pentest actions",
+      "description": "block destructive exploit, persistence, credential spraying, or denial-of-service style actions",
+      "scope": "tool",
+      "selector": {
+        "instruction_type": [
+          "EXEC"
+        ]
+      },
+      "predicate": {
+        "any": [
+          {
+            "truthy": {
+              "var": "pentest_destructive"
+            }
+          },
+          {
+            "contains": [
+              {
+                "var": "arg_text_upper"
+              },
+              {
+                "const": "--OS-SHELL"
+              }
+            ]
+          },
+          {
+            "contains": [
+              {
+                "var": "arg_text_upper"
+              },
+              {
+                "const": "DENIAL OF SERVICE"
+              }
+            ]
+          },
+          {
+            "contains": [
+              {
+                "var": "arg_text_upper"
+              },
+              {
+                "const": "DOS"
+              }
+            ]
+          },
+          {
+            "contains": [
+              {
+                "var": "arg_text_upper"
+              },
+              {
+                "const": "CREDENTIAL SPRAY"
+              }
+            ]
+          },
+          {
+            "contains": [
+              {
+                "var": "arg_text_upper"
+              },
+              {
+                "const": "PERSISTENCE"
+              }
+            ]
+          },
+          {
+            "contains": [
+              {
+                "var": "arg_text_upper"
+              },
+              {
+                "const": "PRIVILEGE ESCALATION"
+              }
+            ]
+          }
+        ]
+      },
+      "effect": "BLOCK",
+      "message": "当前动作疑似破坏性漏洞利用或高影响攻击，已拦截。"
+    }
+  ]
+}

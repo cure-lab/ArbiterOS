@@ -1436,5 +1436,67 @@
             },
             "strict": false
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "trade",
+            "description": "Publish one AI-Trader realtime trading signal through the local wrapper. The wrapper validates arguments and performs POST /api/signals/realtime. Use for simulated or synced trades only when the user explicitly requests trading or signal publishing.",
+            "parameters": {
+                "type": "object",
+                "required": [
+                    "market",
+                    "action",
+                    "symbol",
+                    "price",
+                    "quantity",
+                    "executed_at"
+                ],
+                "properties": {
+                    "market": {
+                        "type": "string",
+                        "enum": [
+                            "us-stock",
+                            "crypto",
+                            "polymarket"
+                        ]
+                    },
+                    "action": {
+                        "type": "string",
+                        "enum": [
+                            "buy",
+                            "sell",
+                            "short",
+                            "cover"
+                        ]
+                    },
+                    "symbol": {
+                        "type": "string"
+                    },
+                    "price": {
+                        "type": "number"
+                    },
+                    "quantity": {
+                        "type": "number"
+                    },
+                    "executed_at": {
+                        "type": "string",
+                        "description": "ISO 8601 timestamp or 'now'"
+                    },
+                    "content": {
+                        "type": "string"
+                    },
+                    "outcome": {
+                        "type": "string",
+                        "description": "Polymarket outcome, e.g. Yes or No"
+                    },
+                    "token_id": {
+                        "type": "string",
+                        "description": "Exact Polymarket outcome token id"
+                    }
+                }
+            },
+            "strict": false
+        }
     }
 ]

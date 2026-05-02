@@ -2,6 +2,9 @@
   "audit": { "log_allow": true },
 
   "unary_gate": {
+    "rule_file": "arbiteros_kernel/policy/unary_gate_rules.json",
+    "user_rules_enabled": true,
+    "user_rule_file": "arbiteros_kernel/policy/user_unary_gate_rules.json",
     "tool_aliases": {
       "write_file": "write",
       "edit_file": "edit",
