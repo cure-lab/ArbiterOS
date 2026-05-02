@@ -234,6 +234,7 @@ def check_response_policy(
     policy_classes: Optional[list[type["Policy"]]] = None,
     user_messages: list[str] | None = None,
     policy_enabled_override: Optional[dict[str, bool]] = None,
+    policy_runtime_context: Optional[dict[str, Any]] = None,
 ) -> PolicyCheckResult:
     """
     Policy check on post_call_success response before returning to agent.
@@ -251,6 +252,8 @@ def check_response_policy(
             ``Policy.check``).
         user_messages: Optional full user-message history from current precall payload.
             Passed through to policy.check via kwargs for policies that need it.
+        policy_runtime_context: Optional runtime metrics/context passed through to
+            policy.check via kwargs (e.g., token/time/instruction budgets).
 
     Output:
         PolicyCheckResult: modified, response, error_type (when modified).
@@ -299,6 +302,9 @@ def check_response_policy(
             latest_instructions=latest_instructions,
             trace_id=trace_id,
             user_messages=user_messages or [],
+            policy_runtime_context=(
+                policy_runtime_context if isinstance(policy_runtime_context, dict) else {}
+            ),
         )
         enforce = entry.enabled
         if (
