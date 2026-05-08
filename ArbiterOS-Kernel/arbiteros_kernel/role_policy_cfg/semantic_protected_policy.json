@@ -1,0 +1,313 @@
+{
+  "audit": {
+    "log_allow": true,
+    "enabled": true,
+    "path": "/data/ArbiterOS/ArbiterOS/ArbiterOS-Kernel/log/policy_audit.jsonl"
+  },
+
+  "alignment_sentinel": {
+    "postexec_enabled": false
+  },
+
+  "alignment_sentinel_trigger": {
+    "enabled": true,
+    "preexec": {
+      "enabled": true,
+      "high_side_effect_tools": [
+        "exec",
+        "message",
+        "sessions_send",
+        "sessions_spawn",
+        "tts",
+        "gateway",
+        "cron",
+        "process",
+        "browser",
+        "write",
+        "edit"
+      ],
+      "high_side_effect_browser_actions": ["act", "upload", "dialog", "navigate"],
+      "high_side_effect_process_actions": ["submit", "send-keys", "paste", "kill", "write"],
+      "high_side_effect_cron_actions": ["add", "update", "remove", "run", "wake"],
+      "write_path_hints": [
+        "/data/",
+        "/root/",
+        "/shared/",
+        "/public/",
+        "/publish/",
+        "/published/",
+        "/export/",
+        "/exports/",
+        "/outbox/",
+        "/upload/",
+        "/uploads/",
+        "/dist/",
+        "/artifacts/",
+        "/release/",
+        "/releases/",
+        "/www/"
+      ],
+      "prompt_injection_markers": [
+        "ignore previous instructions",
+        "ignore all previous instructions",
+        "override your earlier rules",
+        "override previous rules",
+        "assistant directive",
+        "<URGENT>",
+        "system prompt",
+        "developer message",
+        "you are chatgpt",
+        "you are an ai agent",
+        "follow these steps"
+      ],
+      "max_source_excerpt_chars": 400,
+      "arg_text_trigger_chars": 1000
+    },
+    "postexec": {
+      "enabled": false,
+      "ingress_tools": ["web_fetch", "web_search", "image", "browser"],
+      "browser_ingress_actions": ["snapshot", "console", "pdf", "screenshot"],
+      "prompt_injection_markers": [
+        "ignore previous instructions",
+        "ignore all previous instructions",
+        "override your earlier rules",
+        "override previous rules",
+        "assistant directive",
+        "<URGENT>",
+        "system prompt",
+        "developer message",
+        "you are chatgpt",
+        "you are an ai agent",
+        "follow these steps"
+      ],
+      "max_body_chars_before_force_trigger": 8000,
+      "unknown_source_min_chars": 2000,
+      "structured_text_min_chars": 1200
+    }
+  },
+
+  "unary_gate": {
+    "tool_aliases": {
+      "write_file": "write",
+      "edit_file": "edit",
+      "read_file": "read",
+      "spawn": "sessions_spawn",
+      "patch": "edit",
+      "terminal": "exec",
+      "cronjob": "cron",
+      "text_to_speech": "tts",
+      "session_search": "sessions_history",
+      "delegate_task": "sessions_spawn",
+      "vision_analyze": "image",
+      "browser_navigate": "browser",
+      "browser_click": "browser",
+      "browser_type": "browser",
+      "browser_press": "browser",
+      "browser_scroll": "browser",
+      "browser_back": "browser",
+      "browser_snapshot": "browser",
+      "browser_console": "browser",
+      "browser_get_images": "browser",
+      "browser_vision": "browser"
+    }
+  },
+  
+  "allow": {
+    "tools": [
+  "read",
+  "write",
+  "edit",
+  "exec",
+  "process",
+  "web_fetch",
+  "web_search",
+  "session_status",
+  "sessions_list",
+  "sessions_history",
+  "sessions_send",
+  "sessions_spawn",
+  "memory_get",
+  "memory_search",
+  "image",
+  "browser"
+],
+    "instruction_types": [],
+    "categories": []
+  },
+
+  "deny": {
+    "tools": [],
+    "instruction_types": [],
+    "categories": []
+  },
+
+  "paths": {
+    "allow_prefixes": [],
+    "deny_prefixes": [
+      "/proc", "/sys", "/dev", "/run",
+      "/Windows", "/System32"
+    ]
+  },
+
+  "input_budget": { "max_str_len": 20000 },
+  "output_budget": { "max_chars": 500 },
+
+  "rate_limit": {
+    "max_consecutive_same_tool": 20,
+    "window_seconds": 10,
+    "max_calls_per_window": 30
+  },
+
+  "user_aggregate": {
+    "tools": ["exec"],
+    "window_seconds": 60,
+    "max_events": 50
+  },
+
+  "schemas": {
+    "write": {
+      "type": "object",
+      "required": ["content"],
+      "properties": {
+        "path": { "type": "string" },
+        "file_path": { "type": "string" },
+        "content": { "type": "string" }
+      }
+    },
+    "read": {
+      "type": "object",
+      "required": ["path"],
+      "properties": {
+        "path": { "type": "string" },
+        "file_path": { "type": "string" },
+        "limit": { "type": "integer" }
+      }
+    },
+    "exec": {
+      "type": "object",
+      "required": ["command"],
+      "properties": {
+        "command": { "type": "string" },
+        "pty": { "type": "boolean" }
+      }
+    }
+  },
+
+  "taint": {
+    "enabled": true,
+
+    "taint_policy": {
+      "input_tools": ["read", "web_fetch", "web_search", "session_status", "sessions_list", "sessions_history", "memory_search", "memory_get", "agents_list", "image"],
+      "output_tools": ["edit", "write", "exec", "message", "sessions_send", "sessions_spawn", "tts", "gateway"],
+      "tools_by_action": {
+        "browser": {
+          "input_actions": ["status", "start", "stop", "profiles", "tabs", "snapshot", "screenshot", "console", "pdf", "open"],
+          "output_actions": ["focus", "close", "navigate", "upload", "dialog", "act"]
+        },
+        "process": {
+          "input_actions": ["list", "poll", "log"],
+          "output_actions": ["write", "send-keys", "submit", "paste", "kill"]
+        },
+        "canvas": {
+          "input_actions": ["snapshot"],
+          "output_actions": ["present", "hide", "navigate", "eval", "a2ui_push", "a2ui_reset"]
+        },
+        "nodes": {
+          "input_actions": ["status", "describe", "camera_snap", "camera_list", "camera_clip", "screen_record", "location_get"],
+          "output_actions": ["pending", "approve", "reject", "notify", "run", "invoke"]
+        },
+        "cron": {
+          "input_actions": ["status", "list", "runs"],
+          "output_actions": ["add", "update", "remove", "run", "wake"]
+        }
+      }
+    }
+  },
+  "exec_composite_policy": {
+  "enabled": true,
+  "allow_multi_read_only": true,
+  "block_if_any_write": true,
+  "block_if_any_exec": true
+},
+
+  "delete_policy": {
+    "enabled": true
+  },
+  "resource_guard": {
+    "max_total_tokens": 12000000,
+    "max_trace_seconds": 6000,
+    "max_instruction_bytes": 1200000
+  },
+  "nanobot_policy": {
+    "enabled": true,
+    "max_repeat_external_lookups": 2,
+    "ssrf_whitelist": [],
+    "exec_deny_patterns": [
+      "\\brm\\s+-[rf]{1,2}\\b",
+      "\\bdel\\s+/[fq]\\b",
+      "\\brmdir\\s+/s\\b",
+      "(?:^|[;&|]\\s*)format\\b",
+      "\\b(mkfs|diskpart)\\b",
+      "\\bdd\\s+if=",
+      ">\\s*/dev/sd",
+      "\\b(shutdown|reboot|poweroff)\\b",
+      ":\\(\\)\\s*\\{.*\\};\\s*:"
+    ]
+  },
+  
+  "efsm": {
+  "enabled": true,
+  "initial": "IDLE",
+  "plan_ttl_seconds": 600,
+  "transitions": [
+    {
+      "id": "idle_read_to_after_read",
+      "from": "IDLE",
+      "event": "READ",
+      "to": "AFTER_READ",
+      "effect": "ALLOW",
+      "priority": 100
+    },
+    {
+      "id": "after_read_read_stay",
+      "from": "AFTER_READ",
+      "event": "READ",
+      "to": "AFTER_READ",
+      "effect": "ALLOW",
+      "priority": 95
+    },
+    {
+      "id": "after_read_write_block",
+      "from": "AFTER_READ",
+      "event": "WRITE",
+      "to": "IDLE",
+      "effect": "BLOCK",
+      "priority": 90
+    },
+    {
+      "id": "after_read_exec_clear",
+      "from": "AFTER_READ",
+      "event": "EXEC",
+      "to": "IDLE",
+      "effect": "ALLOW",
+      "priority": 80
+    },
+    {
+      "id": "idle_write_ok",
+      "from": "IDLE",
+      "event": "WRITE",
+      "to": "IDLE",
+      "effect": "ALLOW",
+      "priority": 70
+    },
+    {
+      "id": "idle_exec_ok",
+      "from": "IDLE",
+      "event": "EXEC",
+      "to": "IDLE",
+      "effect": "ALLOW",
+      "priority": 60
+    }
+  ]
+}
+}
