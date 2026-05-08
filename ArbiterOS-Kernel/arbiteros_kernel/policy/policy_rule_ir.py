@@ -2,15 +2,18 @@
 
 V1 is intentionally narrow: user-authored policies are unary tool-call rules.
 The IR may request extra low-dimensional metadata from kernel/parser lowering,
-but executable predicates must only reference built-in tool-call fields or
-declared metadata fields.
+but executable predicates must only reference lowered instruction/security
+fields or declared policy metadata fields.
 """
 
 from __future__ import annotations
 
+import argparse
 import copy
+import json
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Set
 
 
@@ -53,7 +56,35 @@ ALLOWED_INSTRUCTION_TYPES = {
     "CRITIQUE",
 }
 
-# Fields produced by UnaryGatePolicy._build_tool_context for every tool call.
+VALUE_OPERATOR_ARITY = {
+    "len": 1,
+    "count_intersections": 2,
+}
+VALUE_OPERATORS = set(VALUE_OPERATOR_ARITY.keys())
+UNARY_PREDICATE_OPERATORS = {"not", "truthy", "falsy", "exists", "missing"}
+BINARY_PREDICATE_OPERATORS = {
+    "eq",
+    "ne",
+    "gt",
+    "ge",
+    "lt",
+    "le",
+    "in",
+    "not_in",
+    "contains",
+    "intersects",
+    "starts_with",
+    "ends_with",
+    "contains_all",
+    "subset_of",
+    "matches",
+}
+TERNARY_PREDICATE_OPERATORS = {"between"}
+
+# Fields that user-authored IR may reference without declaring
+# required_metadata. Keep this set aligned with the lowered instruction and
+# security metadata contract, not with every convenience field that the legacy
+# UnaryGatePolicy runtime context happens to expose.
 BUILTIN_TOOL_CALL_FIELDS: Set[str] = {
     "scope",
     "tool_name",
@@ -62,19 +93,36 @@ BUILTIN_TOOL_CALL_FIELDS: Set[str] = {
     "instruction_type",
     "instruction_category",
     "missing_instruction",
-    "arg_total_str_len",
     "trustworthiness",
     "confidentiality",
+    "reversible",
+    "risk",
+}
+
+# Fields that still exist in the UnaryGatePolicy runtime context for built-in
+# and legacy rules, but are not part of the Policy Rule IR v1 built-in surface.
+# Keep them reserved so custom policy_metadata cannot collide with values the
+# runtime already supplies under the same key.
+INTERNAL_RUNTIME_CONTEXT_FIELDS: Set[str] = {
     "prop_trustworthiness",
     "prop_confidentiality",
     "confidence",
     "authority",
-    "reversible",
-    "risk",
     "tags",
     "review_required",
     "approval_required",
     "destructive",
+    "custom_io_kind",
+    "custom_flow_role",
+    "custom_taint_role",
+}
+
+# Runtime-only fields retained by UnaryGatePolicy for legacy built-in rules and
+# user_unary_gate_rules.json compatibility. Policy Rule IR must not rely on
+# these fields because they are derived from raw tool arguments inside policy
+# evaluation rather than supplied by instruction parsing metadata.
+LEGACY_RUNTIME_DERIVED_FIELDS: Set[str] = {
+    "arg_total_str_len",
     "action",
     "path_hint",
     "path_basename",
@@ -85,12 +133,11 @@ BUILTIN_TOOL_CALL_FIELDS: Set[str] = {
     "exec_write_target_basenames",
     "arg_text_upper",
     "has_external_url",
-    "custom_io_kind",
-    "custom_flow_role",
-    "custom_taint_role",
 }
 
 RESERVED_METADATA_FIELDS: Set[str] = set(BUILTIN_TOOL_CALL_FIELDS) | {
+    *INTERNAL_RUNTIME_CONTEXT_FIELDS,
+    *LEGACY_RUNTIME_DERIVED_FIELDS,
     "raw_args",
     "custom",
 }
@@ -126,19 +173,21 @@ def validate_policy_rule_ir(document: Mapping[str, Any]) -> ValidationResult:
     if version != IR_VERSION:
         errors.append(f"version must be {IR_VERSION}")
 
-    required_metadata = document.get("required_metadata", [])
-    if required_metadata is None:
-        required_metadata = []
-    declared = _validate_required_metadata(required_metadata, errors)
-
     rules = document.get("rules")
     if not isinstance(rules, list) or not rules:
         errors.append("rules must be a non-empty array")
         return ValidationResult(False, errors)
 
+    required_metadata = document.get("required_metadata", [])
+    if required_metadata is None:
+        required_metadata = []
+    declared = _validate_required_metadata(required_metadata, errors)
+
     seen_ids: Set[str] = set()
     for index, rule in enumerate(rules):
         _validate_rule(rule, index, seen_ids, declared, errors)
+
+    _validate_required_metadata_rule_refs(declared, seen_ids, rules, errors)
 
     return ValidationResult(not errors, errors)
 
@@ -204,6 +253,10 @@ def compile_policy_rule_ir_to_unary_gate_bundle(
     bundle: Dict[str, Any] = {
         "evaluation_mode": "first_match",
         "source": source,
+        "description": (
+            "User-authored unary tool-call policy rules compiled from "
+            "metadata-only Policy Rule IR."
+        ),
         "rules": rules,
     }
     required_metadata = document.get("required_metadata") or []
@@ -253,7 +306,9 @@ def _validate_required_metadata(raw: Any, errors: List[str]) -> Dict[str, Dict[s
         ):
             errors.append(f"{prefix}.required_for_rules must be a string array")
 
-        on_missing = item.get("on_missing", "validation_error")
+        if "on_missing" not in item:
+            errors.append(f"{prefix}.on_missing is required")
+        on_missing = item.get("on_missing")
         if on_missing not in ALLOWED_ON_MISSING:
             errors.append(
                 f"{prefix}.on_missing must be one of {sorted(ALLOWED_ON_MISSING)}"
@@ -263,13 +318,55 @@ def _validate_required_metadata(raw: Any, errors: List[str]) -> Dict[str, Dict[s
         if applies_to is not None:
             _validate_selector_like(applies_to, f"{prefix}.applies_to", errors)
 
-        source = item.get("source", {})
-        if source is not None:
-            _validate_metadata_source(source, f"{prefix}.source", errors)
+        if "source" not in item:
+            errors.append(f"{prefix}.source is required")
+        else:
+            _validate_metadata_source(item.get("source"), f"{prefix}.source", errors)
 
         declared[field] = dict(item)
 
     return declared
+
+
+def _validate_required_metadata_rule_refs(
+    declared: Mapping[str, Mapping[str, Any]],
+    rule_ids: Set[str],
+    rules: Any,
+    errors: List[str],
+) -> None:
+    if not declared:
+        return
+
+    vars_by_rule: Dict[str, Set[str]] = {}
+    if isinstance(rules, list):
+        for rule in rules:
+            if not isinstance(rule, Mapping):
+                continue
+            rule_id = rule.get("id")
+            if not isinstance(rule_id, str) or not rule_id.strip():
+                continue
+            body = rule.get("rule")
+            pred = body.get("predicate") if isinstance(body, Mapping) else None
+            vars_by_rule[rule_id] = {
+                _normalize_var_name(name) for name in _extract_vars(pred)
+            }
+
+    for index, (field, item) in enumerate(declared.items()):
+        prefix = f"required_metadata[{index}]"
+        refs = item.get("required_for_rules")
+        if not isinstance(refs, list):
+            continue
+        for ref in refs:
+            if ref not in rule_ids:
+                errors.append(
+                    f"{prefix}.required_for_rules references unknown rule {ref!r}"
+                )
+                continue
+            if field not in vars_by_rule.get(ref, set()):
+                errors.append(
+                    f"{prefix}.required_for_rules references {ref!r}, "
+                    f"but rule does not use metadata field {field!r}"
+                )
 
 
 def _validate_rule(
@@ -380,13 +477,24 @@ def _validate_predicate(raw: Any, prefix: str, errors: List[str]) -> None:
         errors.append(f"{prefix} must be an object")
         return
 
-    if "var" in raw or "const" in raw:
-        if "var" in raw and not isinstance(raw.get("var"), str):
-            errors.append(f"{prefix}.var must be a string")
-        if "var" in raw and isinstance(raw.get("var"), str):
+    expr_keys = set(raw.keys()) & ({"var", "const"} | VALUE_OPERATORS)
+    if expr_keys:
+        if len(raw) != 1 or len(expr_keys) != 1:
+            errors.append(f"{prefix} value expression must contain exactly one key")
+            return
+
+        key = next(iter(expr_keys))
+        if key == "var":
+            if not isinstance(raw.get("var"), str):
+                errors.append(f"{prefix}.var must be a string")
+                return
             name = _normalize_var_name(str(raw["var"]))
             if not _valid_field_name(name) and name not in BUILTIN_TOOL_CALL_FIELDS:
                 errors.append(f"{prefix}.var has invalid field name {raw['var']!r}")
+            return
+        if key == "const":
+            return
+        _validate_value_operator(key, raw.get(key), prefix, errors)
         return
 
     if len(raw) != 1:
@@ -394,6 +502,10 @@ def _validate_predicate(raw: Any, prefix: str, errors: List[str]) -> None:
         return
 
     op, value = next(iter(raw.items()))
+    if op in VALUE_OPERATORS:
+        _validate_value_operator(op, value, prefix, errors)
+        return
+
     if op in {"all", "any"}:
         if not isinstance(value, list) or not value:
             errors.append(f"{prefix}.{op} must be a non-empty array")
@@ -402,11 +514,11 @@ def _validate_predicate(raw: Any, prefix: str, errors: List[str]) -> None:
             _validate_predicate(item, f"{prefix}.{op}[{idx}]", errors)
         return
 
-    if op in {"not", "truthy", "falsy", "exists", "missing"}:
+    if op in UNARY_PREDICATE_OPERATORS:
         _validate_predicate_or_value(value, f"{prefix}.{op}", errors)
         return
 
-    if op in {"eq", "ne", "gt", "ge", "lt", "le", "in", "not_in", "contains", "intersects"}:
+    if op in BINARY_PREDICATE_OPERATORS:
         if not isinstance(value, list) or len(value) != 2:
             errors.append(f"{prefix}.{op} must be a two-item array")
             return
@@ -414,7 +526,29 @@ def _validate_predicate(raw: Any, prefix: str, errors: List[str]) -> None:
         _validate_predicate_or_value(value[1], f"{prefix}.{op}[1]", errors)
         return
 
+    if op in TERNARY_PREDICATE_OPERATORS:
+        if not isinstance(value, list) or len(value) != 3:
+            errors.append(f"{prefix}.{op} must be a three-item array")
+            return
+        for idx, item in enumerate(value):
+            _validate_predicate_or_value(item, f"{prefix}.{op}[{idx}]", errors)
+        return
+
     errors.append(f"{prefix} uses unsupported operator {op!r}")
+
+
+def _validate_value_operator(
+    op: str, value: Any, prefix: str, errors: List[str]
+) -> None:
+    arity = VALUE_OPERATOR_ARITY[op]
+    if arity == 1:
+        _validate_predicate_or_value(value, f"{prefix}.{op}", errors)
+        return
+    if not isinstance(value, list) or len(value) != arity:
+        errors.append(f"{prefix}.{op} must be a {arity}-item array")
+        return
+    for idx, item in enumerate(value):
+        _validate_predicate_or_value(item, f"{prefix}.{op}[{idx}]", errors)
 
 
 def _validate_predicate_or_value(raw: Any, prefix: str, errors: List[str]) -> None:
@@ -448,12 +582,12 @@ def _wrap_predicate_for_missing_metadata(
     fail_closed_checks = [
         {"missing": {"var": field}}
         for field in custom_vars
-        if metadata[field].get("on_missing") == "fail_closed"
+        if metadata[field].get("on_missing") in {"fail_closed", "validation_error"}
     ]
     exists_checks = [
         {"exists": {"var": field}}
         for field in custom_vars
-        if metadata[field].get("on_missing") != "fail_closed"
+        if metadata[field].get("on_missing") == "no_match"
     ]
 
     guarded = predicate
@@ -500,3 +634,49 @@ def _normalize_var_name(name: str) -> str:
 
 def _valid_field_name(value: Any) -> bool:
     return isinstance(value, str) and bool(_FIELD_RE.match(value))
+
+
+def _main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Validate and compile Policy Rule IR v1 to UnaryGate rules."
+    )
+    parser.add_argument("--input", required=True, help="Path to Policy Rule IR JSON")
+    parser.add_argument("--output", help="Path to write compiled UnaryGate bundle")
+    parser.add_argument(
+        "--source",
+        default="user_unary_gate_rules.json",
+        help="source value for the compiled bundle",
+    )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="Validate only; do not write output",
+    )
+    args = parser.parse_args()
+
+    input_path = Path(args.input)
+    document = json.loads(input_path.read_text(encoding="utf-8"))
+    result = validate_policy_rule_ir(document)
+    if not result.ok:
+        for error in result.errors:
+            print(error)
+        return 1
+
+    if args.check:
+        print("Policy Rule IR is valid")
+        return 0
+
+    bundle = compile_policy_rule_ir_to_unary_gate_bundle(
+        document,
+        source=args.source,
+    )
+    text = json.dumps(bundle, ensure_ascii=False, indent=2) + "\n"
+    if args.output:
+        Path(args.output).write_text(text, encoding="utf-8")
+    else:
+        print(text, end="")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(_main())

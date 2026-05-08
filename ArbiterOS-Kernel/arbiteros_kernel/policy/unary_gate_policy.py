@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -229,24 +230,6 @@ def _extract_metadata_view(ins: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _estimate_argument_string_budget(args_dict: Dict[str, Any]) -> int:
-    """
-    Keep only a unary/string-size budget.
-    No semantic parsing.
-    """
-    total = 0
-    stack: List[Any] = [args_dict]
-    while stack:
-        cur = stack.pop()
-        if isinstance(cur, str):
-            total += len(cur)
-        elif isinstance(cur, dict):
-            stack.extend(cur.values())
-        elif isinstance(cur, list):
-            stack.extend(cur)
-    return total
-
-
 def _get_unary_cfg() -> Dict[str, Any]:
     cfg = RUNTIME.cfg.get("unary_gate")
     return cfg if isinstance(cfg, dict) else {}
@@ -458,7 +441,9 @@ def _ensure_list(v: Any) -> List[Any]:
 
 
 def _is_value_expr(v: Any) -> bool:
-    return isinstance(v, dict) and ("var" in v or "const" in v)
+    return isinstance(v, dict) and (
+        "var" in v or "const" in v or "len" in v or "count_intersections" in v
+    )
 
 
 def _rule_scope(rule: Dict[str, Any]) -> str:
@@ -528,7 +513,23 @@ def _render_predicate(value: Any) -> str:
                 return "(" + " OR ".join(_render_predicate(x) for x in _ensure_list(raw)) + ")"
             if op == "not":
                 return f"NOT {_render_predicate(raw)}"
-            if op in {"eq", "ne", "gt", "ge", "lt", "le", "in", "not_in", "contains", "intersects"}:
+            if op in {
+                "eq",
+                "ne",
+                "gt",
+                "ge",
+                "lt",
+                "le",
+                "in",
+                "not_in",
+                "contains",
+                "intersects",
+                "starts_with",
+                "ends_with",
+                "contains_all",
+                "subset_of",
+                "matches",
+            }:
                 arr = _ensure_list(raw)
                 if len(arr) == 2:
                     symbol = {
@@ -542,8 +543,29 @@ def _render_predicate(value: Any) -> str:
                         "not_in": "NOT IN",
                         "contains": "CONTAINS",
                         "intersects": "INTERSECTS",
+                        "starts_with": "STARTS_WITH",
+                        "ends_with": "ENDS_WITH",
+                        "contains_all": "CONTAINS_ALL",
+                        "subset_of": "SUBSET_OF",
+                        "matches": "MATCHES",
                     }[op]
                     return f"{_render_predicate(arr[0])} {symbol} {_render_predicate(arr[1])}"
+            if op == "between":
+                arr = _ensure_list(raw)
+                if len(arr) == 3:
+                    return (
+                        f"{_render_predicate(arr[0])} BETWEEN "
+                        f"{_render_predicate(arr[1])} AND {_render_predicate(arr[2])}"
+                    )
+            if op == "len":
+                return f"LEN({_render_predicate(raw)})"
+            if op == "count_intersections":
+                arr = _ensure_list(raw)
+                if len(arr) == 2:
+                    return (
+                        f"COUNT_INTERSECTIONS({_render_predicate(arr[0])}, "
+                        f"{_render_predicate(arr[1])})"
+                    )
             if op in {"exists", "missing", "truthy", "falsy"}:
                 return f"{op.upper()}({_render_predicate(raw)})"
             if op == "runtime_allow_deny":
@@ -558,6 +580,26 @@ def _resolve_value(value: Any, ctx: Dict[str, Any]) -> Any:
     if _is_value_expr(value):
         if "var" in value:
             return ctx.get(str(value["var"]))
+        if "len" in value:
+            target = _resolve_value(value.get("len"), ctx)
+            if target is None:
+                return None
+            if isinstance(target, (str, list, tuple, set, dict)):
+                return len(target)
+            return None
+        if "count_intersections" in value:
+            arr = _ensure_list(value.get("count_intersections"))
+            if len(arr) != 2:
+                return None
+            left = {
+                _normalize_scalar_for_membership(x)
+                for x in _as_iterable(_resolve_value(arr[0], ctx))
+            }
+            right = {
+                _normalize_scalar_for_membership(x)
+                for x in _as_iterable(_resolve_value(arr[1], ctx))
+            }
+            return len(left & right)
         return value.get("const")
     if isinstance(value, list):
         return [_resolve_value(x, ctx) for x in value]
@@ -618,7 +660,25 @@ def _eval_predicate(pred: Any, ctx: Dict[str, Any]) -> bool:
         return ok
 
     arr = _ensure_list(raw)
-    if op in {"eq", "ne", "gt", "ge", "lt", "le", "in", "not_in", "contains", "intersects"} and len(arr) != 2:
+    if op in {
+        "eq",
+        "ne",
+        "gt",
+        "ge",
+        "lt",
+        "le",
+        "in",
+        "not_in",
+        "contains",
+        "intersects",
+        "starts_with",
+        "ends_with",
+        "contains_all",
+        "subset_of",
+        "matches",
+    } and len(arr) != 2:
+        return False
+    if op == "between" and len(arr) != 3:
         return False
 
     if op == "eq":
@@ -650,8 +710,12 @@ def _eval_predicate(pred: Any, ctx: Dict[str, Any]) -> bool:
         rhs = [_normalize_scalar_for_membership(x) for x in _as_iterable(_resolve_value(arr[1], ctx))]
         return lhs in rhs
     if op == "not_in":
-        lhs = _normalize_scalar_for_membership(_resolve_value(arr[0], ctx))
-        rhs = [_normalize_scalar_for_membership(x) for x in _as_iterable(_resolve_value(arr[1], ctx))]
+        lhs_raw = _resolve_value(arr[0], ctx)
+        rhs_raw = _resolve_value(arr[1], ctx)
+        if lhs_raw is None or rhs_raw is None:
+            return False
+        lhs = _normalize_scalar_for_membership(lhs_raw)
+        rhs = [_normalize_scalar_for_membership(x) for x in _as_iterable(rhs_raw)]
         return lhs not in rhs
     if op == "contains":
         container = _resolve_value(arr[0], ctx)
@@ -667,6 +731,48 @@ def _eval_predicate(pred: Any, ctx: Dict[str, Any]) -> bool:
         left = {_normalize_scalar_for_membership(x) for x in _as_iterable(_resolve_value(arr[0], ctx))}
         right = {_normalize_scalar_for_membership(x) for x in _as_iterable(_resolve_value(arr[1], ctx))}
         return bool(left & right)
+    if op == "starts_with":
+        left = _resolve_value(arr[0], ctx)
+        right = _resolve_value(arr[1], ctx)
+        if isinstance(left, str) and isinstance(right, str):
+            return _safe_upper(left, "").startswith(_safe_upper(right, ""))
+        return False
+    if op == "ends_with":
+        left = _resolve_value(arr[0], ctx)
+        right = _resolve_value(arr[1], ctx)
+        if isinstance(left, str) and isinstance(right, str):
+            return _safe_upper(left, "").endswith(_safe_upper(right, ""))
+        return False
+    if op == "contains_all":
+        left = {_normalize_scalar_for_membership(x) for x in _as_iterable(_resolve_value(arr[0], ctx))}
+        right = {_normalize_scalar_for_membership(x) for x in _as_iterable(_resolve_value(arr[1], ctx))}
+        return bool(right) and right.issubset(left)
+    if op == "subset_of":
+        left_raw = _resolve_value(arr[0], ctx)
+        right_raw = _resolve_value(arr[1], ctx)
+        if left_raw is None or right_raw is None:
+            return False
+        left = {_normalize_scalar_for_membership(x) for x in _as_iterable(left_raw)}
+        right = {_normalize_scalar_for_membership(x) for x in _as_iterable(right_raw)}
+        return left.issubset(right)
+    if op == "matches":
+        left = _resolve_value(arr[0], ctx)
+        pattern = _resolve_value(arr[1], ctx)
+        if not isinstance(left, str) or not isinstance(pattern, str):
+            return False
+        if len(pattern) > 256:
+            return False
+        try:
+            return re.search(pattern, left, flags=re.IGNORECASE) is not None
+        except re.error:
+            return False
+    if op == "between":
+        target = _resolve_value(arr[0], ctx)
+        lower = _resolve_value(arr[1], ctx)
+        upper = _resolve_value(arr[2], ctx)
+        if target is None or lower is None or upper is None:
+            return False
+        return _compare_values(target, lower) >= 0 and _compare_values(target, upper) <= 0
 
     return False
 
@@ -749,6 +855,36 @@ def _build_rule_decision(rule: Dict[str, Any], index: int, ctx: Dict[str, Any]) 
     )
 
 
+_UNARY_RULE_DENIED_CONTEXT_KEYS: Set[str] = {
+    "raw_args",
+    "custom",
+    "arg_total_str_len",
+    "action",
+    "path_hint",
+    "path_basename",
+    "path_dirname",
+    "direct_target_basenames",
+    "exec_path_tokens",
+    "exec_write_targets",
+    "exec_write_target_basenames",
+    "arg_text_upper",
+    "has_external_url",
+}
+
+
+def _context_for_rule(rule: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Unary rules only see instruction/security metadata plus flattened
+    custom.policy_metadata. Raw tool arguments and old policy-derived helper
+    fields are kept out of predicate evaluation for every rule source.
+    """
+    return {
+        key: value
+        for key, value in ctx.items()
+        if key not in _UNARY_RULE_DENIED_CONTEXT_KEYS
+    }
+
+
 def _evaluate_rules(
     *,
     rules: List[Dict[str, Any]],
@@ -759,11 +895,12 @@ def _evaluate_rules(
             continue
         if not bool(rule.get("enabled", True)):
             continue
-        if not _selector_matches(rule, ctx):
+        eval_ctx = _context_for_rule(rule, ctx)
+        if not _selector_matches(rule, eval_ctx):
             continue
         pred = rule.get("predicate")
-        if _eval_predicate(pred, ctx):
-            return _build_rule_decision(rule, idx, ctx)
+        if _eval_predicate(pred, eval_ctx):
+            return _build_rule_decision(rule, idx, eval_ctx)
     return None
 
 
@@ -1038,7 +1175,12 @@ def _legacy_rule_bundle() -> Dict[str, Any]:
             description=f"block when total argument string length exceeds {max_str_len}",
             scope="tool",
             selector={},
-            predicate={"gt": [{"var": "arg_total_str_len"}, {"const": max_str_len}]},
+            predicate={
+                "gt": [
+                    {"var": "argument_total_string_length"},
+                    {"const": max_str_len},
+                ]
+            },
             effect="BLOCK",
             message=f"total argument string length > max_str_len {max_str_len}",
         )
@@ -1316,6 +1458,24 @@ def _protected_identity_llm_cfg(rule_bundle: Dict[str, Any]) -> Dict[str, Any]:
     return b if isinstance(b, dict) else {}
 
 
+def _protected_identity_llm_timeout_seconds(cfg: Dict[str, Any]) -> float:
+    raw = cfg.get("timeout_seconds", cfg.get("timeout", 10))
+    try:
+        timeout = float(raw)
+    except (TypeError, ValueError):
+        timeout = 10.0
+    if timeout <= 0:
+        return 10.0
+    return timeout
+
+
+def _protected_identity_llm_fail_closed_on_error(cfg: Dict[str, Any]) -> bool:
+    raw = cfg.get("fail_closed_on_error", True)
+    if isinstance(raw, str):
+        return raw.strip().lower() not in {"0", "false", "no", "off"}
+    return bool(raw)
+
+
 def _rules_without_rule_id(
     rules: List[Dict[str, Any]], rule_id: str
 ) -> List[Dict[str, Any]]:
@@ -1347,7 +1507,7 @@ def _is_ug060_llm_scope(ctx: Dict[str, Any]) -> bool:
     canon = _safe_lower(_canonical_tool_for_unary_gate(ctx.get("tool_name")), "")
     if canon not in {"write", "edit"}:
         return False
-    basenames = ctx.get("direct_target_basenames") or []
+    basenames = ctx.get("target_basenames") or []
     if not isinstance(basenames, list):
         return False
     got = {str(x).upper() for x in basenames if isinstance(x, str) and x.strip()}
@@ -1358,7 +1518,7 @@ def _is_ug061_llm_scope(ctx: Dict[str, Any]) -> bool:
     canon = _safe_lower(_canonical_tool_for_unary_gate(ctx.get("tool_name")), "")
     if canon not in {"exec", "process"}:
         return False
-    basenames = ctx.get("exec_write_target_basenames") or []
+    basenames = ctx.get("write_target_basenames") or []
     if not isinstance(basenames, list):
         return False
     got = {
@@ -1386,56 +1546,19 @@ def _plaintext_user_prompt_protected_identity(
     ctx: Dict[str, Any], *, kind: str, max_content_chars: int
 ) -> str:
     """Short plain-text description for the LLM (no JSON)."""
-    raw = ctx.get("raw_args") if isinstance(ctx.get("raw_args"), dict) else {}
-    tool = _safe_str(ctx.get("tool_name"), "?")
-
-    if kind == "ug061":
-        cmd = _safe_str(
-            raw.get("command") or raw.get("cmd") or raw.get("script"),
-            "",
-        )
-        targets = ctx.get("exec_write_target_basenames") or []
+    body = _safe_str(ctx.get("protected_identity_review_text"))
+    if not body:
+        tool = _safe_str(ctx.get("tool_name"), "?")
+        if kind == "ug061":
+            targets = ctx.get("write_target_basenames") or []
+        else:
+            targets = ctx.get("target_basenames") or []
         ts = ", ".join(str(x) for x in targets if isinstance(x, str) and x.strip())
         body = (
             f"Tool: {tool}\n"
-            f"Inferred write targets (basenames): {ts or '(unknown)'}\n\n"
-            f"Shell command:\n{cmd}\n"
+            f"Lowered protected target basenames: {ts or '(unknown)'}\n"
+            "(No review payload was supplied by parser metadata.)\n"
         )
-        return _truncate_for_llm(body, max_content_chars)
-
-    path = _safe_str(
-        raw.get("path")
-        or raw.get("file_path")
-        or raw.get("target_path")
-        or raw.get("destination_path")
-        or "",
-        "",
-    )
-    bn = os.path.basename(path).upper() if path else ""
-    content = raw.get("content")
-    old_t = raw.get("old_text")
-    new_t = raw.get("new_text")
-    parts = [
-        f"Tool: {tool}",
-        f"Target basename: {bn}",
-        f"Path: {path or '(none)'}",
-        "",
-    ]
-    if isinstance(content, str) and content.strip():
-        parts.append("Proposed file content (full overwrite):")
-        parts.append(content)
-    elif isinstance(new_t, str) or isinstance(old_t, str):
-        parts.append("Edit (replace old with new):")
-        if isinstance(old_t, str) and old_t.strip():
-            parts.append("--- old ---")
-            parts.append(old_t)
-        if isinstance(new_t, str) and new_t.strip():
-            parts.append("--- new ---")
-            parts.append(new_t)
-    else:
-        parts.append("(No content/new_text in arguments — judge from path/tool only.)")
-
-    body = "\n".join(parts)
     return _truncate_for_llm(body, max_content_chars)
 
 
@@ -1473,6 +1596,7 @@ def _llm_judge_protected_identity(
     *,
     max_content_chars: int,
     kind: str,
+    timeout_seconds: float,
 ) -> Tuple[Optional[bool], str, Optional[str]]:
     """
     kind: \"ug060\" (write/edit) or \"ug061\" (exec/process with inferred write targets).
@@ -1526,7 +1650,7 @@ def _llm_judge_protected_identity(
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
+        with urllib.request.urlopen(req, timeout=timeout_seconds) as resp:
             raw_resp = json.loads(resp.read().decode("utf-8", errors="replace"))
     except urllib.error.HTTPError as e:
         try:
@@ -1586,6 +1710,33 @@ def _synthetic_ug061_llm_decision(reason_zh: str) -> RuleDecision:
     )
 
 
+def _synthetic_protected_identity_llm_unavailable_decision(
+    *, kind: str, reason: str
+) -> RuleDecision:
+    is_exec = kind == "ug061"
+    return RuleDecision(
+        index=0,
+        rule_id="UG-061" if is_exec else "UG-060",
+        title=(
+            "protected identity or control file exec write target (LLM unavailable)"
+            if is_exec
+            else "protected identity or control file direct mutation (LLM unavailable)"
+        ),
+        description=(
+            "LLM review unavailable for exec/process write to protected identity/control file"
+            if is_exec
+            else "LLM review unavailable for edit to protected identity/control file"
+        ),
+        effect="BLOCK",
+        scope="tool",
+        message=(reason or "").strip() or "LLM review unavailable",
+        predicate=None,
+        selector={"tool": ["exec", "process"] if is_exec else ["write", "edit"]},
+        actual={"llm_status": "unavailable", "llm_error": (reason or "").strip()},
+        source="protected_identity_llm_unavailable",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Context building + user-facing messages
 # ---------------------------------------------------------------------------
@@ -1629,57 +1780,6 @@ def _build_tool_context(
     )
 
     custom = md.get("custom") if isinstance(md.get("custom"), dict) else {}
-    exec_parse = (
-        custom.get("exec_parse")
-        if isinstance(custom.get("exec_parse"), dict)
-        else {}
-    )
-
-    action = _safe_upper(args_dict.get("action"), "")
-
-    path_hint = _safe_str(
-        args_dict.get("path")
-        or args_dict.get("file_path")
-        or args_dict.get("target_path")
-        or args_dict.get("destination_path")
-        or args_dict.get("output_path")
-        or args_dict.get("dest_path")
-        or args_dict.get("dst")
-        or ""
-    )
-    path_hint_upper = path_hint.upper() if path_hint else ""
-    path_basename = os.path.basename(path_hint).upper() if path_hint else ""
-    path_dirname = os.path.dirname(path_hint).upper() if path_hint else ""
-
-    direct_target_basenames = sorted({path_basename} if path_basename else set())
-
-    exec_path_tokens = sorted(
-        {
-            str(x).upper()
-            for x in (exec_parse.get("path_tokens") or [])
-            if isinstance(x, str) and x.strip()
-        }
-    )
-    exec_write_targets = sorted(
-        {
-            str(x).upper()
-            for x in (exec_parse.get("write_targets") or [])
-            if isinstance(x, str) and x.strip()
-        }
-    )
-    exec_write_target_basenames = sorted(
-        {
-            os.path.basename(x).upper()
-            for x in (exec_parse.get("write_targets") or [])
-            if isinstance(x, str) and x.strip()
-        }
-    )
-
-    arg_text_upper = _safe_upper(
-        json.dumps(args_dict, ensure_ascii=False, sort_keys=True),
-        "",
-    )
-    has_external_url = ("HTTP://" in arg_text_upper) or ("HTTPS://" in arg_text_upper)
 
     canonical_tool_name = _canonical_tool_for_unary_gate(tool_name)
 
@@ -1691,26 +1791,10 @@ def _build_tool_context(
         "instruction_type": instruction_type,
         "instruction_category": category,
         "missing_instruction": not isinstance(ins, dict),
-        "arg_total_str_len": _estimate_argument_string_budget(args_dict),
         "raw_args": args_dict,
 
         # existing metadata view
         **md,
-
-        # shallow, rule-friendly fields
-        "action": action,
-        "path_hint": path_hint_upper,
-        "path_basename": path_basename,
-        "path_dirname": path_dirname,
-        "direct_target_basenames": direct_target_basenames,
-        "exec_path_tokens": exec_path_tokens,
-        "exec_write_targets": exec_write_targets,
-        "exec_write_target_basenames": exec_write_target_basenames,
-        "arg_text_upper": arg_text_upper,
-        "has_external_url": has_external_url,
-        "custom_io_kind": _safe_upper(custom.get("io_kind"), ""),
-        "custom_flow_role": _safe_upper(custom.get("flow_role"), ""),
-        "custom_taint_role": _safe_upper(custom.get("taint_role"), ""),
     }
     ctx.update(_safe_policy_metadata(custom, set(ctx.keys())))
     return ctx
@@ -1726,7 +1810,6 @@ def _build_respond_context(ins: Dict[str, Any]) -> Dict[str, Any]:
         "instruction_type": "RESPOND",
         "instruction_category": md["instruction_category"],
         "missing_instruction": False,
-        "arg_total_str_len": 0,
         **md,
     }
 
@@ -1745,15 +1828,15 @@ def _format_actual(actual: Dict[str, Any]) -> str:
         "scope": "范围",
         "risk": "风险级别",
         "tags": "标签",
-        "arg_total_str_len": "参数总长度",
+        "argument_total_string_length": "参数总长度",
         "approval_required": "需要审批",
         "review_required": "需要复核",
         "destructive": "破坏性标记",
         "reversible": "可回退",
-        "direct_target_basenames": "直接目标文件",
-        "exec_write_target_basenames": "潜在写入目标文件",
-        "action": "动作",
-        "has_external_url": "包含外部链接",
+        "target_basenames": "直接目标文件",
+        "write_target_basenames": "潜在写入目标文件",
+        "protected_identity_mutation_instruction": "受保护文件修改指令",
+        "gateway_external_redirection_patch": "外部重定向配置修改",
         "missing_instruction": "缺少元数据",
     }
     scope_map = {"tool": "工具调用", "respond": "直接回复"}
@@ -1809,10 +1892,10 @@ def _localized_predicate_text(decision: RuleDecision) -> str:
         "UG-032": "destructive = true 且 reversible = false。",
         "UG-040": "标签集合与 {SECRET_LIKE, HIGH_RISK} 存在交集。",
         "UG-050": "prop_confidentiality > UNKNOWN。",
-        "UG-060": "direct_target_basenames 与 {SOUL.MD, AGENTS.MD, IDENTITY.MD} 存在交集。",
-        "UG-061": "exec_write_target_basenames 与 {SOUL.MD, AGENTS.MD, IDENTITY.MD} 存在交集。",
-        "UG-062": "内容同时包含受保护文件名与修改动作关键词。",
-        "UG-070": "gateway 配置修改同时包含外部链接与代理/上游重定向字段。",
+        "UG-060": "target_basenames 与 {SOUL.MD, AGENTS.MD, IDENTITY.MD} 存在交集。",
+        "UG-061": "write_target_basenames 与 {SOUL.MD, AGENTS.MD, IDENTITY.MD} 存在交集。",
+        "UG-062": "protected_identity_mutation_instruction = true。",
+        "UG-070": "gateway_external_redirection_patch = true。",
     }
     if rule_id in mapping:
         return mapping[rule_id]
@@ -1825,8 +1908,8 @@ def _localized_predicate_text(decision: RuleDecision) -> str:
 def _tool_block_reason(decision: RuleDecision, ctx: Dict[str, Any]) -> str:
     rule_id = _safe_upper(decision.rule_id)
 
-    direct_targets = ctx.get("direct_target_basenames") or []
-    exec_targets = ctx.get("exec_write_target_basenames") or []
+    direct_targets = ctx.get("target_basenames") or []
+    exec_targets = ctx.get("write_target_basenames") or []
 
     direct_target = direct_targets[0] if direct_targets else ""
     exec_target = exec_targets[0] if exec_targets else ""
@@ -1863,7 +1946,18 @@ def _tool_block_reason(decision: RuleDecision, ctx: Dict[str, Any]) -> str:
         return "当前回复包含不适合直接展示的内容，系统已暂停输出。"
 
     if rule_id == "UG-060":
-        if _safe_str(getattr(decision, "source", "")) == "protected_identity_llm":
+        source = _safe_str(getattr(decision, "source", ""))
+        if source == "protected_identity_llm_unavailable":
+            base = (
+                f"这一步会直接修改受保护文件 `{direct_target}`，需要 LLM 审核；但审核服务暂时不可用，已按保守策略暂停执行。"
+                if direct_target
+                else "这一步会直接修改受保护的系统身份或控制文件，需要 LLM 审核；但审核服务暂时不可用，已按保守策略暂停执行。"
+            )
+            extra = _safe_str(decision.message)
+            if extra:
+                return f"{base}\n\n（不可用原因：{extra}）"
+            return base
+        if source == "protected_identity_llm":
             base = (
                 f"这一步会直接修改受保护文件 `{direct_target}`，已暂停执行。"
                 if direct_target
@@ -1878,7 +1972,18 @@ def _tool_block_reason(decision: RuleDecision, ctx: Dict[str, Any]) -> str:
         return "这一步会直接修改受保护的系统身份或控制文件，已暂停执行。"
 
     if rule_id == "UG-061":
-        if _safe_str(getattr(decision, "source", "")) == "protected_identity_llm":
+        source = _safe_str(getattr(decision, "source", ""))
+        if source == "protected_identity_llm_unavailable":
+            base = (
+                f"这一步会通过命令修改受保护文件 `{exec_target}`，需要 LLM 审核；但审核服务暂时不可用，已按保守策略暂停执行。"
+                if exec_target
+                else "这一步会通过命令修改受保护的系统身份或控制文件，需要 LLM 审核；但审核服务暂时不可用，已按保守策略暂停执行。"
+            )
+            extra = _safe_str(decision.message)
+            if extra:
+                return f"{base}\n\n（不可用原因：{extra}）"
+            return base
+        if source == "protected_identity_llm":
             base = (
                 f"这一步会通过命令修改受保护文件 `{exec_target}`，已暂停执行。"
                 if exec_target
@@ -2030,6 +2135,8 @@ class UnaryGatePolicy(Policy):
             max_content_chars = int(pil_cfg.get("max_content_chars", 12000) or 12000)
         except (TypeError, ValueError):
             max_content_chars = 12000
+        llm_timeout_seconds = _protected_identity_llm_timeout_seconds(pil_cfg)
+        llm_fail_closed_on_error = _protected_identity_llm_fail_closed_on_error(pil_cfg)
 
         rules_for_eval = (
             _rules_without_rule_ids(rules, {"UG-060", "UG-061"})
@@ -2065,24 +2172,38 @@ class UnaryGatePolicy(Policy):
                 reason_zh: str
                 err_llm: Optional[str]
                 harmful, reason_zh, err_llm = _llm_judge_protected_identity(
-                    ctx, max_content_chars=max_content_chars, kind="ug060"
+                    ctx,
+                    max_content_chars=max_content_chars,
+                    kind="ug060",
+                    timeout_seconds=llm_timeout_seconds,
                 )
                 if err_llm:
-                    harmful = True
-                    reason_zh = f"LLM 审核不可用：{err_llm}"
-                if harmful:
+                    if llm_fail_closed_on_error:
+                        decision = _synthetic_protected_identity_llm_unavailable_decision(
+                            kind="ug060",
+                            reason=err_llm,
+                        )
+                    harmful = False
+                if decision is None and harmful:
                     decision = _synthetic_ug060_llm_decision(reason_zh)
             elif llm_enabled and _is_ug061_llm_scope(ctx):
                 harmful_61: Optional[bool]
                 reason_zh_61: str
                 err_llm_61: Optional[str]
                 harmful_61, reason_zh_61, err_llm_61 = _llm_judge_protected_identity(
-                    ctx, max_content_chars=max_content_chars, kind="ug061"
+                    ctx,
+                    max_content_chars=max_content_chars,
+                    kind="ug061",
+                    timeout_seconds=llm_timeout_seconds,
                 )
                 if err_llm_61:
-                    harmful_61 = True
-                    reason_zh_61 = f"LLM 审核不可用：{err_llm_61}"
-                if harmful_61:
+                    if llm_fail_closed_on_error:
+                        decision = _synthetic_protected_identity_llm_unavailable_decision(
+                            kind="ug061",
+                            reason=err_llm_61,
+                        )
+                    harmful_61 = False
+                if decision is None and harmful_61:
                     decision = _synthetic_ug061_llm_decision(reason_zh_61)
 
             if decision is None:
@@ -2134,7 +2255,9 @@ class UnaryGatePolicy(Policy):
                         "approval_required": ctx["approval_required"],
                         "destructive": ctx["destructive"],
                         "missing_instruction": ctx["missing_instruction"],
-                        "arg_total_str_len": ctx["arg_total_str_len"],
+                        "argument_total_string_length": ctx.get(
+                            "argument_total_string_length"
+                        ),
                     },
                 },
             )

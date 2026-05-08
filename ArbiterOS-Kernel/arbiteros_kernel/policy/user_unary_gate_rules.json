@@ -1,304 +1,233 @@
 {
   "evaluation_mode": "first_match",
   "source": "user_unary_gate_rules.json",
-  "description": "User-authored unary tool-call policy rules. Built-in UG rules stay in unary_gate_rules.json.",
+  "description": "User-authored unary tool-call policy rules compiled from metadata-only Policy Rule IR. Active bundle includes only metadata contracts currently lowered by the OpenClaw parser.",
   "rules": [
     {
       "id": "USER-AI-TRADER-NOTIONAL-001",
-      "title": "block large AI-Trader realtime signal",
-      "description": "block AI-Trader trade tool calls whose lowered notional value is greater than 5000",
+      "enabled": true,
+      "title": "block large ai trader notional",
+      "description": "block AI-Trader realtime trades whose notional value is greater than 5000",
       "scope": "tool",
       "selector": {
         "tool": [
-          "trade",
-          "ai_trader_trade"
+          "trade"
         ]
       },
       "predicate": {
-        "gt": [
+        "all": [
           {
-            "var": "ai_trader_notional"
-          },
-          {
-            "const": 5000
-          }
-        ]
-      },
-      "effect": "BLOCK",
-      "message": "AI-Trader 单笔交易名义金额超过 5000，已拦截。"
-    },
-    {
-      "id": "USER-AI-TRADER-SHORT-001",
-      "title": "block AI-Trader short actions",
-      "description": "block AI-Trader realtime signal tool calls that attempt short actions",
-      "scope": "tool",
-      "selector": {
-        "tool": [
-          "trade",
-          "ai_trader_trade"
-        ]
-      },
-      "predicate": {
-        "any": [
-          {
-            "truthy": {
-              "var": "ai_trader_is_short"
+            "exists": {
+              "var": "ai_trader_notional"
             }
           },
           {
-            "eq": [
+            "gt": [
               {
-                "var": "action"
+                "var": "ai_trader_notional"
               },
               {
-                "const": "SHORT"
+                "const": 5000
               }
             ]
           }
         ]
       },
       "effect": "BLOCK",
-      "message": "当前策略不允许发布做空交易信号。"
+      "message": "AI-Trader 单笔交易名义金额超过 5000，已拦截。",
+      "source": "policy_rule_ir",
+      "severity": "HIGH"
     },
     {
-      "id": "USER-AI-TRADER-POLYMARKET-OUTCOME-001",
-      "title": "require Polymarket outcome context",
-      "description": "block AI-Trader Polymarket trade tool calls when both outcome and token_id are missing",
+      "id": "USER-AI-TRADER-SHORT-001",
+      "enabled": true,
+      "title": "block ai trader short actions",
+      "description": "block AI-Trader short actions unless a user explicitly changes this rule",
       "scope": "tool",
       "selector": {
         "tool": [
-          "trade",
-          "ai_trader_trade"
+          "trade"
+        ]
+      },
+      "predicate": {
+        "any": [
+          {
+            "missing": {
+              "var": "ai_trader_is_short"
+            }
+          },
+          {
+            "truthy": {
+              "var": "ai_trader_is_short"
+            }
+          }
+        ]
+      },
+      "effect": "BLOCK",
+      "message": "当前策略不允许发布做空交易信号。",
+      "source": "policy_rule_ir",
+      "severity": "HIGH"
+    },
+    {
+      "id": "USER-AI-TRADER-POLYMARKET-OUTCOME-001",
+      "enabled": true,
+      "title": "require polymarket outcome context",
+      "description": "block Polymarket trades when both outcome and token_id are missing",
+      "scope": "tool",
+      "selector": {
+        "tool": [
+          "trade"
         ]
       },
       "predicate": {
         "all": [
           {
-            "any": [
+            "exists": {
+              "var": "ai_trader_has_outcome"
+            }
+          },
+          {
+            "exists": {
+              "var": "ai_trader_has_token_id"
+            }
+          },
+          {
+            "exists": {
+              "var": "ai_trader_is_polymarket"
+            }
+          },
+          {
+            "all": [
               {
                 "truthy": {
                   "var": "ai_trader_is_polymarket"
                 }
               },
               {
-                "contains": [
-                  {
-                    "var": "arg_text_upper"
-                  },
-                  {
-                    "const": "POLYMARKET"
-                  }
-                ]
-              }
-            ]
-          },
-          {
-            "falsy": {
-              "var": "ai_trader_has_outcome"
-            }
-          },
-          {
-            "falsy": {
-              "var": "ai_trader_has_token_id"
-            }
-          }
-        ]
-      },
-      "effect": "BLOCK",
-      "message": "Polymarket 交易缺少 outcome 或 token_id，已拦截。"
-    },
-    {
-      "id": "USER-PENTEST-OUT-OF-SCOPE-001",
-      "title": "block out-of-scope pentest actions",
-      "description": "block pentesting or vulnerability validation tool calls when no in-scope target metadata is present",
-      "scope": "tool",
-      "selector": {
-        "instruction_type": [
-          "EXEC"
-        ]
-      },
-      "predicate": {
-        "all": [
-          {
-            "any": [
-              {
-                "truthy": {
-                  "var": "pentest_action"
+                "falsy": {
+                  "var": "ai_trader_has_outcome"
                 }
               },
               {
-                "contains": [
-                  {
-                    "var": "arg_text_upper"
-                  },
-                  {
-                    "const": "NMAP"
-                  }
-                ]
-              },
-              {
-                "contains": [
-                  {
-                    "var": "arg_text_upper"
-                  },
-                  {
-                    "const": "SQLMAP"
-                  }
-                ]
-              },
-              {
-                "contains": [
-                  {
-                    "var": "arg_text_upper"
-                  },
-                  {
-                    "const": "METASPLOIT"
-                  }
-                ]
-              },
-              {
-                "contains": [
-                  {
-                    "var": "arg_text_upper"
-                  },
-                  {
-                    "const": "MSFCONSOLE"
-                  }
-                ]
-              },
-              {
-                "contains": [
-                  {
-                    "var": "arg_text_upper"
-                  },
-                  {
-                    "const": "SCHEMATHESIS"
-                  }
-                ]
-              },
-              {
-                "contains": [
-                  {
-                    "var": "arg_text_upper"
-                  },
-                  {
-                    "const": "HYDRA"
-                  }
-                ]
-              },
-              {
-                "contains": [
-                  {
-                    "var": "arg_text_upper"
-                  },
-                  {
-                    "const": "GOBUSTER"
-                  }
-                ]
-              },
-              {
-                "contains": [
-                  {
-                    "var": "arg_text_upper"
-                  },
-                  {
-                    "const": "FFUF"
-                  }
-                ]
+                "falsy": {
+                  "var": "ai_trader_has_token_id"
+                }
               }
             ]
-          },
-          {
-            "falsy": {
-              "var": "pentest_target_in_scope"
-            }
           }
         ]
       },
       "effect": "BLOCK",
-      "message": "渗透测试或漏洞验证目标不在授权范围内，已拦截。"
+      "message": "Polymarket 交易缺少 outcome 或 token_id，已拦截。",
+      "source": "policy_rule_ir",
+      "severity": "MEDIUM"
+    }
+  ],
+  "required_metadata": [
+    {
+      "field": "ai_trader_notional",
+      "type": "number",
+      "description": "Absolute trade notional computed as price * quantity.",
+      "applies_to": {
+        "tools": [
+          "trade"
+        ]
+      },
+      "source": {
+        "kind": "parser_custom",
+        "paths": [
+          "policy_metadata.ai_trader_notional"
+        ]
+      },
+      "normalization": "Use absolute numeric price * quantity. Price 0 means platform simulated pricing and may produce 0 notional before execution.",
+      "on_missing": "no_match",
+      "required_for_rules": [
+        "USER-AI-TRADER-NOTIONAL-001"
+      ]
     },
     {
-      "id": "USER-PENTEST-DESTRUCTIVE-001",
-      "title": "block destructive pentest actions",
-      "description": "block destructive exploit, persistence, credential spraying, or denial-of-service style actions",
-      "scope": "tool",
-      "selector": {
-        "instruction_type": [
-          "EXEC"
+      "field": "ai_trader_is_short",
+      "type": "boolean",
+      "description": "True when the AI-Trader action is short.",
+      "applies_to": {
+        "tools": [
+          "trade"
         ]
       },
-      "predicate": {
-        "any": [
-          {
-            "truthy": {
-              "var": "pentest_destructive"
-            }
-          },
-          {
-            "contains": [
-              {
-                "var": "arg_text_upper"
-              },
-              {
-                "const": "--OS-SHELL"
-              }
-            ]
-          },
-          {
-            "contains": [
-              {
-                "var": "arg_text_upper"
-              },
-              {
-                "const": "DENIAL OF SERVICE"
-              }
-            ]
-          },
-          {
-            "contains": [
-              {
-                "var": "arg_text_upper"
-              },
-              {
-                "const": "DOS"
-              }
-            ]
-          },
-          {
-            "contains": [
-              {
-                "var": "arg_text_upper"
-              },
-              {
-                "const": "CREDENTIAL SPRAY"
-              }
-            ]
-          },
-          {
-            "contains": [
-              {
-                "var": "arg_text_upper"
-              },
-              {
-                "const": "PERSISTENCE"
-              }
-            ]
-          },
-          {
-            "contains": [
-              {
-                "var": "arg_text_upper"
-              },
-              {
-                "const": "PRIVILEGE ESCALATION"
-              }
-            ]
-          }
+      "source": {
+        "kind": "parser_custom",
+        "paths": [
+          "policy_metadata.ai_trader_is_short"
         ]
       },
-      "effect": "BLOCK",
-      "message": "当前动作疑似破坏性漏洞利用或高影响攻击，已拦截。"
+      "normalization": "action lowercased equals short.",
+      "on_missing": "fail_closed",
+      "required_for_rules": [
+        "USER-AI-TRADER-SHORT-001"
+      ]
+    },
+    {
+      "field": "ai_trader_is_polymarket",
+      "type": "boolean",
+      "description": "True when market is polymarket.",
+      "applies_to": {
+        "tools": [
+          "trade"
+        ]
+      },
+      "source": {
+        "kind": "parser_custom",
+        "paths": [
+          "policy_metadata.ai_trader_is_polymarket"
+        ]
+      },
+      "normalization": "market lowercased equals polymarket.",
+      "on_missing": "no_match",
+      "required_for_rules": [
+        "USER-AI-TRADER-POLYMARKET-OUTCOME-001"
+      ]
+    },
+    {
+      "field": "ai_trader_has_outcome",
+      "type": "boolean",
+      "description": "True when a non-empty Polymarket outcome is present.",
+      "applies_to": {
+        "tools": [
+          "trade"
+        ]
+      },
+      "source": {
+        "kind": "parser_custom",
+        "paths": [
+          "policy_metadata.ai_trader_has_outcome"
+        ]
+      },
+      "normalization": "outcome is a non-empty string.",
+      "on_missing": "no_match",
+      "required_for_rules": [
+        "USER-AI-TRADER-POLYMARKET-OUTCOME-001"
+      ]
+    },
+    {
+      "field": "ai_trader_has_token_id",
+      "type": "boolean",
+      "description": "True when a non-empty Polymarket token_id is present.",
+      "applies_to": {
+        "tools": [
+          "trade"
+        ]
+      },
+      "source": {
+        "kind": "parser_custom",
+        "paths": [
+          "policy_metadata.ai_trader_has_token_id"
+        ]
+      },
+      "normalization": "token_id is a non-empty string.",
+      "on_missing": "no_match",
+      "required_for_rules": [
+        "USER-AI-TRADER-POLYMARKET-OUTCOME-001"
+      ]
     }
   ]
 }

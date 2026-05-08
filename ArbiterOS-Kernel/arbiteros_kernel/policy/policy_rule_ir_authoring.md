@@ -20,13 +20,32 @@ V1 只支持 **unary tool-call policy**：每条规则只判断当前这一次 t
 - `policy.json` 中 `unary_gate.user_rules_enabled` 控制是否加载用户规则文件。
 - 不要把本文档里的 IR 直接写入任何 runtime rules 文件，必须先通过 validator/compiler。
 - Runtime 编译后才会变成 `selector + predicate + effect + message` 的 unary gate rule。
+- `user_policy_rule_ir_examples.json` 是示例包，不等于默认启用的 active policy set；active runtime 文件只应包含当前 parser/kernel 已能 lowering 的 metadata contract。
+
+推荐编译命令：
+
+```bash
+uv run python arbiteros_kernel/policy/policy_rule_ir.py \
+  --input arbiteros_kernel/policy/policy_rule_ir.json \
+  --output arbiteros_kernel/policy/user_unary_gate_rules.json \
+  --source user_unary_gate_rules.json
+```
+
+与早期草稿的区别：
+
+- 早期草稿把 `action`、`path_hint`、`arg_text_upper`、`has_external_url` 等 policy runtime 便利字段也列为 built-in。
+- 当前版本将 built-in 收窄为 instruction core + security metadata。
+- 来自 tool arguments 的 action、路径、URL、关键词、目标范围等语义必须先通过 kernel/parser lowering 进入 `policy_metadata`，再供 policy 引用。
+- 内置 unary rules 和自定义 rules 使用同一套 eval context；predicate 不再区分 legacy source 或 Policy Rule IR source。
+- 这样可以避免 policy 层重新解析 raw tool arguments，使 DSL、内置 unary、以及 instruction parsing schema 的边界更清楚。
 
 ## 1. V1 Scope
 
 V1 规则必须满足：
 
 - `kind` 固定为 `unary_tool_call`。
-- 规则只检查当前 tool call 的 tool name、action、参数摘要、路径摘要、安全标签、以及 kernel 补充的业务 metadata。
+- 规则只检查当前 instruction 的核心字段、安全 metadata、以及 kernel/parser 补充的业务 metadata。
+- 规则不要直接解析原始 tool arguments；所有 tool-specific 语义必须先 lowering 到 `security_type.custom.policy_metadata`，再由 predicate 引用。
 - 规则不能依赖“之前读过什么”“之后发给谁”“是否由外部网页驱动”等跨步骤关系。
 - 规则 effect 当前只生成 `BLOCK`。
 
@@ -93,7 +112,7 @@ Top-level 字段：
 
 predicate 只能引用两类字段：
 
-1. Built-in metadata：policy 侧每个 tool call 都能提供。
+1. Built-in metadata：来自 instruction core 或 security metadata，policy 侧每个 tool call 都能提供。
 2. Required metadata：当前规则声明后，由 kernel/parser 为当前 tool call 补充。
 
 ### 3.1 Built-in Metadata
@@ -102,37 +121,49 @@ predicate 只能引用两类字段：
 
 | 字段 | 类型 | 含义 |
 | --- | --- | --- |
+| `scope` | string | 当前规则评估 scope，V1 tool-call 规则中通常为 `tool` |
 | `tool_name` | string | 原始 tool 名 |
 | `canonical_tool_name` | string | policy 规范化 tool 名 |
 | `tool_call_id` | string | 当前 tool call id |
-| `action` | string | 参数中的 action，policy 侧会转为大写 |
+| `missing_instruction` | boolean | 当前 tool call 是否缺少对应 lowered instruction |
 | `instruction_type` | string | `READ` / `WRITE` / `EXEC` / `RESPOND` 等 |
 | `instruction_category` | string | instruction category |
 | `trustworthiness` | level | 当前 instruction 可信度 |
 | `confidentiality` | level | 当前 instruction 敏感度 |
-| `prop_trustworthiness` | level | 传播后的可信度 |
-| `prop_confidentiality` | level | 传播后的敏感度 |
-| `confidence` | level | parser 置信度 |
-| `authority` | string | authority label |
 | `risk` | level | `LOW` / `UNKNOWN` / `HIGH` |
 | `reversible` | boolean | 是否可回退 |
-| `destructive` | boolean | 是否破坏性 |
-| `approval_required` | boolean | parser 是否标记需要审批 |
-| `review_required` | boolean | parser 是否标记需要复核 |
-| `tags` | string array | parser / security metadata 标签 |
-| `arg_total_str_len` | number | tool arguments 中字符串总长度 |
-| `arg_text_upper` | string | tool arguments JSON 的大写文本视图 |
-| `has_external_url` | boolean | 参数中是否包含 `http://` 或 `https://` |
-| `path_hint` | string | 主要路径参数，大写 |
-| `path_basename` | string | 主要路径 basename，大写 |
-| `path_dirname` | string | 主要路径 dirname，大写 |
-| `direct_target_basenames` | string array | write/edit 等直接目标文件名 |
-| `exec_path_tokens` | string array | exec parser 提取的路径 token |
-| `exec_write_targets` | string array | exec parser 推断的写入目标 |
-| `exec_write_target_basenames` | string array | exec/process 推断写入目标文件名 |
-| `custom_io_kind` | string | parser custom 中的 io kind |
-| `custom_flow_role` | string | parser custom 中的 flow role |
-| `custom_taint_role` | string | parser custom 中的 taint role |
+
+Policy Rule IR v1 的 built-in surface 对齐当前 kernel instruction/parser schema，只包含 instruction core 和基础 security metadata。下面这些字段虽然可能存在于 legacy unary gate runtime context 或 Python parser 实现中，但 **Policy Rule IR 不应直接引用**：
+
+```text
+raw_args
+arg_text_upper
+arg_total_str_len
+action
+path_hint
+path_basename
+path_dirname
+direct_target_basenames
+exec_path_tokens
+exec_write_targets
+exec_write_target_basenames
+has_external_url
+prop_trustworthiness
+prop_confidentiality
+confidence
+authority
+tags
+review_required
+approval_required
+destructive
+custom_io_kind
+custom_flow_role
+custom_taint_role
+```
+
+如果规则需要这些语义，例如 action、路径、URL、命令关键词、扫描工具名，应在 `required_metadata` 中声明一个业务字段，并要求 kernel/parser lowering 后写入 `security_type.custom.policy_metadata`。内置 unary 规则也遵循这个约束：例如字符串预算使用 `argument_total_string_length`，文件目标使用 `target_basenames` / `write_target_basenames`，而不是 policy runtime 临时解析 raw args。
+
+为了避免名称碰撞，`required_metadata.field` 也不能使用这些 runtime 内部字段名。需要类似语义时，请使用业务名，例如 `trade_confidence_high`、`operation_destructive`、`browser_action_kind`。
 
 Level 顺序：
 
@@ -191,11 +222,15 @@ LOW < UNKNOWN < HIGH
 | `parser_custom` | 由现有 parser custom 字段派生 |
 | `derived` | 由多个已有字段组合派生 |
 
+注意：`required_metadata` 中声明的字段无论由哪种 `source.kind` 生成，运行时都应由 kernel/parser 写入 `security_type.custom.policy_metadata`，policy 侧只消费这个扁平后的 custom contract。`source.kind` 是给接入/实现方看的生成方式说明，不表示 predicate 可以直接读取 raw tool arguments。已经由 parser 写进 `custom.policy_metadata` 的字段，例如 OpenClaw AI-Trader 的 `ai_trader_*`，应标为 `parser_custom`。
+
+如果字段只是示例或未来 lowering 计划，不能把它放进 active runtime bundle，除非 kernel/parser 已经能产出该 `custom.policy_metadata` 字段；否则应保留在 examples/spec 中，并使用 `validation_error` 或接入前检查阻止安装。
+
 `on_missing` 可选值：
 
 | 值 | 行为 |
 | --- | --- |
-| `validation_error` | 安装/启用前必须确认 kernel 已能提供该字段 |
+| `validation_error` | 安装/启用前必须确认 kernel 已能提供该字段；如果未经确认仍被编译进 runtime，compiler 会按 fail-closed 包装，避免静默放行 |
 | `no_match` | 运行时字段缺失时，该规则不触发 |
 | `fail_closed` | 运行时字段缺失时，规则直接触发拦截 |
 
@@ -255,9 +290,11 @@ Instruction 中推荐存储位置：
 { "const": 10000 }
 { "const": "HIGH" }
 { "const": ["SEND", "BROADCAST"] }
+{ "len": { "var": "email_external_domains" } }
+{ "count_intersections": [{ "var": "retrieval_query_labels" }, { "const": ["SSN", "EMAIL"] }] }
 ```
 
-`var` 必须引用 built-in metadata 或 `required_metadata.field`。
+`var` 必须引用 built-in metadata 或 `required_metadata.field`。不要引用 raw arguments 或 legacy runtime-derived fields。
 
 ### 4.2 Boolean Operators
 
@@ -277,9 +314,10 @@ Instruction 中推荐存储位置：
 { "eq":  [{ "var": "a" }, { "const": "X" }] }
 { "ne":  [{ "var": "a" }, { "const": "X" }] }
 { "gt":  [{ "var": "amount" }, { "const": 10000 }] }
-{ "ge":  [{ "var": "confidence" }, { "const": "UNKNOWN" }] }
+{ "ge":  [{ "var": "risk" }, { "const": "UNKNOWN" }] }
 { "lt":  [{ "var": "risk" }, { "const": "HIGH" }] }
 { "le":  [{ "var": "trustworthiness" }, { "const": "LOW" }] }
+{ "between": [{ "var": "egress_payload_mb" }, { "const": 100 }, { "const": 10000 }] }
 ```
 
 字段缺失时，比较运算不应触发。对于 required metadata，compiler 会根据 `on_missing` 自动加保护条件。
@@ -287,17 +325,26 @@ Instruction 中推荐存储位置：
 ### 4.4 Membership and Text Operators
 
 ```json
-{ "in": [{ "var": "action" }, { "const": ["SEND", "BROADCAST"] }] }
-{ "not_in": [{ "var": "path_basename" }, { "const": ["README.MD"] }] }
-{ "contains": [{ "var": "arg_text_upper" }, { "const": "TOKEN" }] }
+{ "in": [{ "var": "browser_action_kind" }, { "const": ["SUBMIT", "UPLOAD"] }] }
+{ "not_in": [{ "var": "target_path_basename" }, { "const": ["README.MD"] }] }
+{ "contains": [{ "var": "sensitive_content_labels" }, { "const": "TOKEN" }] }
 { "intersects": [{ "var": "tags" }, { "const": ["SECRET_LIKE", "HIGH_RISK"] }] }
+{ "contains_all": [{ "var": "browser_content_labels" }, { "const": ["TOKEN", "LOCAL_CONFIG"] }] }
+{ "subset_of": [{ "var": "iam_requested_scopes" }, { "const": ["READ_ONLY", "LOG_VIEWER"] }] }
+{ "starts_with": [{ "var": "target_hostname" }, { "const": "STAGING-" }] }
+{ "ends_with": [{ "var": "target_hostname" }, { "const": ".INTERNAL" }] }
+{ "matches": [{ "var": "browser_target_hostname" }, { "const": "(^|\\.)pastebin\\.com$" }] }
 ```
 
 约定：
 
-- 对关键词匹配，优先用 `arg_text_upper`，常量也写大写。
-- 对 enum/action，常量写大写。
-- 多关键词用 `any + contains`。
+- 对关键词、路径、URL、action 等来自 tool arguments 的语义，优先声明 required metadata，不要直接扫参数文本。
+- 对 enum/action metadata，常量写成 kernel/parser lowering 约定的规范值。
+- 多个 lowered 标签或枚举候选用 `contains/intersects/contains_all`。
+- “请求集合必须完全落在允许集合内”用 `subset_of`，通常配合 `not` 表达越权阻断。
+- “命中几个风险标签”用 `count_intersections` 作为 value expression，再配合 `gt/ge`。
+- `matches` 只能用于已经 lowering 后的字符串字段，例如 hostname、normalized route、branch name；不要用它去扫 raw args。
+- 对数组或字符串长度，用 `len` 作为 value expression，再配合 `gt/ge/lt/le`。
 
 ## 5. Selector
 
@@ -413,25 +460,48 @@ Selector 用于先缩小规则范围。
         "predicate": {
           "all": [
             {
-              "in": [
-                { "var": "action" },
-                { "const": ["ACT", "UPLOAD", "DIALOG"] }
-              ]
+              "truthy": { "var": "browser_side_effect_action" }
             },
             {
-              "any": [
-                { "contains": [{ "var": "arg_text_upper" }, { "const": "PASSWORD" }] },
-                { "contains": [{ "var": "arg_text_upper" }, { "const": "TOKEN" }] },
-                { "contains": [{ "var": "arg_text_upper" }, { "const": "OPENCLAW" }] },
-                { "contains": [{ "var": "arg_text_upper" }, { "const": "LITELLM_CONFIG" }] }
-              ]
+              "truthy": { "var": "browser_sensitive_submit_content" }
             }
           ]
         }
       }
     }
   ],
-  "required_metadata": []
+  "required_metadata": [
+    {
+      "field": "browser_side_effect_action",
+      "type": "boolean",
+      "description": "True when the browser action may submit, upload, click, confirm, or otherwise cause a page-visible side effect.",
+      "applies_to": {
+        "tools": ["browser"]
+      },
+      "source": {
+        "kind": "tool_arguments",
+        "paths": ["action", "request.kind"]
+      },
+      "normalization": "Classify browser actions such as submit, upload, click, dialog accept, or form interaction as side-effect actions.",
+      "on_missing": "fail_closed",
+      "required_for_rules": ["USER-BROWSER-SENSITIVE-SUBMIT-001"]
+    },
+    {
+      "field": "browser_sensitive_submit_content",
+      "type": "boolean",
+      "description": "True when browser-submitted text or file content contains credential, token, or local OpenClaw configuration hints.",
+      "applies_to": {
+        "tools": ["browser"]
+      },
+      "source": {
+        "kind": "llm_lowering",
+        "paths": ["text", "value", "file", "request"]
+      },
+      "normalization": "Detect password, token, API key, OpenClaw config, LiteLLM config, or similar sensitive local configuration content.",
+      "on_missing": "validation_error",
+      "required_for_rules": ["USER-BROWSER-SENSITIVE-SUBMIT-001"]
+    }
+  ]
 }
 ```
 
@@ -501,14 +571,19 @@ Selector 用于先缩小规则范围。
    - 明确工具名时写 `selector.tools`。
    - 泛执行类动作可写 `selector.instruction_types: ["EXEC"]`。
 3. 列出条件：
-   - 阈值 -> `gt/ge/lt/le`
-   - 动作枚举 -> `in`
-   - 关键词 -> `contains`
+   - 阈值 -> `gt/ge/lt/le/between`
+   - lowered 动作枚举 -> `in`
+   - lowered 标签集合 -> `contains/intersects/contains_all`
+   - 请求集合必须受限于允许集合 -> `subset_of`
+   - 多个标签命中数量 -> `count_intersections + ge/gt`
+   - 已归一化字符串模式 -> `matches`
+   - lowered 数组或字符串长度 -> `len + gt/ge/lt/le`
    - 多条件同时满足 -> `all`
    - 多条件任一满足 -> `any`
 4. 检查每个 `var`：
    - built-in metadata 里有 -> 直接使用。
    - built-in metadata 里没有 -> 必须加入 `required_metadata`。
+   - 来自 tool arguments 的 action/path/url/keyword -> 先声明 required metadata，再让 kernel/parser lowering。
 5. 写清楚 `on_missing`：
    - 不确定 kernel 是否已有字段 -> `validation_error`
    - 字段缺失时不触发即可 -> `no_match`
@@ -526,5 +601,6 @@ Selector 用于先缩小规则范围。
 - 在 `required_metadata.field` 中覆盖 built-in 字段，例如 `risk`、`tool_name`。
 - 让新 metadata 修改核心安全字段。新 metadata 只能补充业务语义。
 - 把 `policy_rule_ir.json` 直接写入 `unary_gate_rules.json` 或 `user_unary_gate_rules.json`。
-- 对 `arg_text_upper` 使用小写关键词，导致匹配不稳定。
+- 在 IR predicate 中直接使用 `raw_args`、`arg_text_upper`、`action`、`path_hint` 等 legacy runtime-derived fields。
+- 用关键词扫描代替 kernel/parser lowering，导致 policy 重新解析 tool arguments。
 - 对缺失字段不写 `on_missing`。

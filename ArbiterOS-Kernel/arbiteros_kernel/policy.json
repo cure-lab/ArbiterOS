@@ -26,7 +26,8 @@
       "browser_snapshot": "browser",
       "browser_console": "browser",
       "browser_get_images": "browser",
-      "browser_vision": "browser"
+      "browser_vision": "browser",
+      "ai_trader_trade": "trade"
     }
   },
   
