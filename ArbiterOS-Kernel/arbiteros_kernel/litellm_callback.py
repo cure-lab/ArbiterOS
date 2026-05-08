@@ -7,6 +7,7 @@ import re
 import threading
 import urllib.error
 import urllib.request
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -54,7 +55,8 @@ from arbiteros_kernel.policy_check import (
     split_model_and_role,
 )
 from arbiteros_kernel.user_approval import apply_user_approval_preprocessing
-from arbiteros_kernel.policy_runtime import get_runtime
+from arbiteros_kernel.policy_runtime import get_runtime, policy_runtime_override
+from arbiteros_kernel.role_policy_cfg_loader import load_role_policy_config
 
 try:
     import yaml  # type: ignore
@@ -679,6 +681,19 @@ def _extract_role_policy_override_from_request(
         if isinstance(k, str) and k.strip() and isinstance(v, bool):
             out[k.strip()] = v
     return out or None
+
+
+def _extract_role_name_for_policy_config(request_data: Any) -> Optional[str]:
+    if not isinstance(request_data, dict):
+        return None
+    metadata = request_data.get("metadata")
+    if not isinstance(metadata, dict):
+        return None
+    for key in ("arbiteros_role_name_effective", "arbiteros_role_name_requested"):
+        value = metadata.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
 
 
 def _extract_tool_result_body_for_screening(content: Any) -> Any:
@@ -5739,6 +5754,9 @@ class MyCustomHandler(CustomLogger):
         parsed_model, parsed_role_name = split_model_and_role(_m)
         role_policy_override: Optional[dict[str, bool]] = None
         role_policy_fallback_reason: Optional[str] = None
+        role_policy_config_override: Optional[dict[str, Any]] = None
+        role_policy_config_source: Optional[str] = None
+        role_policy_config_fallback_reason: Optional[str] = None
         if isinstance(parsed_model, str) and parsed_model and parsed_model != _m:
             data = {**data, "model": parsed_model}
         if isinstance(_m, str) and ";" in _m and not parsed_role_name:
@@ -5747,6 +5765,11 @@ class MyCustomHandler(CustomLogger):
             role_policy_override, role_policy_fallback_reason = (
                 resolve_role_policy_enabled_override(parsed_role_name)
             )
+            (
+                role_policy_config_override,
+                role_policy_config_source,
+                role_policy_config_fallback_reason,
+            ) = load_role_policy_config(parsed_role_name)
 
         metadata_for_role = data.get("metadata") if isinstance(data, dict) else None
         metadata_for_role = (
@@ -5764,6 +5787,16 @@ class MyCustomHandler(CustomLogger):
         else:
             metadata_for_role.pop("arbiteros_role_name_effective", None)
             metadata_for_role.pop("arbiteros_policy_enabled_override", None)
+        if parsed_role_name and isinstance(role_policy_config_source, str):
+            metadata_for_role["arbiteros_policy_config_source"] = role_policy_config_source
+        else:
+            metadata_for_role.pop("arbiteros_policy_config_source", None)
+        if parsed_role_name and isinstance(role_policy_config_fallback_reason, str):
+            metadata_for_role["arbiteros_policy_config_fallback_reason"] = (
+                role_policy_config_fallback_reason
+            )
+        else:
+            metadata_for_role.pop("arbiteros_policy_config_fallback_reason", None)
         data = {**data, "metadata": metadata_for_role}
         '''
         if isinstance(_m, str) and _m.split("/")[-1] == "gpt-5.2-chat-latest":
@@ -5837,12 +5870,18 @@ class MyCustomHandler(CustomLogger):
         # 把 history 里 assistant 的 content 按当前 trace 记录的 category 从后往前包回结构，再请求
         data = _wrap_messages_with_categories(data, trace_id=trace_id_for_cache)
         data = _wrap_reference_tool_ids_into_messages(data, trace_id=trace_id_for_cache)
-        data = _screen_tool_results_with_alignment(
-            data=data,
-            state=state,
-            user_messages=_extract_all_user_messages_from_request(data),
-            policy_enabled_override=role_policy_override,
+        runtime_override_ctx = (
+            policy_runtime_override(role_policy_config_override)
+            if isinstance(role_policy_config_override, dict)
+            else nullcontext()
         )
+        with runtime_override_ctx:
+            data = _screen_tool_results_with_alignment(
+                data=data,
+                state=state,
+                user_messages=_extract_all_user_messages_from_request(data),
+                policy_enabled_override=role_policy_override,
+            )
         data = _inject_taint_watermarks_into_messages(data, trace_id=trace_id_for_cache)
 
         # Clean up any previously persisted noisy topic summaries so future traces
@@ -6370,18 +6409,39 @@ class MyCustomHandler(CustomLogger):
                 )
                 extracted_user_messages = _extract_all_user_messages_from_request(data)
                 role_policy_override = _extract_role_policy_override_from_request(data)
+                role_name_for_policy_cfg = _extract_role_name_for_policy_config(data)
+                (
+                    role_policy_config_override,
+                    _role_policy_config_source,
+                    role_policy_config_fallback_reason,
+                ) = load_role_policy_config(role_name_for_policy_cfg)
+                if isinstance(role_policy_config_fallback_reason, str):
+                    _save_json(
+                        "role_policy_config_fallback",
+                        {
+                            "trace_id": trace_id,
+                            "role_name": role_name_for_policy_cfg or "",
+                            "reason": role_policy_config_fallback_reason,
+                        },
+                    )
                 policy_runtime_context = _build_policy_runtime_context(
                     trace_id, instructions_for_policy
                 )
-                policy_result = check_response_policy(
-                    user_messages=extracted_user_messages,
-                    trace_id=trace_id,
-                    instructions=instructions_for_policy,
-                    current_response=final_msg_dict,
-                    latest_instructions=latest_for_policy,
-                    policy_enabled_override=role_policy_override,
-                    policy_runtime_context=policy_runtime_context,
+                runtime_override_ctx = (
+                    policy_runtime_override(role_policy_config_override)
+                    if isinstance(role_policy_config_override, dict)
+                    else nullcontext()
                 )
+                with runtime_override_ctx:
+                    policy_result = check_response_policy(
+                        user_messages=extracted_user_messages,
+                        trace_id=trace_id,
+                        instructions=instructions_for_policy,
+                        current_response=final_msg_dict,
+                        latest_instructions=latest_for_policy,
+                        policy_enabled_override=role_policy_override,
+                        policy_runtime_context=policy_runtime_context,
+                    )
                 if not policy_result.modified:
                     _ia_policy = policy_result.inactivate_error_type
                     if isinstance(_ia_policy, str) and _ia_policy.strip():
@@ -6933,18 +6993,41 @@ class MyCustomHandler(CustomLogger):
                 role_policy_override = _extract_role_policy_override_from_request(
                     request_data
                 )
+                role_name_for_policy_cfg = _extract_role_name_for_policy_config(
+                    request_data
+                )
+                (
+                    role_policy_config_override,
+                    _role_policy_config_source,
+                    role_policy_config_fallback_reason,
+                ) = load_role_policy_config(role_name_for_policy_cfg)
+                if isinstance(role_policy_config_fallback_reason, str):
+                    _save_json(
+                        "role_policy_config_fallback",
+                        {
+                            "trace_id": trace_id,
+                            "role_name": role_name_for_policy_cfg or "",
+                            "reason": role_policy_config_fallback_reason,
+                        },
+                    )
                 policy_runtime_context = _build_policy_runtime_context(
                     trace_id, instructions_for_policy
                 )
-                policy_result = check_response_policy(
-                    user_messages=extracted_user_messages,
-                    trace_id=trace_id,
-                    instructions=instructions_for_policy,
-                    current_response=msg_dict,
-                    latest_instructions=latest_for_policy,
-                    policy_enabled_override=role_policy_override,
-                    policy_runtime_context=policy_runtime_context,
+                runtime_override_ctx = (
+                    policy_runtime_override(role_policy_config_override)
+                    if isinstance(role_policy_config_override, dict)
+                    else nullcontext()
                 )
+                with runtime_override_ctx:
+                    policy_result = check_response_policy(
+                        user_messages=extracted_user_messages,
+                        trace_id=trace_id,
+                        instructions=instructions_for_policy,
+                        current_response=msg_dict,
+                        latest_instructions=latest_for_policy,
+                        policy_enabled_override=role_policy_override,
+                        policy_runtime_context=policy_runtime_context,
+                    )
                 if not policy_result.modified:
                     _ia_policy = policy_result.inactivate_error_type
                     if isinstance(_ia_policy, str) and _ia_policy.strip():
