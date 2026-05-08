@@ -7,6 +7,8 @@ import os
 import re
 import threading
 import time
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
@@ -1394,6 +1396,29 @@ def _runtime_reload_key() -> str:
         return f"path:{path}|error|audit:{audit_path}"
 
 
+_RUNTIME_CFG_OVERRIDE: ContextVar[Optional[Dict[str, Any]]] = ContextVar(
+    "arbiteros_runtime_cfg_override", default=None
+)
+
+
+@contextmanager
+def policy_runtime_override(config: Optional[Dict[str, Any]]):
+    """
+    Request-scoped runtime config override.
+
+    This avoids mutating global runtime state when different roles are evaluated
+    concurrently in the same process.
+    """
+    token = None
+    if isinstance(config, dict):
+        token = _RUNTIME_CFG_OVERRIDE.set(dict(config))
+    try:
+        yield
+    finally:
+        if token is not None:
+            _RUNTIME_CFG_OVERRIDE.reset(token)
+
+
 class ReloadableRuntimeProxy:
     """
     Lightweight proxy:
@@ -1407,6 +1432,11 @@ class ReloadableRuntimeProxy:
         self._reload_key: Optional[str] = None
 
     def _get_runtime(self) -> KernelPolicyRuntime:
+        override_cfg = _RUNTIME_CFG_OVERRIDE.get()
+        if isinstance(override_cfg, dict):
+            audit_path = _resolve_policy_audit_path(override_cfg)
+            return KernelPolicyRuntime(dict(override_cfg), audit_path=audit_path)
+
         key = _runtime_reload_key()
 
         with self._lock:
