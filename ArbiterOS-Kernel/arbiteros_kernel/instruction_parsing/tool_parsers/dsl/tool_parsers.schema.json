@@ -23,7 +23,7 @@
         "passes": {
           "type": "array",
           "minItems": 1,
-          "description": "Ordered list of parser passes. Applied in sequence; each matching pass deep-merges its result into the accumulated output. At least one Pass must be present to guarantee instruction_type is always set.",
+          "description": "Ordered list of parser passes. Applied in sequence; each matching pass deep-merges its result into the accumulated output.",
           "items": {
             "$ref": "#/$defs/Pass"
           }
@@ -32,117 +32,75 @@
     },
     "Pass": {
       "oneOf": [
-        {
-          "$ref": "#/$defs/DefaultPass"
-        },
-        {
-          "$ref": "#/$defs/RegexPass"
-        },
-        {
-          "$ref": "#/$defs/NumericPass"
-        },
-        {
-          "$ref": "#/$defs/PathPass"
-        },
-        {
-          "$ref": "#/$defs/ShellPass"
-        }
+        { "$ref": "#/$defs/DefaultPass" },
+        { "$ref": "#/$defs/RegexPass" },
+        { "$ref": "#/$defs/NumericPass" },
+        { "$ref": "#/$defs/PathPass" },
+        { "$ref": "#/$defs/ShellPass" }
       ]
     },
     "DefaultPass": {
       "type": "object",
-      "required": [
-        "match_type",
-        "result"
-      ],
+      "required": ["match_type", "result"],
       "additionalProperties": false,
       "description": "Unconditional baseline result. Always matches. Typically the first pass in a definition.",
       "properties": {
-        "match_type": {
-          "const": "default"
-        },
-        "result": {
-          "$ref": "#/$defs/Result"
-        }
+        "match_type": { "const": "default" },
+        "result": { "$ref": "#/$defs/Result" }
       }
     },
     "RegexPass": {
       "type": "object",
-      "required": [
-        "match_type",
-        "cases"
-      ],
+      "required": ["match_type", "cases"],
       "additionalProperties": false,
       "description": "Matches individual argument values against regex patterns. All matching cases within this pass are applied in order.",
       "properties": {
-        "match_type": {
-          "const": "regex"
-        },
+        "match_type": { "const": "regex" },
         "cases": {
           "type": "array",
           "minItems": 1,
-          "items": {
-            "$ref": "#/$defs/RegexCase"
-          }
+          "items": { "$ref": "#/$defs/RegexCase" }
         }
       }
     },
     "RegexCase": {
       "type": "object",
-      "required": [
-        "arg",
-        "pattern",
-        "result"
-      ],
+      "required": ["arg", "pattern", "result"],
       "additionalProperties": false,
       "properties": {
         "arg": {
           "type": "string",
-          "description": "Dot-notation path to the argument value to match against (e.g. 'action', 'request.kind', 'request.fields[0].ref'). If the path does not exist in the args, this case is skipped."
+          "description": "Dot-notation path to the argument value to match against (e.g. 'action', 'request.kind'). If the path does not exist in the args, this case is skipped."
         },
         "pattern": {
           "type": "string",
           "description": "Regex matched against the string value at arg path. Evaluated case-sensitive, DOTALL off, multiline off."
         },
-        "result": {
-          "$ref": "#/$defs/Result"
-        }
+        "result": { "$ref": "#/$defs/Result" }
       }
     },
     "NumericPass": {
       "type": "object",
-      "required": [
-        "match_type",
-        "cases"
-      ],
+      "required": ["match_type", "cases"],
       "additionalProperties": false,
       "description": "Compares individual numeric argument values against thresholds. All matching cases within this pass are applied in order.",
       "properties": {
-        "match_type": {
-          "const": "numeric"
-        },
+        "match_type": { "const": "numeric" },
         "cases": {
           "type": "array",
           "minItems": 1,
-          "items": {
-            "$ref": "#/$defs/NumericCase"
-          }
+          "items": { "$ref": "#/$defs/NumericCase" }
         }
       }
     },
     "NumericCase": {
       "type": "object",
-      "required": [
-        "arg",
-        "op",
-        "value",
-        "result"
-      ],
+      "required": ["arg", "op", "value", "result"],
       "additionalProperties": false,
       "properties": {
         "arg": {
           "type": "string",
-          "description": "Dot-notation path to the argument value to compare (e.g. 'yieldMs', 'request.width'). If the path does not exist or the value is not a number, this case is skipped."
+          "description": "Dot-notation path to the argument value to compare. If the path does not exist or the value is not a number, this case is skipped."
         },
         "op": {
           "type": "string",
@@ -153,23 +111,16 @@
           "type": "number",
           "description": "Threshold to compare against."
         },
-        "result": {
-          "$ref": "#/$defs/Result"
-        }
+        "result": { "$ref": "#/$defs/Result" }
       }
     },
     "PathPass": {
       "type": "object",
-      "required": [
-        "match_type",
-        "arg"
-      ],
+      "required": ["match_type", "arg"],
       "additionalProperties": false,
       "description": "Classifies a single file path or URL argument via the path registry. One arg per pass; use multiple PathPass entries for alias args (e.g. 'path' and 'file_path'). Outputs: metadata.confidentiality, metadata.trustworthiness.",
       "properties": {
-        "match_type": {
-          "const": "path"
-        },
+        "match_type": { "const": "path" },
         "arg": {
           "type": "string",
           "description": "Dot-notation path to the argument containing the file path or URL to classify (e.g. 'path', 'request.url'). Top-level args are the common case."
@@ -178,24 +129,53 @@
     },
     "ShellPass": {
       "type": "object",
-      "required": [
-        "match_type",
-        "arg"
-      ],
+      "required": ["match_type", "arg"],
       "additionalProperties": false,
       "description": "Delegates shell command analysis to the shell_parsers engine. Typically the first pass; subsequent passes refine its output. Outputs: instruction_type, metadata.confidentiality, metadata.trustworthiness, metadata.risk.",
       "properties": {
-        "match_type": {
-          "const": "shell"
-        },
+        "match_type": { "const": "shell" },
         "arg": {
           "type": "string",
-          "description": "Dot-notation path to the argument containing the shell command string to analyse (e.g. 'command'). Top-level args are the common case."
+          "description": "Dot-notation path to the argument containing the shell command string to analyse (e.g. 'command')."
         }
       }
     },
     "Result": {
-      "$ref": "instruction_result.schema.json#/$defs/Result"
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Partial or full classification result. All fields are optional to allow targeted deep-merge overrides.",
+      "properties": {
+        "instruction_type": { "$ref": "#/$defs/InstructionType" },
+        "metadata": { "$ref": "#/$defs/Metadata" },
+        "custom": {
+          "type": "object",
+          "description": "Extension point for arbitrary key-value metadata. Values are passed through unchanged into security_type.custom. Use this for fields beyond the four standard metadata fields (confidentiality, trustworthiness, risk, reversible).",
+          "additionalProperties": true
+        }
+      }
+    },
+    "InstructionType": {
+      "type": "string",
+      "enum": [
+        "READ", "WRITE", "EXEC", "WAIT", "ASK", "RESPOND", "DELEGATE",
+        "REASON", "PLAN", "CRITIQUE", "STORE", "RETRIEVE", "COMPRESS", "PRUNE",
+        "SUBSCRIBE", "RECEIVE", "USER_MESSAGE"
+      ]
+    },
+    "Metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Security classification fields. All fields are optional to allow partial deep-merge.",
+      "properties": {
+        "confidentiality": { "$ref": "#/$defs/Level" },
+        "trustworthiness": { "$ref": "#/$defs/Level" },
+        "risk": { "$ref": "#/$defs/Level" },
+        "reversible": { "type": "boolean" }
+      }
+    },
+    "Level": {
+      "type": "string",
+      "enum": ["HIGH", "LOW", "UNKNOWN"]
     }
   }
 }

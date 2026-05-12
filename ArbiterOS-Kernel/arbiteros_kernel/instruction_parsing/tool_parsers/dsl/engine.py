@@ -26,16 +26,14 @@ ShellPass extension:
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import yaml
-from jsonschema import Draft202012Validator, ValidationError
-from referencing import Registry
-from referencing.jsonschema import DRAFT202012
+
+from .validator import validate
 
 from ...registries import (
     classify_confidentiality,
@@ -310,7 +308,7 @@ def load_registry(yaml_path: Path) -> Dict[str, ToolParser]:
     if not isinstance(defs, list):
         raise ValueError(f"Expected a list of tool definitions in {yaml_path}")
 
-    _validate(defs, yaml_path)
+    validate(defs, yaml_path.name)
 
     registry: Dict[str, ToolParser] = {}
     for tool_def in defs:
@@ -320,39 +318,3 @@ def load_registry(yaml_path: Path) -> Dict[str, ToolParser]:
         logger.debug("DSL engine: registered parser for %r (%d passes)", tool_name, len(passes))
 
     return registry
-
-
-_DSL_DIR = Path(__file__).parent
-
-
-def _build_validator() -> Draft202012Validator:
-    tool_schema_path = _DSL_DIR / "tool_parsers.schema.json"
-    result_schema_path = _DSL_DIR / "instruction_result.schema.json"
-    tool_schema = json.loads(tool_schema_path.read_text())
-    result_schema = json.loads(result_schema_path.read_text())
-    tool_uri = tool_schema_path.resolve().as_uri()
-    result_uri = result_schema_path.resolve().as_uri()
-    tool_schema["$id"] = tool_uri
-    result_schema["$id"] = result_uri
-    registry = Registry().with_resources([
-        (tool_uri, DRAFT202012.create_resource(tool_schema)),
-        (result_uri, DRAFT202012.create_resource(result_schema)),
-    ])
-    return Draft202012Validator(tool_schema, registry=registry)
-
-
-_validator: Optional[Draft202012Validator] = None
-
-
-def _validate(defs: Any, yaml_path: Path) -> None:
-    global _validator
-    if _validator is None:
-        _validator = _build_validator()
-    errors = list(_validator.iter_errors(defs))
-    if errors:
-        messages = "\n".join(
-            f"  [{e.json_path}] {e.message}" for e in errors[:10]
-        )
-        raise ValueError(
-            f"Schema validation failed for {yaml_path.name}:\n{messages}"
-        )
