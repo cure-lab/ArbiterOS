@@ -1,0 +1,164 @@
+# Nanobot tool parser definitions.
+
+- tool: read_file
+  passes:
+  - match_type: default
+    result:
+      instruction_type: READ
+      metadata:
+        confidentiality: UNKNOWN
+        trustworthiness: UNKNOWN
+        reversible: true
+  - match_type: path
+    arg: path
+  - match_type: path
+    arg: file_path
+  - match_type: regex
+    cases:
+    - arg: path
+      pattern: "(^|/)(SOUL|MEMORY|AGENTS|USER|IDENTITY)\\.md$|/memory/[^/]+\\.md$"
+      result:
+        instruction_type: RETRIEVE
+        metadata:
+          confidentiality: HIGH
+          trustworthiness: HIGH
+          reversible: true
+    - arg: file_path
+      pattern: "(^|/)(SOUL|MEMORY|AGENTS|USER|IDENTITY)\\.md$|/memory/[^/]+\\.md$"
+      result:
+        instruction_type: RETRIEVE
+        metadata:
+          confidentiality: HIGH
+          trustworthiness: HIGH
+          reversible: true
+
+- tool: list_dir
+  passes:
+  - match_type: default
+    result:
+      instruction_type: READ
+      metadata:
+        confidentiality: UNKNOWN
+        trustworthiness: UNKNOWN
+        reversible: true
+  - match_type: path
+    arg: path
+  - match_type: regex
+    cases:
+    - arg: path
+      pattern: "(^|/)(SOUL|MEMORY|AGENTS|USER|IDENTITY)\\.md$|/memory/[^/]+\\.md$"
+      result:
+        instruction_type: RETRIEVE
+        metadata:
+          confidentiality: HIGH
+          trustworthiness: HIGH
+          reversible: true
+
+- tool: write_file
+  passes:
+  - match_type: default
+    result:
+      instruction_type: WRITE
+      metadata:
+        confidentiality: UNKNOWN
+        trustworthiness: UNKNOWN
+        reversible: true
+  - match_type: path
+    arg: path
+  - match_type: path
+    arg: file_path
+  - match_type: regex
+    cases:
+    - arg: path
+      pattern: "(^|/)(SOUL|MEMORY|AGENTS|USER|IDENTITY)\\.md$|/memory/[^/]+\\.md$"
+      result:
+        instruction_type: STORE
+        metadata:
+          confidentiality: HIGH
+          trustworthiness: HIGH
+          reversible: true
+    - arg: file_path
+      pattern: "(^|/)(SOUL|MEMORY|AGENTS|USER|IDENTITY)\\.md$|/memory/[^/]+\\.md$"
+      result:
+        instruction_type: STORE
+        metadata:
+          confidentiality: HIGH
+          trustworthiness: HIGH
+          reversible: true
+
+- tool: edit_file
+  passes:
+  - match_type: default
+    result:
+      instruction_type: WRITE
+      metadata:
+        confidentiality: UNKNOWN
+        trustworthiness: UNKNOWN
+        reversible: true
+  - match_type: path
+    arg: path
+  - match_type: path
+    arg: file_path
+  - match_type: regex
+    cases:
+    - arg: path
+      pattern: "(^|/)(SOUL|MEMORY|AGENTS|USER|IDENTITY)\\.md$|/memory/[^/]+\\.md$"
+      result:
+        instruction_type: STORE
+        metadata:
+          confidentiality: HIGH
+          trustworthiness: HIGH
+          reversible: true
+    - arg: file_path
+      pattern: "(^|/)(SOUL|MEMORY|AGENTS|USER|IDENTITY)\\.md$|/memory/[^/]+\\.md$"
+      result:
+        instruction_type: STORE
+        metadata:
+          confidentiality: HIGH
+          trustworthiness: HIGH
+          reversible: true
+
+- tool: exec
+  passes:
+  - match_type: shell
+    arg: command
+
+- tool: web_search
+  passes:
+  - match_type: default
+    result:
+      instruction_type: READ
+      metadata:
+        confidentiality: LOW
+        trustworthiness: LOW
+        reversible: true
+
+- tool: web_fetch
+  passes:
+  - match_type: default
+    result:
+      instruction_type: READ
+      metadata:
+        confidentiality: LOW
+        trustworthiness: LOW
+        reversible: true
+
+- tool: message
+  passes:
+  - match_type: default
+    result:
+      instruction_type: EXEC
+      metadata:
+        confidentiality: LOW
+        trustworthiness: HIGH
+        reversible: false
+
+- tool: spawn
+  passes:
+  - match_type: default
+    result:
+      instruction_type: DELEGATE
+      metadata:
+        confidentiality: HIGH
+        trustworthiness: LOW
+        reversible: false

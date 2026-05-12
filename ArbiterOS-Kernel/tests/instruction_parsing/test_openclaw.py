@@ -42,7 +42,7 @@ def _classify_segment(seg_str: str) -> str:
 
 def _classify_segment_risk(seg_str: str) -> str:
     return _bash_classify_segment_risk(seg_str, _classify_exe_risk)
-from arbiteros_kernel.instruction_parsing.tool_parsers.openclaw import (
+from arbiteros_kernel.instruction_parsing.tool_parsers import (
     TOOL_PARSER_REGISTRY,
 )
 
@@ -1057,9 +1057,10 @@ class TestParseImage:
     def test_local_path_uses_registry(self):
         r = parse_tool_instruction("image", {"image": "/home/user/photo.png"})
         assert r.instruction_type == "READ"
-        # /home/user/photo.png has no registry trust rule → UNKNOWN
+        # /home/user/photo.png has no registry rule → both UNKNOWN
         assert r.security_type is not None
         assert r.security_type["trustworthiness"] == "UNKNOWN"
+        assert r.security_type["confidentiality"] == "UNKNOWN"
 
     def test_no_image_uses_high_default(self):
         r = parse_tool_instruction("image", {})
