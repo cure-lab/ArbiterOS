@@ -354,8 +354,10 @@
         "tools": ["trade"]
       },
       "source": {
-        "kind": "parser_custom",
-        "paths": ["policy_metadata.ai_trader_notional"]
+        "kind": "tool_arguments",
+        "paths": ["notional"],
+        "transform": "abs_number",
+        "operands": ["price", "quantity"]
       },
       "normalization": "Use absolute numeric price * quantity. Price 0 means platform simulated pricing and may produce 0 notional before execution.",
       "on_missing": "no_match",
@@ -369,8 +371,10 @@
         "tools": ["trade"]
       },
       "source": {
-        "kind": "parser_custom",
-        "paths": ["policy_metadata.ai_trader_is_short"]
+        "kind": "tool_arguments",
+        "paths": ["action", "side", "position"],
+        "transform": "equals",
+        "value": "short"
       },
       "normalization": "action lowercased equals short.",
       "on_missing": "fail_closed",
@@ -384,8 +388,10 @@
         "tools": ["trade"]
       },
       "source": {
-        "kind": "parser_custom",
-        "paths": ["policy_metadata.ai_trader_is_polymarket"]
+        "kind": "tool_arguments",
+        "paths": ["market", "platform", "exchange", "venue"],
+        "transform": "equals",
+        "value": "polymarket"
       },
       "normalization": "market lowercased equals polymarket.",
       "on_missing": "no_match",
@@ -399,8 +405,9 @@
         "tools": ["trade"]
       },
       "source": {
-        "kind": "parser_custom",
-        "paths": ["policy_metadata.ai_trader_has_outcome"]
+        "kind": "tool_arguments",
+        "paths": ["outcome"],
+        "transform": "nonempty"
       },
       "normalization": "outcome is a non-empty string.",
       "on_missing": "no_match",
@@ -414,8 +421,9 @@
         "tools": ["trade"]
       },
       "source": {
-        "kind": "parser_custom",
-        "paths": ["policy_metadata.ai_trader_has_token_id"]
+        "kind": "tool_arguments",
+        "paths": ["token_id", "tokenId", "token.id"],
+        "transform": "nonempty"
       },
       "normalization": "token_id is a non-empty string.",
       "on_missing": "no_match",
@@ -474,8 +482,9 @@
         "tools": ["send_email"]
       },
       "source": {
-        "kind": "llm_lowering",
-        "paths": ["to", "cc", "bcc"]
+        "kind": "tool_arguments",
+        "paths": ["to", "cc", "bcc"],
+        "transform": "external_domain_count"
       },
       "normalization": "Count recipients whose email domain is outside the configured organization domains.",
       "on_missing": "validation_error",
@@ -489,8 +498,9 @@
         "tools": ["send_email"]
       },
       "source": {
-        "kind": "llm_lowering",
-        "paths": ["to", "cc", "bcc"]
+        "kind": "tool_arguments",
+        "paths": ["to", "cc", "bcc"],
+        "transform": "external_domains"
       },
       "normalization": "Extract and uppercase distinct external domains from all recipient fields.",
       "on_missing": "validation_error",
@@ -505,7 +515,9 @@
       },
       "source": {
         "kind": "tool_arguments",
-        "paths": ["action", "request.kind"]
+        "paths": ["action", "request.kind"],
+        "transform": "in_set",
+        "values": ["act", "click", "type", "press", "submit", "upload", "confirm", "accept", "fill", "select", "drag"]
       },
       "normalization": "Classify submit, upload, click, dialog accept, form interaction, or navigation with side effects as true.",
       "on_missing": "fail_closed",
@@ -579,8 +591,9 @@
         "instruction_types": ["EXEC", "WRITE"]
       },
       "source": {
-        "kind": "llm_lowering",
-        "paths": ["url", "host", "destination", "command"]
+        "kind": "tool_arguments",
+        "paths": ["url", "host", "destination", "command"],
+        "transform": "has_external_domain"
       },
       "normalization": "Classify external network destinations, public object storage, external email, or third-party APIs as true.",
       "on_missing": "fail_closed",
@@ -595,7 +608,8 @@
       },
       "source": {
         "kind": "derived",
-        "paths": ["size", "bytes", "file_size", "content_length", "command"]
+        "paths": ["size", "bytes", "file_size", "content_length", "command"],
+        "transform": "scaled_number"
       },
       "normalization": "Normalize known byte, KB, MB, or file-size evidence into a numeric MB estimate.",
       "on_missing": "no_match",
@@ -610,7 +624,9 @@
       },
       "source": {
         "kind": "tool_arguments",
-        "paths": ["action", "operation", "policy", "binding"]
+        "paths": ["action", "operation", "policy", "binding"],
+        "transform": "contains_any",
+        "values": ["create", "update", "grant", "bind", "revoke", "delete", "attach", "detach", "set"]
       },
       "normalization": "Classify IAM create/update/grant/bind/revoke operations as true.",
       "on_missing": "fail_closed",
@@ -639,8 +655,9 @@
         "tools": ["browser"]
       },
       "source": {
-        "kind": "kernel_lowering",
-        "paths": ["url", "href", "request.url"]
+        "kind": "tool_arguments",
+        "paths": ["url", "href", "request.url"],
+        "transform": "hostname"
       },
       "normalization": "Parse the target URL and return the lowercase hostname without scheme, path, query, or credentials.",
       "on_missing": "no_match",
@@ -655,7 +672,9 @@
       },
       "source": {
         "kind": "tool_arguments",
-        "paths": ["action", "command", "subcommand"]
+        "paths": ["action", "command", "subcommand"],
+        "transform": "contains_any",
+        "values": ["commit", "push", "merge", "rebase", "tag", "checkout", "switch", "branch", "config"]
       },
       "normalization": "Classify commit, push, merge, rebase, tag creation, branch update, and config writes as mutating operations.",
       "on_missing": "fail_closed",

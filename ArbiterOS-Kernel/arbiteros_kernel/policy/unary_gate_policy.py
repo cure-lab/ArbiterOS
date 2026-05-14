@@ -15,6 +15,7 @@ from arbiteros_kernel.instruction_parsing.types import LEVEL_ORDER
 from arbiteros_kernel.policy_check import PolicyCheckResult
 from arbiteros_kernel.policy_runtime import RUNTIME, canonicalize_args
 
+from .direct_metadata import derive_policy_metadata_from_tool_args
 from .policy import Policy
 
 try:
@@ -1748,6 +1749,7 @@ def _build_tool_context(
     tool_call_id: str,
     args_dict: Dict[str, Any],
     ins: Optional[Dict[str, Any]],
+    required_metadata: Optional[List[Any]] = None,
 ) -> Dict[str, Any]:
     if isinstance(ins, dict):
         md = _extract_metadata_view(ins)
@@ -1797,6 +1799,14 @@ def _build_tool_context(
         **md,
     }
     ctx.update(_safe_policy_metadata(custom, set(ctx.keys())))
+    for key, value in derive_policy_metadata_from_tool_args(
+        args_dict,
+        required_metadata or [],
+        tool_name=canonical_tool_name,
+        instruction_type=ctx.get("instruction_type"),
+        instruction_category=ctx.get("instruction_category"),
+    ).items():
+        ctx.setdefault(key, value)
     return ctx
 
 def _build_respond_context(ins: Dict[str, Any]) -> Dict[str, Any]:
@@ -2128,6 +2138,8 @@ class UnaryGatePolicy(Policy):
         rule_bundle = _load_rule_bundle()
         rules = rule_bundle.get("rules")
         rules = rules if isinstance(rules, list) else []
+        required_metadata = rule_bundle.get("required_metadata")
+        required_metadata = required_metadata if isinstance(required_metadata, list) else []
 
         pil_cfg = _protected_identity_llm_cfg(rule_bundle)
         llm_enabled = bool(pil_cfg.get("enabled", False))
@@ -2163,6 +2175,7 @@ class UnaryGatePolicy(Policy):
                 tool_call_id=tool_call_id or "",
                 args_dict=args_dict,
                 ins=ins,
+                required_metadata=required_metadata,
             )
 
             decision: Optional[RuleDecision] = None

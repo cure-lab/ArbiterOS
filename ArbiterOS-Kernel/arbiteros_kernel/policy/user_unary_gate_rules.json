@@ -1,7 +1,7 @@
 {
   "evaluation_mode": "first_match",
   "source": "user_unary_gate_rules.json",
-  "description": "User-authored unary tool-call policy rules compiled from metadata-only Policy Rule IR. Active bundle includes only metadata contracts currently lowered by the OpenClaw parser.",
+  "description": "User-authored unary tool-call policy rules compiled from Policy Rule IR with declared metadata contracts.",
   "rules": [
     {
       "id": "USER-AI-TRADER-NOTIONAL-001",
@@ -134,9 +134,14 @@
         ]
       },
       "source": {
-        "kind": "parser_custom",
+        "kind": "tool_arguments",
         "paths": [
-          "policy_metadata.ai_trader_notional"
+          "notional"
+        ],
+        "transform": "abs_number",
+        "operands": [
+          "price",
+          "quantity"
         ]
       },
       "normalization": "Use absolute numeric price * quantity. Price 0 means platform simulated pricing and may produce 0 notional before execution.",
@@ -155,10 +160,14 @@
         ]
       },
       "source": {
-        "kind": "parser_custom",
+        "kind": "tool_arguments",
         "paths": [
-          "policy_metadata.ai_trader_is_short"
-        ]
+          "action",
+          "side",
+          "position"
+        ],
+        "transform": "equals",
+        "value": "short"
       },
       "normalization": "action lowercased equals short.",
       "on_missing": "fail_closed",
@@ -176,10 +185,15 @@
         ]
       },
       "source": {
-        "kind": "parser_custom",
+        "kind": "tool_arguments",
         "paths": [
-          "policy_metadata.ai_trader_is_polymarket"
-        ]
+          "market",
+          "platform",
+          "exchange",
+          "venue"
+        ],
+        "transform": "equals",
+        "value": "polymarket"
       },
       "normalization": "market lowercased equals polymarket.",
       "on_missing": "no_match",
@@ -197,10 +211,11 @@
         ]
       },
       "source": {
-        "kind": "parser_custom",
+        "kind": "tool_arguments",
         "paths": [
-          "policy_metadata.ai_trader_has_outcome"
-        ]
+          "outcome"
+        ],
+        "transform": "nonempty"
       },
       "normalization": "outcome is a non-empty string.",
       "on_missing": "no_match",
@@ -218,10 +233,13 @@
         ]
       },
       "source": {
-        "kind": "parser_custom",
+        "kind": "tool_arguments",
         "paths": [
-          "policy_metadata.ai_trader_has_token_id"
-        ]
+          "token_id",
+          "tokenId",
+          "token.id"
+        ],
+        "transform": "nonempty"
       },
       "normalization": "token_id is a non-empty string.",
       "on_missing": "no_match",

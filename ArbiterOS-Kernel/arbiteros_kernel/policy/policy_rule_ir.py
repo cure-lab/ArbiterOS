@@ -1,9 +1,13 @@
-"""Policy Rule IR v1 validation and unary-gate compilation.
+"""Policy Rule IR v1 validation and runtime-rule compilation.
 
-V1 is intentionally narrow: user-authored policies are unary tool-call rules.
-The IR may request extra low-dimensional metadata from kernel/parser lowering,
-but executable predicates must only reference lowered instruction/security
-fields or declared policy metadata fields.
+V1 supports two policy shapes:
+- unary_tool_call: rules over the current tool call / response instruction.
+- relational_flow: rules over the relation between source taint/history and a
+  current sink instruction.
+
+The IR may request extra low-dimensional metadata from kernel/parser lowering
+or deterministic policy-side argument extraction, but executable predicates
+must only reference instruction/security fields or declared metadata fields.
 """
 
 from __future__ import annotations
@@ -19,7 +23,10 @@ from typing import Any, Dict, Iterable, List, Mapping, Set
 
 IR_VERSION = 1
 
-RULE_KIND = "unary_tool_call"
+UNARY_RULE_KIND = "unary_tool_call"
+RELATIONAL_RULE_KIND = "relational_flow"
+RULE_KIND = UNARY_RULE_KIND  # Backward-compatible alias used by older callers.
+ALLOWED_RULE_KINDS = {UNARY_RULE_KIND, RELATIONAL_RULE_KIND}
 ALLOWED_EFFECTS = {"BLOCK"}
 ALLOWED_ON_MISSING = {"validation_error", "no_match", "fail_closed"}
 ALLOWED_METADATA_TYPES = {
@@ -54,6 +61,21 @@ ALLOWED_INSTRUCTION_TYPES = {
     "REASON",
     "PLAN",
     "CRITIQUE",
+}
+ALLOWED_FLOW_KINDS = {
+    "read_external",
+    "read_sensitive",
+    "read_state",
+    "write_local",
+    "write_shared",
+    "delegate_sink",
+    "comm_sink",
+    "voice_sink",
+    "ui_side_effect",
+    "exec_side_effect",
+    "persist_side_effect",
+    "respond_sink",
+    "none",
 }
 
 VALUE_OPERATOR_ARITY = {
@@ -99,6 +121,35 @@ BUILTIN_TOOL_CALL_FIELDS: Set[str] = {
     "risk",
 }
 
+BUILTIN_RELATIONAL_FIELDS: Set[str] = {
+    # Current sink aliases. These mirror unary built-ins so unary predicates can
+    # be lifted into relational sink rules when appropriate.
+    *BUILTIN_TOOL_CALL_FIELDS,
+    "flow_kind",
+    "source_tool_name",
+    "source_tool_call_id",
+    "source_instruction_type",
+    "source_instruction_category",
+    "source_trustworthiness",
+    "source_confidentiality",
+    "sink_tool_name",
+    "sink_tool_call_id",
+    "sink_instruction_type",
+    "sink_instruction_category",
+    "sink_trustworthiness",
+    "sink_confidentiality",
+    "sink_prop_trustworthiness",
+    "sink_prop_confidentiality",
+    "sink_risk",
+    "sink_reversible",
+    "respond_content_present",
+}
+BUILTIN_FIELDS_BY_KIND: Dict[str, Set[str]] = {
+    UNARY_RULE_KIND: BUILTIN_TOOL_CALL_FIELDS,
+    RELATIONAL_RULE_KIND: BUILTIN_RELATIONAL_FIELDS,
+}
+ALL_BUILTIN_FIELDS: Set[str] = set().union(*BUILTIN_FIELDS_BY_KIND.values())
+
 # Fields that still exist in the UnaryGatePolicy runtime context for built-in
 # and legacy rules, but are not part of the Policy Rule IR v1 built-in surface.
 # Keep them reserved so custom policy_metadata cannot collide with values the
@@ -135,7 +186,7 @@ LEGACY_RUNTIME_DERIVED_FIELDS: Set[str] = {
     "has_external_url",
 }
 
-RESERVED_METADATA_FIELDS: Set[str] = set(BUILTIN_TOOL_CALL_FIELDS) | {
+RESERVED_METADATA_FIELDS: Set[str] = set(ALL_BUILTIN_FIELDS) | {
     *INTERNAL_RUNTIME_CONTEXT_FIELDS,
     *LEGACY_RUNTIME_DERIVED_FIELDS,
     "raw_args",
@@ -204,6 +255,7 @@ def compile_policy_rule_ir_to_unary_gate_rules(
     """Compile valid V1 IR rules into UnaryGatePolicy runtime rules."""
 
     assert_valid_policy_rule_ir(document)
+    _assert_rule_kinds(document, {UNARY_RULE_KIND}, "unary gate")
     metadata = _metadata_by_field(document.get("required_metadata") or [])
     out: List[Dict[str, Any]] = []
 
@@ -242,6 +294,45 @@ def compile_policy_rule_ir_to_unary_gate_rules(
     return out
 
 
+def compile_policy_rule_ir_to_relational_flow_rules(
+    document: Mapping[str, Any],
+) -> List[Dict[str, Any]]:
+    """Compile valid V1 IR rules into RelationalPolicy runtime rules."""
+
+    assert_valid_policy_rule_ir(document)
+    _assert_rule_kinds(document, {RELATIONAL_RULE_KIND}, "relational flow")
+    metadata = _metadata_by_field(document.get("required_metadata") or [])
+    out: List[Dict[str, Any]] = []
+
+    for rule in document["rules"]:
+        body = rule["rule"]
+        sink_selector = body.get("sink") or {}
+        source_selector = body.get("source") or {}
+        predicate = _compile_predicate(body["predicate"])
+        predicate = _wrap_predicate_for_missing_metadata(predicate, metadata)
+
+        out.append(
+            _drop_none(
+                {
+                    "id": rule["id"],
+                    "enabled": rule["enabled"],
+                    "title": rule["title"],
+                    "description": rule["description"],
+                    "scope": "relational",
+                    "source_selector": _compile_relational_selector(source_selector),
+                    "selector": _compile_relational_selector(sink_selector),
+                    "predicate": predicate,
+                    "effect": rule.get("effect", "BLOCK"),
+                    "message": rule["message"],
+                    "source": "policy_rule_ir",
+                    "severity": rule.get("severity"),
+                }
+            )
+        )
+
+    return out
+
+
 def compile_policy_rule_ir_to_unary_gate_bundle(
     document: Mapping[str, Any],
     *,
@@ -255,7 +346,7 @@ def compile_policy_rule_ir_to_unary_gate_bundle(
         "source": source,
         "description": (
             "User-authored unary tool-call policy rules compiled from "
-            "metadata-only Policy Rule IR."
+            "Policy Rule IR with declared metadata contracts."
         ),
         "rules": rules,
     }
@@ -263,6 +354,61 @@ def compile_policy_rule_ir_to_unary_gate_bundle(
     if required_metadata:
         bundle["required_metadata"] = copy.deepcopy(required_metadata)
     return bundle
+
+
+def compile_policy_rule_ir_to_relational_flow_bundle(
+    document: Mapping[str, Any],
+    *,
+    source: str = "policy_rule_ir",
+) -> Dict[str, Any]:
+    """Compile a V1 IR document into a complete relational rule bundle."""
+
+    rules = compile_policy_rule_ir_to_relational_flow_rules(document)
+    bundle: Dict[str, Any] = {
+        "evaluation_mode": "first_match",
+        "source": source,
+        "description": (
+            "User-authored relational flow policy rules compiled from "
+            "Policy Rule IR with declared metadata contracts."
+        ),
+        "rules": rules,
+    }
+    required_metadata = document.get("required_metadata") or []
+    if required_metadata:
+        bundle["required_metadata"] = copy.deepcopy(required_metadata)
+    return bundle
+
+
+def _assert_rule_kinds(
+    document: Mapping[str, Any],
+    allowed: Set[str],
+    target_name: str,
+) -> None:
+    bad = sorted(
+        {
+            str(rule.get("kind"))
+            for rule in document.get("rules", [])
+            if isinstance(rule, Mapping) and rule.get("kind") not in allowed
+        }
+    )
+    if bad:
+        raise PolicyRuleIRValidationError(
+            f"{target_name} compiler only accepts rule kinds "
+            f"{sorted(allowed)}; got {bad}"
+        )
+
+
+def _compile_relational_selector(raw: Mapping[str, Any]) -> Dict[str, Any]:
+    selector: Dict[str, Any] = {}
+    if raw.get("tools"):
+        selector["tool"] = raw["tools"]
+    if raw.get("instruction_types"):
+        selector["instruction_type"] = raw["instruction_types"]
+    if raw.get("categories"):
+        selector["category"] = raw["categories"]
+    if raw.get("flow_kinds"):
+        selector["flow_kind"] = raw["flow_kinds"]
+    return selector
 
 
 def _validate_required_metadata(raw: Any, errors: List[str]) -> Dict[str, Dict[str, Any]]:
@@ -389,8 +535,9 @@ def _validate_rule(
     else:
         seen_ids.add(rule_id)
 
-    if raw.get("kind") != RULE_KIND:
-        errors.append(f"{prefix}.kind must be {RULE_KIND!r}")
+    kind = raw.get("kind")
+    if kind not in ALLOWED_RULE_KINDS:
+        errors.append(f"{prefix}.kind must be one of {sorted(ALLOWED_RULE_KINDS)}")
     if raw.get("effect") not in ALLOWED_EFFECTS:
         errors.append(f"{prefix}.effect must be one of {sorted(ALLOWED_EFFECTS)}")
 
@@ -410,16 +557,30 @@ def _validate_rule(
         errors.append(f"{prefix}.rule must be an object")
         return
 
-    selector = body.get("selector", {})
-    if selector is not None:
-        _validate_selector_like(selector, f"{prefix}.rule.selector", errors)
+    if kind == UNARY_RULE_KIND:
+        selector = body.get("selector", {})
+        if selector is not None:
+            _validate_selector_like(selector, f"{prefix}.rule.selector", errors)
+    elif kind == RELATIONAL_RULE_KIND:
+        source = body.get("source", {})
+        if source is not None:
+            _validate_selector_like(source, f"{prefix}.rule.source", errors)
+        sink = body.get("sink", {})
+        if sink is not None:
+            _validate_selector_like(
+                sink,
+                f"{prefix}.rule.sink",
+                errors,
+                allow_flow_kinds=True,
+            )
 
     predicate = body.get("predicate")
     _validate_predicate(predicate, f"{prefix}.rule.predicate", errors)
 
     vars_used = {_normalize_var_name(name) for name in _extract_vars(predicate)}
     declared_fields = set(declared.keys())
-    unknown = sorted(vars_used - BUILTIN_TOOL_CALL_FIELDS - declared_fields)
+    builtin_fields = BUILTIN_FIELDS_BY_KIND.get(str(kind), set())
+    unknown = sorted(vars_used - builtin_fields - declared_fields)
     if unknown:
         errors.append(
             f"{prefix}.rule.predicate references undeclared metadata fields: "
@@ -427,7 +588,13 @@ def _validate_rule(
         )
 
 
-def _validate_selector_like(raw: Any, prefix: str, errors: List[str]) -> None:
+def _validate_selector_like(
+    raw: Any,
+    prefix: str,
+    errors: List[str],
+    *,
+    allow_flow_kinds: bool = False,
+) -> None:
     if not isinstance(raw, Mapping):
         errors.append(f"{prefix} must be an object")
         return
@@ -451,6 +618,23 @@ def _validate_selector_like(raw: Any, prefix: str, errors: List[str]) -> None:
         if bad:
             errors.append(
                 f"{prefix}.instruction_types contains unsupported values: "
+                + ", ".join(bad)
+            )
+
+    if "flow_kinds" in raw:
+        if not allow_flow_kinds:
+            errors.append(f"{prefix}.flow_kinds is only valid for relational sinks")
+            return
+        values = raw.get("flow_kinds")
+        if not isinstance(values, list) or not all(
+            isinstance(v, str) and v.strip() for v in values
+        ):
+            errors.append(f"{prefix}.flow_kinds must be an array of non-empty strings")
+            return
+        bad = [str(v) for v in values if str(v) not in ALLOWED_FLOW_KINDS]
+        if bad:
+            errors.append(
+                f"{prefix}.flow_kinds contains unsupported values: "
                 + ", ".join(bad)
             )
 
@@ -489,7 +673,7 @@ def _validate_predicate(raw: Any, prefix: str, errors: List[str]) -> None:
                 errors.append(f"{prefix}.var must be a string")
                 return
             name = _normalize_var_name(str(raw["var"]))
-            if not _valid_field_name(name) and name not in BUILTIN_TOOL_CALL_FIELDS:
+            if not _valid_field_name(name) and name not in ALL_BUILTIN_FIELDS:
                 errors.append(f"{prefix}.var has invalid field name {raw['var']!r}")
             return
         if key == "const":
@@ -652,6 +836,12 @@ def _main() -> int:
         action="store_true",
         help="Validate only; do not write output",
     )
+    parser.add_argument(
+        "--target",
+        choices=["auto", "unary", "relational"],
+        default="auto",
+        help="Runtime bundle target. auto requires all rules to share one kind.",
+    )
     args = parser.parse_args()
 
     input_path = Path(args.input)
@@ -666,10 +856,34 @@ def _main() -> int:
         print("Policy Rule IR is valid")
         return 0
 
-    bundle = compile_policy_rule_ir_to_unary_gate_bundle(
-        document,
-        source=args.source,
-    )
+    target = args.target
+    if target == "auto":
+        kinds = {
+            rule.get("kind")
+            for rule in document.get("rules", [])
+            if isinstance(rule, Mapping)
+        }
+        if kinds == {UNARY_RULE_KIND}:
+            target = "unary"
+        elif kinds == {RELATIONAL_RULE_KIND}:
+            target = "relational"
+        else:
+            print(
+                "--target auto requires all rules to be unary_tool_call or all "
+                "rules to be relational_flow"
+            )
+            return 1
+
+    if target == "unary":
+        bundle = compile_policy_rule_ir_to_unary_gate_bundle(
+            document,
+            source=args.source,
+        )
+    else:
+        bundle = compile_policy_rule_ir_to_relational_flow_bundle(
+            document,
+            source=args.source,
+        )
     text = json.dumps(bundle, ensure_ascii=False, indent=2) + "\n"
     if args.output:
         Path(args.output).write_text(text, encoding="utf-8")

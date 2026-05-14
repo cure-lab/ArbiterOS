@@ -142,6 +142,10 @@
       }
     }
   },
+  "relational_policy": {
+    "user_rules_enabled": false,
+    "user_rule_file": "arbiteros_kernel/policy/user_relational_flow_rules.json"
+  },
   "exec_composite_policy": {
   "enabled": true,
   "allow_multi_read_only": true,

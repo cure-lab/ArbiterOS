@@ -2,7 +2,12 @@
 
 本文档面向根据用户自然语言生成自定义 policy 的 Agent / LLM。
 
-V1 只支持 **unary tool-call policy**：每条规则只判断当前这一次 tool call 是否应该被拦截。不要在 V1 中生成跨步骤、source/sink、历史 taint、未来动作、用户确认流程、或 relational policy。
+V1 支持两类自定义 policy：
+
+- `unary_tool_call`：只判断当前这一次 tool call / response 是否应该被拦截。
+- `relational_flow`：判断历史/source taint 与当前 sink instruction 之间的信息流关系，例如“读到高敏感内容后，不允许直接发消息或跨会话委托”。
+
+V1 仍不支持复杂图查询、时间窗口、计数限速、用户确认后继续执行等状态型策略。
 
 目标链路：
 
@@ -10,16 +15,16 @@ V1 只支持 **unary tool-call policy**：每条规则只判断当前这一次 t
 2. Agent 读取本文档，生成 `policy_rule_ir.json`。
 3. Policy 侧 validator 校验 JSON。
 4. 如果规则需要当前 parser 没有的低维字段，在 `required_metadata` 中声明。
-5. Kernel/parser 侧根据 `required_metadata` 为当前 tool call 补充 `security_type.custom.policy_metadata`。
-6. Policy 侧把 IR 编译成用户 unary gate runtime rule，写入 `user_unary_gate_rules.json`，再和内置规则一起执行。
+5. Runtime 根据 `required_metadata` 补齐字段：直白 tool 参数由 policy runtime 确定性抽取，复杂语义由 kernel/parser 写入 `security_type.custom.policy_metadata`。
+6. Policy 侧把 IR 编译成对应 runtime rule：unary 写入 `user_unary_gate_rules.json`，relational 写入 `user_relational_flow_rules.json`。
 
 重要边界：
 
 - `policy_rule_ir.json` 是中间表示，不是 runtime 规则文件。
-- 内置规则放在 `unary_gate_rules.json`；用户自定义规则放在 `user_unary_gate_rules.json`。
-- `policy.json` 中 `unary_gate.user_rules_enabled` 控制是否加载用户规则文件。
+- 内置 unary 规则放在 `unary_gate_rules.json`；用户自定义 unary 规则放在 `user_unary_gate_rules.json`。
+- 用户自定义 relational 规则放在 `user_relational_flow_rules.json`，由 `policy.json` 中 `relational_policy.user_rules_enabled` 控制是否加载。
 - 不要把本文档里的 IR 直接写入任何 runtime rules 文件，必须先通过 validator/compiler。
-- Runtime 编译后才会变成 `selector + predicate + effect + message` 的 unary gate rule。
+- Runtime 编译后才会变成 `selector/source_selector + predicate + effect + message` 的运行时 rule。
 - `user_policy_rule_ir_examples.json` 是示例包，不等于默认启用的 active policy set；active runtime 文件只应包含当前 parser/kernel 已能 lowering 的 metadata contract。
 
 推荐编译命令：
@@ -28,28 +33,39 @@ V1 只支持 **unary tool-call policy**：每条规则只判断当前这一次 t
 uv run python arbiteros_kernel/policy/policy_rule_ir.py \
   --input arbiteros_kernel/policy/policy_rule_ir.json \
   --output arbiteros_kernel/policy/user_unary_gate_rules.json \
-  --source user_unary_gate_rules.json
+  --source user_unary_gate_rules.json \
+  --target unary
+```
+
+Relational 编译命令：
+
+```bash
+uv run python arbiteros_kernel/policy/policy_rule_ir.py \
+  --input arbiteros_kernel/policy/user_relational_policy_rule_ir_examples.json \
+  --output arbiteros_kernel/policy/user_relational_flow_rules.json \
+  --source user_relational_flow_rules.json \
+  --target relational
 ```
 
 与早期草稿的区别：
 
 - 早期草稿把 `action`、`path_hint`、`arg_text_upper`、`has_external_url` 等 policy runtime 便利字段也列为 built-in。
 - 当前版本将 built-in 收窄为 instruction core + security metadata。
-- 来自 tool arguments 的 action、路径、URL、关键词、目标范围等语义必须先通过 kernel/parser lowering 进入 `policy_metadata`，再供 policy 引用。
+- 来自 tool arguments 的直白字段可以声明为 `source.kind = tool_arguments`，由 policy runtime 做确定性抽取；需要语义判断、跨调用状态、标签分类的字段仍由 kernel/parser/LLM lowering 进入 `policy_metadata`。
 - 内置 unary rules 和自定义 rules 使用同一套 eval context；predicate 不再区分 legacy source 或 Policy Rule IR source。
-- 这样可以避免 policy 层重新解析 raw tool arguments，使 DSL、内置 unary、以及 instruction parsing schema 的边界更清楚。
+- 这样可以把“结构化参数抽取”和“语义 lowering”分开：简单参数不再额外要求 kernel 增加 metadata，复杂语义仍保持 kernel contract。
 
 ## 1. V1 Scope
 
 V1 规则必须满足：
 
-- `kind` 固定为 `unary_tool_call`。
-- 规则只检查当前 instruction 的核心字段、安全 metadata、以及 kernel/parser 补充的业务 metadata。
-- 规则不要直接解析原始 tool arguments；所有 tool-specific 语义必须先 lowering 到 `security_type.custom.policy_metadata`，再由 predicate 引用。
-- 规则不能依赖“之前读过什么”“之后发给谁”“是否由外部网页驱动”等跨步骤关系。
+- `kind` 只能是 `unary_tool_call` 或 `relational_flow`。
+- unary 规则只检查当前 instruction 的核心字段、安全 metadata、policy runtime 可确定性抽取的 tool argument metadata、以及 kernel/parser 补充的业务 metadata。
+- relational 规则检查 source taint/history 与当前 sink instruction 之间的关系。
+- 规则文件本身不要直接读取 raw arguments；需要的字段仍写进 `required_metadata`。当字段是收件人、URL、action、数量等直白结构化参数时，可标为 `tool_arguments`，由 policy runtime 统一抽取后再供 predicate 引用。
 - 规则 effect 当前只生成 `BLOCK`。
 
-如果用户需求明显依赖历史信息流，例如“读了 secret 后不能发邮件”，V1 Agent 应返回无法表达，并把需求标记为 future relational policy，而不是硬写成 unary rule。
+如果用户需求依赖“之前读过什么、当前发给谁、是否由低可信网页驱动执行”等 source/sink 关系，优先生成 `relational_flow`，不要硬写成 unary rule。
 
 ## 2. Top-Level JSON
 
@@ -90,7 +106,7 @@ Top-level 字段：
 | --- | --- | --- |
 | `version` | 是 | 当前固定为 `1` |
 | `source` | 否 | 来源，例如 `user-natural-language` |
-| `rules` | 是 | unary tool-call 规则列表 |
+| `rules` | 是 | unary tool-call 或 relational-flow 规则列表 |
 | `required_metadata` | 否 | 当前 parser 没有、但规则需要 kernel/parser 补充的 metadata |
 
 每条 rule：
@@ -98,7 +114,7 @@ Top-level 字段：
 | 字段 | 必填 | 说明 |
 | --- | --- | --- |
 | `id` | 是 | 稳定唯一 ID，建议 `USER-<DOMAIN>-<NUMBER>` |
-| `kind` | 是 | 固定 `unary_tool_call` |
+| `kind` | 是 | `unary_tool_call` 或 `relational_flow` |
 | `enabled` | 是 | 是否启用 |
 | `title` | 是 | 简短英文标题 |
 | `description` | 是 | 精确描述触发条件 |
@@ -106,6 +122,8 @@ Top-level 字段：
 | `severity` | 否 | `LOW` / `MEDIUM` / `HIGH` / `CRITICAL` |
 | `message` | 是 | 面向用户的中文拦截说明 |
 | `rule.selector` | 否 | 限定 tool / instruction type / category |
+| `rule.source` | relational 否 | 限定 source instruction |
+| `rule.sink` | relational 否 | 限定当前 sink instruction / flow kind |
 | `rule.predicate` | 是 | 当前 tool-call context 上的判定条件 |
 
 ## 3. Tool-Call Context
@@ -161,7 +179,7 @@ custom_flow_role
 custom_taint_role
 ```
 
-如果规则需要这些语义，例如 action、路径、URL、命令关键词、扫描工具名，应在 `required_metadata` 中声明一个业务字段，并要求 kernel/parser lowering 后写入 `security_type.custom.policy_metadata`。内置 unary 规则也遵循这个约束：例如字符串预算使用 `argument_total_string_length`，文件目标使用 `target_basenames` / `write_target_basenames`，而不是 policy runtime 临时解析 raw args。
+如果规则需要这些语义，例如 action、路径、URL、命令关键词、扫描工具名，应在 `required_metadata` 中声明一个业务字段。直白结构化字段可标为 `tool_arguments`，由 policy runtime 统一抽取；需要语义分类或上下文判断的字段再要求 kernel/parser lowering 后写入 `security_type.custom.policy_metadata`。
 
 为了避免名称碰撞，`required_metadata.field` 也不能使用这些 runtime 内部字段名。需要类似语义时，请使用业务名，例如 `trade_confidence_high`、`operation_destructive`、`browser_action_kind`。
 
@@ -172,6 +190,31 @@ LOW < UNKNOWN < HIGH
 ```
 
 如果用户说“至少中等”，V1 中用 `ge ... UNKNOWN`。如果用户说“高风险”，用 `risk == HIGH` 或 `risk in ["HIGH", "CRITICAL"]`，但当前 kernel 核心 level 主要是 `LOW/UNKNOWN/HIGH`。
+
+### 3.1.1 Relational Flow Built-ins
+
+`relational_flow` 除了可以使用当前 sink 的 unary built-ins，还可以使用下面的 source/sink 字段：
+
+| 字段 | 含义 |
+| --- | --- |
+| `flow_kind` | 当前 sink 的信息流类别，例如 `comm_sink`、`delegate_sink`、`exec_side_effect`、`respond_sink` |
+| `source_instruction_type` / `source_instruction_category` | 最近 source instruction 的类型和类别 |
+| `source_tool_name` / `source_tool_call_id` | 最近 source tool 的名称和调用 ID |
+| `source_trustworthiness` / `source_confidentiality` | source taint / history 传播过来的可信度和敏感度 |
+| `sink_instruction_type` / `sink_instruction_category` | 当前 sink instruction 的类型和类别 |
+| `sink_tool_name` / `sink_tool_call_id` | 当前 sink tool 的名称和调用 ID |
+| `sink_trustworthiness` / `sink_confidentiality` | 当前 sink instruction 的可信度和敏感度 |
+| `sink_prop_trustworthiness` / `sink_prop_confidentiality` | 当前 sink instruction 的传播可信度和传播敏感度 |
+| `sink_risk` / `sink_reversible` | 当前 sink 的风险等级和可逆性 |
+| `respond_content_present` | 当前规则是否在直接回复输出上求值 |
+
+Relational rule 的 `rule.source` 支持 `tools`、`instruction_types`、`categories`；`rule.sink` 额外支持 `flow_kinds`。常见 `flow_kind` 包括：
+
+```text
+comm_sink, delegate_sink, voice_sink, respond_sink,
+exec_side_effect, ui_side_effect, persist_side_effect,
+write_shared, write_local, read_sensitive, read_external
+```
 
 ### 3.2 Required Metadata
 
@@ -208,6 +251,7 @@ LOW < UNKNOWN < HIGH
 | `applies_to.instruction_types` | 否 | 字段适用的 instruction type |
 | `source.kind` | 是 | 字段来源 |
 | `source.paths` | 否 | 从 tool arguments 读取的路径，例如 `["amount"]` |
+| `source.transform` | 否 | policy runtime 的通用确定性转换，例如 `external_domains`、`external_domain_count`、`hostname`、`equals`、`nonempty`、`abs_number` |
 | `normalization` | 否 | 归一化规则 |
 | `on_missing` | 是 | 字段缺失时如何处理 |
 | `required_for_rules` | 是 | 哪些 rule 依赖该字段 |
@@ -222,9 +266,9 @@ LOW < UNKNOWN < HIGH
 | `parser_custom` | 由现有 parser custom 字段派生 |
 | `derived` | 由多个已有字段组合派生 |
 
-注意：`required_metadata` 中声明的字段无论由哪种 `source.kind` 生成，运行时都应由 kernel/parser 写入 `security_type.custom.policy_metadata`，policy 侧只消费这个扁平后的 custom contract。`source.kind` 是给接入/实现方看的生成方式说明，不表示 predicate 可以直接读取 raw tool arguments。已经由 parser 写进 `custom.policy_metadata` 的字段，例如 OpenClaw AI-Trader 的 `ai_trader_*`，应标为 `parser_custom`。
+注意：`required_metadata` 是用户可见的统一 contract。`source.kind = tool_arguments` / `derived` 的直白字段可由 policy runtime 从当前 tool arguments 确定性补齐；`kernel_lowering` / `llm_lowering` / `parser_custom` 字段仍应由 kernel/parser 写入 `security_type.custom.policy_metadata`。predicate 始终只引用扁平后的字段名，不直接读取 raw arguments。
 
-如果字段只是示例或未来 lowering 计划，不能把它放进 active runtime bundle，除非 kernel/parser 已经能产出该 `custom.policy_metadata` 字段；否则应保留在 examples/spec 中，并使用 `validation_error` 或接入前检查阻止安装。
+如果字段只是示例或未来 lowering 计划，不能把它放进 active runtime bundle，除非它已经能由 policy runtime direct metadata 或 kernel/parser `custom.policy_metadata` 产出；否则应保留在 examples/spec 中，并使用 `validation_error` 或接入前检查阻止安装。
 
 `on_missing` 可选值：
 
@@ -247,8 +291,9 @@ Required metadata 的约束：
 - 不能覆盖 built-in metadata。
 - 字段名必须 lower snake case。
 - 字段值必须是 JSON scalar 或 scalar array。
-- 字段应由 kernel 写到当前 instruction 的 `security_type.custom.policy_metadata`。
-- policy 侧会把 `policy_metadata` 扁平合并进当前 tool-call context。
+- `tool_arguments` / `derived` 字段可由 policy runtime 直接补齐。
+- `kernel_lowering` / `llm_lowering` / `parser_custom` 字段应由 kernel 写到当前 instruction 的 `security_type.custom.policy_metadata`。
+- policy 侧会把 direct metadata 和 `policy_metadata` 扁平合并进当前 tool-call context。
 - 如果字段和 built-in 字段重名，policy 侧会忽略该字段。
 - 新 metadata 只能补充业务语义，不应修改核心安全标签，如 `instruction_type`、`risk`、`confidentiality`、`trustworthiness`。
 
@@ -338,8 +383,8 @@ Instruction 中推荐存储位置：
 
 约定：
 
-- 对关键词、路径、URL、action 等来自 tool arguments 的语义，优先声明 required metadata，不要直接扫参数文本。
-- 对 enum/action metadata，常量写成 kernel/parser lowering 约定的规范值。
+- 对关键词、路径、URL、action 等来自 tool arguments 的语义，优先声明 required metadata；直白结构化参数用 `tool_arguments`，复杂语义再交给 kernel/parser lowering。
+- 对 enum/action metadata，常量写成对应 source.kind 的归一化约定值。
 - 多个 lowered 标签或枚举候选用 `contains/intersects/contains_all`。
 - “请求集合必须完全落在允许集合内”用 `subset_of`，通常配合 `not` 表达越权阻断。
 - “命中几个风险标签”用 `count_intersections` 作为 value expression，再配合 `gt/ge`。
@@ -551,10 +596,11 @@ Selector 用于先缩小规则范围。
         "tools": ["send_email"]
       },
       "source": {
-        "kind": "llm_lowering",
-        "paths": ["to", "cc", "bcc"]
+        "kind": "tool_arguments",
+        "paths": ["to", "cc", "bcc"],
+        "transform": "external_domain_count"
       },
-      "normalization": "Count recipients whose email domain is outside the configured organization domains.",
+      "normalization": "Policy runtime counts recipients whose email domain is outside the configured organization domains.",
       "on_missing": "validation_error",
       "required_for_rules": ["USER-EMAIL-EXTERNAL-RECIPIENTS-001"]
     }
@@ -562,14 +608,58 @@ Selector 用于先缩小规则范围。
 }
 ```
 
+### Example D: 高敏感上下文禁止外发
+
+用户自然语言：
+
+```text
+如果当前上下文来自高敏感 source，不允许直接发消息、跨会话委托或直接回复给用户。
+```
+
+生成 IR：
+
+```json
+{
+  "version": 1,
+  "source": "user-natural-language",
+  "rules": [
+    {
+      "id": "USER-FLOW-HIGH-CONF-OUTBOUND-001",
+      "kind": "relational_flow",
+      "enabled": true,
+      "title": "block high confidentiality outbound flow",
+      "description": "block high-confidentiality source context from flowing to outbound sinks",
+      "effect": "BLOCK",
+      "severity": "HIGH",
+      "message": "高敏感上下文不允许直接流向对外可见或跨会话目标。",
+      "rule": {
+        "source": {},
+        "sink": {
+          "flow_kinds": ["comm_sink", "delegate_sink", "voice_sink", "respond_sink"]
+        },
+        "predicate": {
+          "ge": [
+            { "var": "source_confidentiality" },
+            { "const": "HIGH" }
+          ]
+        }
+      }
+    }
+  ],
+  "required_metadata": []
+}
+```
+
 ## 7. Agent Translation Procedure
 
 1. 判断是否能用 V1 表达：
-   - 只看当前 tool call -> 继续。
-   - 依赖历史 source/sink/taint/未来动作 -> V1 不支持。
+   - 只看当前 tool call -> 生成 `unary_tool_call`。
+   - 依赖 source/sink/taint 与当前 sink 的关系 -> 生成 `relational_flow`。
+   - 依赖未来动作、时间窗口、计数状态、用户确认后继续执行 -> V1 暂不支持。
 2. 选择 selector：
-   - 明确工具名时写 `selector.tools`。
-   - 泛执行类动作可写 `selector.instruction_types: ["EXEC"]`。
+   - unary 明确工具名时写 `selector.tools`。
+   - relational 用 `source` / `sink` 分别限定两端；sink 可用 `flow_kinds` 表示外发、委托、执行副作用等关系。
+   - 泛执行类动作可写 `instruction_types: ["EXEC"]`。
 3. 列出条件：
    - 阈值 -> `gt/ge/lt/le/between`
    - lowered 动作枚举 -> `in`
@@ -583,7 +673,8 @@ Selector 用于先缩小规则范围。
 4. 检查每个 `var`：
    - built-in metadata 里有 -> 直接使用。
    - built-in metadata 里没有 -> 必须加入 `required_metadata`。
-   - 来自 tool arguments 的 action/path/url/keyword -> 先声明 required metadata，再让 kernel/parser lowering。
+   - 来自 tool arguments 的 action/path/url/count/domain 等直白字段 -> 声明为 `required_metadata` + `source.kind = tool_arguments`。
+   - 需要语义分类、上下文状态或模型判断的字段 -> 声明为 `kernel_lowering` / `llm_lowering` / `parser_custom`。
 5. 写清楚 `on_missing`：
    - 不确定 kernel 是否已有字段 -> `validation_error`
    - 字段缺失时不触发即可 -> `no_match`
@@ -595,12 +686,12 @@ Selector 用于先缩小规则范围。
 
 ## 8. Common Mistakes
 
-- 生成 `kind: "unary"`：V1 必须是 `unary_tool_call`。
-- 生成 relational/source/sink 结构：V1 不支持。
+- 生成 `kind: "unary"`：V1 必须是 `unary_tool_call` 或 `relational_flow`。
+- 把 source/sink 关系硬塞进 unary predicate；涉及历史 taint 或当前 sink 的策略应该使用 `relational_flow`。
 - 在 predicate 中使用未声明的业务字段。
 - 在 `required_metadata.field` 中覆盖 built-in 字段，例如 `risk`、`tool_name`。
 - 让新 metadata 修改核心安全字段。新 metadata 只能补充业务语义。
-- 把 `policy_rule_ir.json` 直接写入 `unary_gate_rules.json` 或 `user_unary_gate_rules.json`。
+- 把 `policy_rule_ir.json` 直接写入 `unary_gate_rules.json`、`user_unary_gate_rules.json` 或 `user_relational_flow_rules.json`。
 - 在 IR predicate 中直接使用 `raw_args`、`arg_text_upper`、`action`、`path_hint` 等 legacy runtime-derived fields。
-- 用关键词扫描代替 kernel/parser lowering，导致 policy 重新解析 tool arguments。
+- 在单条规则里临时扫描 raw arguments；直白参数应走统一的 `tool_arguments` direct metadata，复杂语义仍走 kernel/parser lowering。
 - 对缺失字段不写 `on_missing`。

@@ -1,0 +1,178 @@
+{
+  "evaluation_mode": "first_match",
+  "source": "user_relational_flow_rules.json",
+  "description": "User-authored relational flow policy rules compiled from Policy Rule IR with declared metadata contracts.",
+  "rules": [
+    {
+      "id": "USER-FLOW-HIGH-CONF-OUTBOUND-001",
+      "enabled": true,
+      "title": "block high confidentiality outbound flow",
+      "description": "block high-confidentiality source context from flowing to communication, delegation, voice, or direct response sinks",
+      "scope": "relational",
+      "source_selector": {},
+      "selector": {
+        "flow_kind": [
+          "comm_sink",
+          "delegate_sink",
+          "voice_sink",
+          "respond_sink"
+        ]
+      },
+      "predicate": {
+        "ge": [
+          {
+            "var": "source_confidentiality"
+          },
+          {
+            "const": "HIGH"
+          }
+        ]
+      },
+      "effect": "BLOCK",
+      "message": "高敏感上下文不允许直接流向对外可见或跨会话目标。",
+      "source": "policy_rule_ir",
+      "severity": "HIGH"
+    },
+    {
+      "id": "USER-FLOW-LOW-TRUST-SIDE-EFFECT-001",
+      "enabled": true,
+      "title": "block low trust source driving side effects",
+      "description": "block side-effecting actions when the source context is lower than UNKNOWN trustworthiness",
+      "scope": "relational",
+      "source_selector": {},
+      "selector": {
+        "flow_kind": [
+          "exec_side_effect",
+          "ui_side_effect",
+          "persist_side_effect"
+        ]
+      },
+      "predicate": {
+        "lt": [
+          {
+            "var": "source_trustworthiness"
+          },
+          {
+            "const": "UNKNOWN"
+          }
+        ]
+      },
+      "effect": "BLOCK",
+      "message": "低可信来源不能直接驱动执行、界面控制或持久化副作用。",
+      "source": "policy_rule_ir",
+      "severity": "HIGH"
+    },
+    {
+      "id": "USER-FLOW-PII-EXTERNAL-MESSAGE-001",
+      "enabled": true,
+      "title": "block PII labels to external message domains",
+      "description": "block outbound message when source labels contain PII and the sink has external recipient domains",
+      "scope": "relational",
+      "source_selector": {},
+      "selector": {
+        "tool": [
+          "message"
+        ],
+        "flow_kind": [
+          "comm_sink"
+        ]
+      },
+      "predicate": {
+        "all": [
+          {
+            "exists": {
+              "var": "external_recipient_domains"
+            }
+          },
+          {
+            "exists": {
+              "var": "source_data_labels"
+            }
+          },
+          {
+            "all": [
+              {
+                "intersects": [
+                  {
+                    "var": "source_data_labels"
+                  },
+                  {
+                    "const": [
+                      "PII",
+                      "SECRET",
+                      "CUSTOMER_DATA"
+                    ]
+                  }
+                ]
+              },
+              {
+                "gt": [
+                  {
+                    "len": {
+                      "var": "external_recipient_domains"
+                    }
+                  },
+                  {
+                    "const": 0
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "effect": "BLOCK",
+      "message": "包含 PII 标签的上下文不能发送到外部消息域。",
+      "source": "policy_rule_ir",
+      "severity": "CRITICAL"
+    }
+  ],
+  "required_metadata": [
+    {
+      "field": "source_data_labels",
+      "type": "string_array",
+      "description": "Labels carried by the source context, prefixed from source instruction policy_metadata.",
+      "applies_to": {
+        "instruction_types": [
+          "READ",
+          "RETRIEVE",
+          "RECEIVE"
+        ]
+      },
+      "source": {
+        "kind": "kernel_lowering",
+        "paths": [
+          "source.security_type.custom.policy_metadata.data_labels"
+        ]
+      },
+      "normalization": "Copy source policy_metadata.data_labels into source_data_labels for relational evaluation.",
+      "on_missing": "no_match",
+      "required_for_rules": [
+        "USER-FLOW-PII-EXTERNAL-MESSAGE-001"
+      ]
+    },
+    {
+      "field": "external_recipient_domains",
+      "type": "string_array",
+      "description": "External message recipient domains lowered on the sink instruction.",
+      "applies_to": {
+        "tools": [
+          "message"
+        ]
+      },
+      "source": {
+        "kind": "tool_arguments",
+        "paths": [
+          "arguments.to",
+          "arguments.recipients"
+        ],
+        "transform": "external_domains"
+      },
+      "normalization": "Policy runtime extracts non-local recipient domains from message recipients.",
+      "on_missing": "no_match",
+      "required_for_rules": [
+        "USER-FLOW-PII-EXTERNAL-MESSAGE-001"
+      ]
+    }
+  ]
+}
