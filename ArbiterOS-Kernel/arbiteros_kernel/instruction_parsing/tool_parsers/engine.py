@@ -35,13 +35,13 @@ import yaml
 
 from .validator import validate
 
-from ...registries import (
+from ..registries import (
     classify_confidentiality,
     classify_trustworthiness,
     register_file_taint,
 )
-from ...shell_parsers import CommandAnalysis, analyze_command
-from ...types import (
+from ..shell_parsers import CommandAnalysis, analyze_command
+from ..types import (
     TaintStatus,
     ToolParser,
     ToolParseResult,
