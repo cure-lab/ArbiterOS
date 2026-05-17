@@ -13,6 +13,8 @@ ArbiterOS Kernel supports agents that can **customize the LLM URL and API key** 
 | O-series | o4-mini, o3, o3-mini, o1                                                                                                                          |
 | GLM      | GLM series                                                                                                                                        |
 
+Note: some older models do not reliably support `response_format` (`json_schema`) and `tool_call` in the same turn. If an agent keeps chatting and never calls tools, remove the `response_format` block from `ArbiterOS-Kernel/litellm_config.yaml` to restore tool-calling behavior.
+
 
 ---
 
