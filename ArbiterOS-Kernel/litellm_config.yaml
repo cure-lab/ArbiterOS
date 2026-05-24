@@ -36,6 +36,12 @@ model_list:
 arbiteros_config:
   tool_agent: openclaw
 
+# When true, enforced policy modifications are confirmed locally in the kernel terminal:
+#   Y => keep blocked response
+#   N => allow original response
+# Default false keeps current in-agent Yes/No confirmation flow unchanged.
+arbiteros_local_policy_confirm: false
+
 litellm_settings:
   # Following settings for anthropics models
   # modify_params: true
