@@ -5,10 +5,16 @@ from __future__ import annotations
 import copy
 import inspect
 import json
+import sys
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
+
+try:
+    import yaml  # type: ignore
+except Exception:  # pragma: no cover - optional dep
+    yaml = None
 
 if TYPE_CHECKING:
     from arbiteros_kernel.policy import Policy
@@ -27,6 +33,11 @@ _ROLE_POLICY_SETS_PATH = (
 _ROLE_POLICY_SETS_LOCK = threading.Lock()
 _ROLE_POLICY_SETS_CACHE_MTIME_NS: Optional[int] = None
 _ROLE_POLICY_SETS_CACHE: list[dict[str, Any]] = []
+_LITELLM_CFG_PATH = Path(__file__).resolve().parent.parent / "litellm_config.yaml"
+_LOCAL_CONFIRM_CFG_LOCK = threading.Lock()
+_LOCAL_CONFIRM_CFG_MTIME_NS: Optional[int] = None
+_LOCAL_CONFIRM_CFG_ENABLED: bool = False
+_LOCAL_CONFIRM_INPUT_LOCK = threading.Lock()
 
 
 @dataclass
@@ -50,6 +61,84 @@ class PolicyCheckResult:
 
     inactivate_error_type: Optional[str] = None
     """Inactive error type string; None when not applicable."""
+
+    local_confirmation_resolved: bool = False
+    """Whether local manual confirmation has been performed."""
+
+    local_confirmation_decision: Optional[str] = None
+    """Local decision: keep_block | allow_original."""
+
+
+def _is_local_policy_confirm_enabled() -> bool:
+    if yaml is None:
+        return False
+    p = _LITELLM_CFG_PATH
+    if not p.exists():
+        return False
+    try:
+        mtime_ns = p.stat().st_mtime_ns
+    except Exception:
+        return False
+    with _LOCAL_CONFIRM_CFG_LOCK:
+        global _LOCAL_CONFIRM_CFG_MTIME_NS, _LOCAL_CONFIRM_CFG_ENABLED
+        if _LOCAL_CONFIRM_CFG_MTIME_NS == mtime_ns:
+            return _LOCAL_CONFIRM_CFG_ENABLED
+        enabled = False
+        try:
+            parsed = yaml.safe_load(p.read_text(encoding="utf-8"))
+            if isinstance(parsed, dict):
+                enabled = bool(parsed.get("arbiteros_local_policy_confirm", False))
+        except Exception:
+            enabled = False
+        _LOCAL_CONFIRM_CFG_MTIME_NS = mtime_ns
+        _LOCAL_CONFIRM_CFG_ENABLED = enabled
+        return enabled
+
+
+def _prompt_local_policy_confirmation(
+    *,
+    trace_id: str,
+    error_type: str,
+    policy_names: list[str],
+) -> bool:
+    """
+    Return True to keep block, False to allow original response.
+    """
+    with _LOCAL_CONFIRM_INPUT_LOCK:
+        if not sys.stdin or not hasattr(sys.stdin, "isatty") or not sys.stdin.isatty():
+            print(
+                "[ArbiterOS][LocalConfirm] stdin is not interactive; default to keep block.",
+                file=sys.stderr,
+            )
+            return True
+        header = (
+            "\n[ArbiterOS][LocalConfirm] Policy block detected.\n"
+            f"trace_id={trace_id}\n"
+            f"policies={', '.join(policy_names) if policy_names else '(unknown)'}\n"
+            "Choose action: [Y] keep block / [N] allow original response"
+        )
+        print(header, file=sys.stderr)
+        reason_preview = (error_type or "").strip()
+        if reason_preview:
+            lines = reason_preview.splitlines()
+            preview = "\n".join(lines[:8])
+            if len(lines) > 8:
+                preview += "\n... (truncated)"
+            print(preview, file=sys.stderr)
+        while True:
+            try:
+                choice = input("[ArbiterOS][LocalConfirm] Enter Y or N: ").strip().lower()
+            except EOFError:
+                print(
+                    "[ArbiterOS][LocalConfirm] EOF on stdin; default to keep block.",
+                    file=sys.stderr,
+                )
+                return True
+            if choice in {"y", "yes", ""}:
+                return True
+            if choice in {"n", "no"}:
+                return False
+            print("Please enter Y or N.", file=sys.stderr)
 
 
 def _policy_source_location(policy_cls: type) -> str:
@@ -286,6 +375,7 @@ def check_response_policy(
             PolicyEntry(policy=cls, description="", enabled=True) for cls in policy_classes
         ]
 
+    original_response_snapshot = copy.deepcopy(current_response)
     response = current_response
     errors: list[str] = []
     inactivate_errors: list[str] = []
@@ -327,11 +417,44 @@ def check_response_policy(
         if result.inactivate_error_type:
             inactivate_errors.append(result.inactivate_error_type)
 
-    return PolicyCheckResult(
+    aggregated_result = PolicyCheckResult(
         modified=len(errors) > 0,
         response=response,
         error_type="\n".join(errors) if errors else None,
         policy_names=policy_names,
         policy_sources=policy_sources,
         inactivate_error_type="\n".join(inactivate_errors) if inactivate_errors else None,
+    )
+    if not aggregated_result.modified:
+        return aggregated_result
+
+    if not _is_local_policy_confirm_enabled():
+        return aggregated_result
+
+    keep_block = _prompt_local_policy_confirmation(
+        trace_id=trace_id,
+        error_type=aggregated_result.error_type or "",
+        policy_names=aggregated_result.policy_names,
+    )
+    if keep_block:
+        return PolicyCheckResult(
+            modified=True,
+            response=aggregated_result.response,
+            error_type=aggregated_result.error_type,
+            policy_names=aggregated_result.policy_names,
+            policy_sources=aggregated_result.policy_sources,
+            inactivate_error_type=aggregated_result.inactivate_error_type,
+            local_confirmation_resolved=True,
+            local_confirmation_decision="keep_block",
+        )
+
+    return PolicyCheckResult(
+        modified=False,
+        response=original_response_snapshot,
+        error_type=None,
+        policy_names=aggregated_result.policy_names,
+        policy_sources=aggregated_result.policy_sources,
+        inactivate_error_type=aggregated_result.inactivate_error_type,
+        local_confirmation_resolved=True,
+        local_confirmation_decision="allow_original",
     )
