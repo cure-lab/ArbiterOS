@@ -6448,78 +6448,136 @@ class MyCustomHandler(CustomLogger):
                         inactivate_error_type_for_langfuse = _ia_policy.strip()
                 if policy_result.modified:
                     error_type_str = (policy_result.error_type or "").strip()
-                    # Defer: store state, return confirmation message, don't emit Langfuse violation
-                    with _policy_confirmation_lock:
+                    if bool(
+                        getattr(policy_result, "local_confirmation_resolved", False)
+                    ):
+                        final_msg_dict = (
+                            dict(policy_result.response)
+                            if isinstance(policy_result.response, dict)
+                            else final_msg_dict
+                        )
+                        policy_violation_reason_for_langfuse = error_type_str or None
+                        policy_names_for_langfuse = list(policy_result.policy_names)
+                        policy_sources_for_langfuse = dict(policy_result.policy_sources)
+                        policy_confirmation_state_for_langfuse = "accepted"
+                        policy_confirmation_accepted_for_langfuse = True
+                        policy_confirmation_rejected_for_langfuse = False
+                        if policy_violation_reason_for_langfuse:
+                            _record_policy_protected_tool_calls(
+                                trace_id=trace_id,
+                                raw_response=raw_msg_dict,
+                                policy_checked_response=final_msg_dict,
+                                policy_reason=policy_violation_reason_for_langfuse,
+                            )
                         if (
-                            len(_policy_confirmation_pending)
-                            >= _MAX_POLICY_CONFIRMATION_PENDING
+                            isinstance(final_msg_dict, dict)
+                            and _extract_text_from_message_content(
+                                final_msg_dict.get("content")
+                            ).strip()
                         ):
-                            _policy_confirmation_pending.pop(
-                                next(iter(_policy_confirmation_pending)), None
+                            _record_stripped_category(
+                                data, "COGNITIVE_CORE__RESPOND", topic="policy protected"
                             )
-                        raw_content = (
-                            raw_msg_dict.get("content")
-                            if isinstance(raw_msg_dict, dict)
-                            else None
-                        )
-                        had_content_before_replace = bool(
-                            _extract_text_from_message_content(raw_content).strip()
-                        )
-                        # 剥壳时已记录 category/topic，pop 出来复用，无需再解析原始格式
-                        popped_ct = (
-                            _pop_and_get_latest_category_topic_for_trace(trace_id)
-                            if had_content_before_replace
-                            else None
-                        )
-                        _policy_confirmation_pending[trace_id] = {
-                            "original_response": dict(raw_msg_dict)
-                            if isinstance(raw_msg_dict, dict)
-                            else {},
-                            "protected_response": dict(policy_result.response),
-                            "policy_reason": error_type_str,
-                            "policy_names": list(policy_result.policy_names),
-                            "policy_sources": dict(policy_result.policy_sources),
-                            "had_content_before_replace": had_content_before_replace,
-                            "popped_category_topic": popped_ct,
-                            "instruction_count_before": _policy_instruction_count_before,
-                        }
-                    confirm_content = f"{error_type_str}\n{_POLICY_CONFIRMATION_SUFFIX}"
-                    final_msg_dict = {"content": confirm_content, "role": "assistant"}
-                    # 确认消息按普通信息包：默认 category + topic "protection confirmation"
-                    _append_category_topic_for_trace(
-                        trace_id,
-                        category="COGNITIVE_CORE__RESPOND",
-                        topic="protection confirmation",
-                    )
-                    policy_confirmation_state_for_langfuse = "ask"
-                    policy_confirmation_accepted_for_langfuse = False
-                    policy_confirmation_rejected_for_langfuse = False
-                    policy_violation_reason_for_langfuse = None
-                    policy_names_for_langfuse = list(policy_result.policy_names)
-                    policy_sources_for_langfuse = dict(policy_result.policy_sources)
-                    if builder is not None:
-                        builder.instructions = list(
-                            builder.instructions[:_policy_instruction_count_before]
-                        )
+                        if builder is not None:
+                            _replace_instructions_from_modified_response(
+                                builder,
+                                final_msg_dict if isinstance(final_msg_dict, dict) else {},
+                                _policy_instruction_count_before,
+                            )
+                            for instr in builder.instructions[
+                                _policy_instruction_count_before:
+                            ]:
+                                instr["policy_protected"] = (
+                                    policy_violation_reason_for_langfuse or ""
+                                )
+                            _save_instructions_to_trace_file(trace_id, builder)
                         try:
-                            instr = builder.add_from_structured_output(
-                                structured={
-                                    "intent": "RESPOND",
-                                    "content": confirm_content,
-                                }
-                            )
-                            instr["policy_confirmation_ask"] = True
+                            if is_chat_completion:
+                                response.choices[0].message = Message(**final_msg_dict)
+                            else:
+                                if hasattr(response, "output_text"):
+                                    setattr(
+                                        response,
+                                        "output_text",
+                                        final_msg_dict.get("content")
+                                        if isinstance(final_msg_dict, dict)
+                                        else "",
+                                    )
                         except Exception:
                             pass
-                        _save_instructions_to_trace_file(trace_id, builder)
-                    try:
-                        if is_chat_completion:
-                            response.choices[0].message = Message(**final_msg_dict)
-                        else:
-                            if hasattr(response, "output_text"):
-                                setattr(response, "output_text", confirm_content)
-                    except Exception:
-                        pass
+                    else:
+                        # Defer: store state, return confirmation message, don't emit Langfuse violation
+                        with _policy_confirmation_lock:
+                            if (
+                                len(_policy_confirmation_pending)
+                                >= _MAX_POLICY_CONFIRMATION_PENDING
+                            ):
+                                _policy_confirmation_pending.pop(
+                                    next(iter(_policy_confirmation_pending)), None
+                                )
+                            raw_content = (
+                                raw_msg_dict.get("content")
+                                if isinstance(raw_msg_dict, dict)
+                                else None
+                            )
+                            had_content_before_replace = bool(
+                                _extract_text_from_message_content(raw_content).strip()
+                            )
+                            # 剥壳时已记录 category/topic，pop 出来复用，无需再解析原始格式
+                            popped_ct = (
+                                _pop_and_get_latest_category_topic_for_trace(trace_id)
+                                if had_content_before_replace
+                                else None
+                            )
+                            _policy_confirmation_pending[trace_id] = {
+                                "original_response": dict(raw_msg_dict)
+                                if isinstance(raw_msg_dict, dict)
+                                else {},
+                                "protected_response": dict(policy_result.response),
+                                "policy_reason": error_type_str,
+                                "policy_names": list(policy_result.policy_names),
+                                "policy_sources": dict(policy_result.policy_sources),
+                                "had_content_before_replace": had_content_before_replace,
+                                "popped_category_topic": popped_ct,
+                                "instruction_count_before": _policy_instruction_count_before,
+                            }
+                        confirm_content = f"{error_type_str}\n{_POLICY_CONFIRMATION_SUFFIX}"
+                        final_msg_dict = {"content": confirm_content, "role": "assistant"}
+                        # 确认消息按普通信息包：默认 category + topic "protection confirmation"
+                        _append_category_topic_for_trace(
+                            trace_id,
+                            category="COGNITIVE_CORE__RESPOND",
+                            topic="protection confirmation",
+                        )
+                        policy_confirmation_state_for_langfuse = "ask"
+                        policy_confirmation_accepted_for_langfuse = False
+                        policy_confirmation_rejected_for_langfuse = False
+                        policy_violation_reason_for_langfuse = None
+                        policy_names_for_langfuse = list(policy_result.policy_names)
+                        policy_sources_for_langfuse = dict(policy_result.policy_sources)
+                        if builder is not None:
+                            builder.instructions = list(
+                                builder.instructions[:_policy_instruction_count_before]
+                            )
+                            try:
+                                instr = builder.add_from_structured_output(
+                                    structured={
+                                        "intent": "RESPOND",
+                                        "content": confirm_content,
+                                    }
+                                )
+                                instr["policy_confirmation_ask"] = True
+                            except Exception:
+                                pass
+                            _save_instructions_to_trace_file(trace_id, builder)
+                        try:
+                            if is_chat_completion:
+                                response.choices[0].message = Message(**final_msg_dict)
+                            else:
+                                if hasattr(response, "output_text"):
+                                    setattr(response, "output_text", confirm_content)
+                        except Exception:
+                            pass
 
         fallback_text = os.getenv(
             "ARBITEROS_EMPTY_ASSISTANT_FALLBACK",
@@ -7034,71 +7092,117 @@ class MyCustomHandler(CustomLogger):
                         inactivate_error_type_for_langfuse = _ia_policy.strip()
                 if policy_result.modified:
                     error_type_str = (policy_result.error_type or "").strip()
-                    # Defer: store state, return confirmation message, don't emit Langfuse violation
-                    with _policy_confirmation_lock:
+                    if bool(
+                        getattr(policy_result, "local_confirmation_resolved", False)
+                    ):
+                        msg_dict = (
+                            dict(policy_result.response)
+                            if isinstance(policy_result.response, dict)
+                            else msg_dict
+                        )
+                        policy_violation_reason_for_langfuse = error_type_str or None
+                        policy_names_for_langfuse = list(policy_result.policy_names)
+                        policy_sources_for_langfuse = dict(policy_result.policy_sources)
+                        policy_confirmation_state_for_langfuse = "accepted"
+                        policy_confirmation_accepted_for_langfuse = True
+                        policy_confirmation_rejected_for_langfuse = False
+                        if policy_violation_reason_for_langfuse:
+                            _record_policy_protected_tool_calls(
+                                trace_id=trace_id,
+                                raw_response=raw_msg_dict,
+                                policy_checked_response=msg_dict,
+                                policy_reason=policy_violation_reason_for_langfuse,
+                            )
                         if (
-                            len(_policy_confirmation_pending)
-                            >= _MAX_POLICY_CONFIRMATION_PENDING
+                            isinstance(msg_dict, dict)
+                            and _extract_text_from_message_content(
+                                msg_dict.get("content")
+                            ).strip()
                         ):
-                            _policy_confirmation_pending.pop(
-                                next(iter(_policy_confirmation_pending)), None
+                            _record_stripped_category(
+                                request_data,
+                                "COGNITIVE_CORE__RESPOND",
+                                topic="policy protected",
                             )
-                        raw_content = (
-                            raw_msg_dict.get("content")
-                            if isinstance(raw_msg_dict, dict)
-                            else None
-                        )
-                        had_content_before_replace = bool(
-                            _extract_text_from_message_content(raw_content).strip()
-                        )
-                        popped_ct = (
-                            _pop_and_get_latest_category_topic_for_trace(trace_id)
-                            if had_content_before_replace
-                            else None
-                        )
-                        _policy_confirmation_pending[trace_id] = {
-                            "original_response": dict(raw_msg_dict)
-                            if isinstance(raw_msg_dict, dict)
-                            else {},
-                            "protected_response": dict(policy_result.response),
-                            "policy_reason": error_type_str,
-                            "policy_names": list(policy_result.policy_names),
-                            "policy_sources": dict(policy_result.policy_sources),
-                            "had_content_before_replace": had_content_before_replace,
-                            "popped_category_topic": popped_ct,
-                            "instruction_count_before": _policy_instruction_count_before_stream,
-                        }
-                    confirm_content = f"{error_type_str}\n{_POLICY_CONFIRMATION_SUFFIX}"
-                    msg_dict = {"content": confirm_content, "role": "assistant"}
-                    # 确认消息按普通信息包：默认 category + topic "protection confirmation"
-                    _append_category_topic_for_trace(
-                        trace_id,
-                        category="COGNITIVE_CORE__RESPOND",
-                        topic="protection confirmation",
-                    )
-                    policy_confirmation_state_for_langfuse = "ask"
-                    policy_confirmation_accepted_for_langfuse = False
-                    policy_confirmation_rejected_for_langfuse = False
-                    policy_violation_reason_for_langfuse = None
-                    policy_names_for_langfuse = list(policy_result.policy_names)
-                    policy_sources_for_langfuse = dict(policy_result.policy_sources)
-                    if builder is not None:
-                        builder.instructions = list(
-                            builder.instructions[
-                                :_policy_instruction_count_before_stream
-                            ]
-                        )
-                        try:
-                            instr = builder.add_from_structured_output(
-                                structured={
-                                    "intent": "RESPOND",
-                                    "content": confirm_content,
-                                }
+                        if builder is not None:
+                            _replace_instructions_from_modified_response(
+                                builder,
+                                msg_dict if isinstance(msg_dict, dict) else {},
+                                _policy_instruction_count_before_stream,
                             )
-                            instr["policy_confirmation_ask"] = True
-                        except Exception:
-                            pass
-                        _save_instructions_to_trace_file(trace_id, builder)
+                            for instr in builder.instructions[
+                                _policy_instruction_count_before_stream:
+                            ]:
+                                instr["policy_protected"] = (
+                                    policy_violation_reason_for_langfuse or ""
+                                )
+                            _save_instructions_to_trace_file(trace_id, builder)
+                    else:
+                        # Defer: store state, return confirmation message, don't emit Langfuse violation
+                        with _policy_confirmation_lock:
+                            if (
+                                len(_policy_confirmation_pending)
+                                >= _MAX_POLICY_CONFIRMATION_PENDING
+                            ):
+                                _policy_confirmation_pending.pop(
+                                    next(iter(_policy_confirmation_pending)), None
+                                )
+                            raw_content = (
+                                raw_msg_dict.get("content")
+                                if isinstance(raw_msg_dict, dict)
+                                else None
+                            )
+                            had_content_before_replace = bool(
+                                _extract_text_from_message_content(raw_content).strip()
+                            )
+                            popped_ct = (
+                                _pop_and_get_latest_category_topic_for_trace(trace_id)
+                                if had_content_before_replace
+                                else None
+                            )
+                            _policy_confirmation_pending[trace_id] = {
+                                "original_response": dict(raw_msg_dict)
+                                if isinstance(raw_msg_dict, dict)
+                                else {},
+                                "protected_response": dict(policy_result.response),
+                                "policy_reason": error_type_str,
+                                "policy_names": list(policy_result.policy_names),
+                                "policy_sources": dict(policy_result.policy_sources),
+                                "had_content_before_replace": had_content_before_replace,
+                                "popped_category_topic": popped_ct,
+                                "instruction_count_before": _policy_instruction_count_before_stream,
+                            }
+                        confirm_content = f"{error_type_str}\n{_POLICY_CONFIRMATION_SUFFIX}"
+                        msg_dict = {"content": confirm_content, "role": "assistant"}
+                        # 确认消息按普通信息包：默认 category + topic "protection confirmation"
+                        _append_category_topic_for_trace(
+                            trace_id,
+                            category="COGNITIVE_CORE__RESPOND",
+                            topic="protection confirmation",
+                        )
+                        policy_confirmation_state_for_langfuse = "ask"
+                        policy_confirmation_accepted_for_langfuse = False
+                        policy_confirmation_rejected_for_langfuse = False
+                        policy_violation_reason_for_langfuse = None
+                        policy_names_for_langfuse = list(policy_result.policy_names)
+                        policy_sources_for_langfuse = dict(policy_result.policy_sources)
+                        if builder is not None:
+                            builder.instructions = list(
+                                builder.instructions[
+                                    :_policy_instruction_count_before_stream
+                                ]
+                            )
+                            try:
+                                instr = builder.add_from_structured_output(
+                                    structured={
+                                        "intent": "RESPOND",
+                                        "content": confirm_content,
+                                    }
+                                )
+                                instr["policy_confirmation_ask"] = True
+                            except Exception:
+                                pass
+                            _save_instructions_to_trace_file(trace_id, builder)
 
         fallback_text = os.getenv(
             "ARBITEROS_EMPTY_ASSISTANT_FALLBACK",
