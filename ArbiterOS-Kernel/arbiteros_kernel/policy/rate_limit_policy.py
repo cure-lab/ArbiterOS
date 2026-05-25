@@ -12,18 +12,68 @@ def _friendly_rate_limit_reason(tool_name: str, reason: str | None) -> str:
     text = (reason or "").strip()
     lines: List[str] = [
         f"我没有执行工具 `{tool_name}`。",
-        "原因：同一个工具在最近的流程里被连续调用的次数过多，已经达到当前策略允许的上限。"
+        "原因：当前对话的工具调用额度已经达到策略允许的硬上限。"
     ]
     if text:
         lines.append(f"补充说明：{text}")
-    lines.append("请稍后再试，改用其他工具，或把操作拆成不同类型的步骤后再继续。")
+    lines.append("请停止继续调用工具，整理已有结果并尽快输出最终答复。")
     return "\n".join(lines)
+
+
+def _policy_enabled() -> bool:
+    limit_cfg = RUNTIME.cfg.get("tool_call_limit", {}) or {}
+    rl = RUNTIME.cfg.get("rate_limit", {}) or {}
+    if not isinstance(limit_cfg, dict):
+        limit_cfg = {}
+    if not isinstance(rl, dict):
+        rl = {}
+    numeric_keys = (
+        "max_total_tool_calls",
+        "max_calls_per_tool",
+        "max_consecutive_same_tool",
+    )
+    for cfg in (limit_cfg, rl):
+        for key in numeric_keys:
+            try:
+                if int(cfg.get(key, 0) or 0) > 0:
+                    return True
+            except Exception:
+                continue
+        overrides = cfg.get("per_tool_max_calls")
+        if isinstance(overrides, dict):
+            for value in overrides.values():
+                try:
+                    if int(value) > 0:
+                        return True
+                except Exception:
+                    continue
+    return False
+
+
+def _prior_history(
+    instructions: List[Dict[str, Any]],
+    latest_instructions: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """
+    Normal kernel policy input includes latest_instructions inside instructions.
+    Rate limits must count completed prior calls, then simulate current calls
+    from current_response one by one.
+    """
+    if not latest_instructions:
+        return list(instructions)
+    prior_len = max(0, len(instructions) - len(latest_instructions))
+    return list(instructions[:prior_len])
 
 
 class RateLimitPolicy(Policy):
     """
-    仅实现“连续同一 tool 次数上限”（确定性，依赖 instruction history）
-    - config: rate_limit.max_consecutive_same_tool
+    Deterministic tool-call budget guard.
+
+    Supported hard limits:
+    - tool_call_limit.max_total_tool_calls / rate_limit.max_total_tool_calls
+    - tool_call_limit.max_calls_per_tool / rate_limit.max_calls_per_tool
+    - tool_call_limit.per_tool_max_calls / rate_limit.per_tool_max_calls
+    - rate_limit.max_consecutive_same_tool
     """
 
     def check(
@@ -35,8 +85,7 @@ class RateLimitPolicy(Policy):
         *args: Any,
         **kwargs: Any,
     ) -> PolicyCheckResult:
-        rl = RUNTIME.cfg.get("rate_limit", {}) or {}
-        if int(rl.get("max_consecutive_same_tool", 0) or 0) <= 0:
+        if not _policy_enabled():
             return PolicyCheckResult(modified=False, response=current_response, error_type=None)
 
         response = dict(current_response)
@@ -47,21 +96,33 @@ class RateLimitPolicy(Policy):
         errors: List[str] = []
         kept: List[Dict[str, Any]] = []
 
-        # history = instructions (already includes previous tool actions). We check sequentially as if these tool_calls will be executed now.
-        history = list(instructions)
+        history = _prior_history(instructions, latest_instructions)
 
         for tc in tool_calls:
             tool_name, tool_call_id, raw_args, was_json_str = RUNTIME.parse_tool_call(tc)
             args_dict = raw_args if isinstance(raw_args, dict) else {}
             args_dict = canonicalize_args(args_dict)
 
-            ok, reason = RUNTIME.check_consecutive_same_tool(history_instructions=history, tool=tool_name)
+            budget_ok, budget_reason = RUNTIME.check_tool_call_budget(
+                history_instructions=history,
+                tool=tool_name,
+            )
+            consecutive_ok, consecutive_reason = RUNTIME.check_consecutive_same_tool(
+                history_instructions=history,
+                tool=tool_name,
+            )
+            ok = budget_ok and consecutive_ok
+            reason = budget_reason if not budget_ok else consecutive_reason
             if ok:
                 kept.append(RUNTIME.write_back_tool_args(tc, args_dict, was_json_str))
                 # append a synthetic tool-instruction into history for subsequent checks
                 history.append({
                     "instruction_type": RUNTIME.tool_to_instruction_type(tool_name),
-                    "content": {"tool_name": tool_name, "arguments": args_dict},
+                    "content": {
+                        "tool_name": tool_name,
+                        "tool_call_id": tool_call_id,
+                        "arguments": args_dict,
+                    },
                 })
             else:
                 errors.append(_friendly_rate_limit_reason(tool_name, reason))
@@ -72,6 +133,12 @@ class RateLimitPolicy(Policy):
                     decision="BLOCK",
                     reason=reason,
                     args=args_dict,
+                    extra={
+                        "tool_call_id": tool_call_id,
+                        "limit_type": "tool_call_budget"
+                        if not budget_ok
+                        else "consecutive_same_tool",
+                    },
                 )
 
         if errors:

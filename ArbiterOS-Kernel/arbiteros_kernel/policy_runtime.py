@@ -1279,11 +1279,107 @@ class KernelPolicyRuntime:
         for ins in instructions:
             it = (ins.get("instruction_type") or "").strip().upper()
             content = ins.get("content")
-            if it not in {"READ", "WRITE", "EXEC"} or not isinstance(content, dict):
+            if not isinstance(content, dict):
                 continue
             tool = content.get("tool_name")
             if isinstance(tool, str) and tool.strip():
                 yield (it, tool.strip())
+
+    def count_tool_events(
+        self, instructions: List[Dict[str, Any]]
+    ) -> Tuple[int, Dict[str, int]]:
+        """
+        Count tool-like instructions deterministically from instruction history.
+
+        Tool identity is derived from ``content.tool_name`` rather than only
+        READ/WRITE/EXEC instruction types, so tools lowered as RETRIEVE,
+        DELEGATE, STORE, WAIT, etc. are also covered by resource limits.
+        """
+        total = 0
+        per_tool: Dict[str, int] = {}
+        for _instruction_type, tool in self.iter_tool_events(instructions):
+            total += 1
+            per_tool[tool] = per_tool.get(tool, 0) + 1
+        return total, per_tool
+
+    def check_tool_call_budget(
+        self,
+        *,
+        history_instructions: List[Dict[str, Any]],
+        tool: str,
+    ) -> Tuple[bool, str]:
+        """
+        Enforce conversation-wide and per-tool hard limits.
+
+        Config is read from ``tool_call_limit`` first, with ``rate_limit`` kept
+        as a backward-compatible fallback:
+
+          - max_total_tool_calls: total tool calls allowed in one trace
+          - max_calls_per_tool: default per-tool cumulative limit
+          - per_tool_max_calls: optional tool-specific overrides
+        """
+        limit_cfg = self.cfg.get("tool_call_limit", {}) or {}
+        if not isinstance(limit_cfg, dict):
+            limit_cfg = {}
+        rl = self.cfg.get("rate_limit", {}) or {}
+        if not isinstance(rl, dict):
+            rl = {}
+
+        def _positive_int(*keys: Tuple[Dict[str, Any], str]) -> int:
+            for cfg, key in keys:
+                try:
+                    value = int(cfg.get(key, 0) or 0)
+                except Exception:
+                    value = 0
+                if value > 0:
+                    return value
+            return 0
+
+        max_total = _positive_int(
+            (limit_cfg, "max_total_tool_calls"),
+            (rl, "max_total_tool_calls"),
+        )
+        max_per_tool = _positive_int(
+            (limit_cfg, "max_calls_per_tool"),
+            (rl, "max_calls_per_tool"),
+        )
+        raw_overrides = (
+            limit_cfg.get("per_tool_max_calls")
+            if isinstance(limit_cfg.get("per_tool_max_calls"), dict)
+            else rl.get("per_tool_max_calls")
+        )
+        per_tool_overrides: Dict[str, int] = {}
+        if isinstance(raw_overrides, dict):
+            for name, value in raw_overrides.items():
+                key = str(name or "").strip()
+                if not key:
+                    continue
+                try:
+                    limit = int(value)
+                except Exception:
+                    continue
+                if limit > 0:
+                    per_tool_overrides[key] = limit
+
+        tool = (tool or "").strip() or "unknown_tool"
+        total_count, per_tool_counts = self.count_tool_events(history_instructions)
+
+        if max_total > 0 and total_count + 1 > max_total:
+            return (
+                False,
+                f"total tool call budget exceeded: {total_count + 1}>{max_total}",
+            )
+
+        tool_limit = per_tool_overrides.get(tool, max_per_tool)
+        if tool_limit > 0:
+            tool_count = per_tool_counts.get(tool, 0)
+            if tool_count + 1 > tool_limit:
+                return (
+                    False,
+                    f"per-tool call budget exceeded for {tool}: {tool_count + 1}>{tool_limit}",
+                )
+
+        return True, "tool call budget ok"
 
     def check_consecutive_same_tool(
         self,
@@ -1300,16 +1396,10 @@ class KernelPolicyRuntime:
         if not tool:
             return True, "rate ok"
 
-        # NEW: count only if the *tail of instructions* are tool-events,
-        # and stop counting as soon as we see any non-tool instruction (RESPOND/ASK/REASON/etc).
+        # Count only if the *tail of instructions* are tool-events, and stop
+        # counting as soon as we see any non-tool instruction (RESPOND/ASK/REASON/etc).
         streak = 0
         for ins in reversed(history_instructions):
-            it = (ins.get("instruction_type") or "").strip().upper()
-
-            # any non-tool instruction breaks the consecutive chain
-            if it not in {"READ", "WRITE", "EXEC"}:
-                break
-
             content = ins.get("content")
             if not isinstance(content, dict):
                 break

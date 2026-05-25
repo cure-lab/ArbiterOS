@@ -21,8 +21,8 @@
   },
   {
     "name": "RateLimitPolicy",
-    "enabled": false,
-    "description": "Limits consecutive repeated tool calls per config."
+    "enabled": true,
+    "description": "Enforces per-conversation and per-tool hard tool-call budgets, plus consecutive-repeat limits."
   },
   {
     "name": "OutputBudgetPolicy",

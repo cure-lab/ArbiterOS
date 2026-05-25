@@ -26,8 +26,7 @@
       "browser_snapshot": "browser",
       "browser_console": "browser",
       "browser_get_images": "browser",
-      "browser_vision": "browser",
-      "ai_trader_trade": "trade"
+      "browser_vision": "browser"
     }
   },
   
@@ -70,6 +69,18 @@
 
   "input_budget": { "max_str_len": 20000 },
   "output_budget": { "max_chars": 500 },
+
+  "tool_call_limit": {
+    "max_total_tool_calls": 80,
+    "max_calls_per_tool": 30,
+    "per_tool_max_calls": {
+      "web_search": 12,
+      "web_fetch": 20,
+      "browser": 35,
+      "process": 20,
+      "exec": 20
+    }
+  },
 
   "rate_limit": {
     "max_consecutive_same_tool": 20,
