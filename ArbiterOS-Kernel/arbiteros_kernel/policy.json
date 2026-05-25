@@ -64,7 +64,7 @@
       "arg_text_trigger_chars": 1000
     },
     "postexec": {
-      "enabled": false,
+      "enabled": true,
       "ingress_tools": ["web_fetch", "web_search", "image", "browser"],
       "browser_ingress_actions": ["snapshot", "console", "pdf", "screenshot"],
       "prompt_injection_markers": [
@@ -87,6 +87,9 @@
   },
 
   "unary_gate": {
+    "rule_file": "arbiteros_kernel/policy/unary_gate_rules.json",
+    "user_rules_enabled": true,
+    "user_rule_file": "arbiteros_kernel/policy/user_unary_gate_rules.json",
     "tool_aliases": {
       "write_file": "write",
       "edit_file": "edit",
@@ -151,6 +154,18 @@
 
   "input_budget": { "max_str_len": 20000 },
   "output_budget": { "max_chars": 500 },
+
+  "tool_call_limit": {
+    "max_total_tool_calls": 80,
+    "max_calls_per_tool": 30,
+    "per_tool_max_calls": {
+      "web_search": 12,
+      "web_fetch": 20,
+      "browser": 35,
+      "process": 20,
+      "exec": 20
+    }
+  },
 
   "rate_limit": {
     "max_consecutive_same_tool": 20,
@@ -222,6 +237,10 @@
         }
       }
     }
+  },
+  "relational_policy": {
+    "user_rules_enabled": false,
+    "user_rule_file": "arbiteros_kernel/policy/user_relational_flow_rules.json"
   },
   "exec_composite_policy": {
   "enabled": true,

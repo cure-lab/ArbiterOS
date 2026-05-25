@@ -1,0 +1,7 @@
+{
+  "evaluation_mode": "first_match",
+  "source": "user_unary_gate_rules.json",
+  "description": "User-authored unary tool-call policy rules compiled from Policy Rule IR with declared metadata contracts.",
+  "rules": [],
+  "required_metadata": []
+}

@@ -196,6 +196,7 @@ version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "cisco-ai-skill-scanner" },
+    { name = "jsonschema" },
     { name = "langfuse" },
     { name = "litellm", extra = ["proxy"] },
     { name = "mlflow", extra = ["genai"] },
@@ -216,6 +217,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "cisco-ai-skill-scanner", specifier = "==1.0.2" },
+    { name = "jsonschema", specifier = ">=4.26.0" },
     { name = "langfuse", specifier = ">=3.14.1" },
     { name = "litellm", extras = ["proxy"], specifier = ">=1.81.5" },
     { name = "mlflow", extras = ["genai"], specifier = ">=3.9.0" },

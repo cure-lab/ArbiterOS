@@ -1,20 +1,45 @@
-"""Tool parser registry package.
+"""Tool parser registry package — DSL-driven.
 
-Each sub-module implements parsers for a specific toolset.
+Registries are loaded from YAML definitions in the dsl/ subdirectory via the
+DSL engine.  The three agent-specific registries are built at import time and
+exposed for backwards-compatible access.
+
 Agent selection: ``arbiteros_config.tool_agent`` in ``litellm_config.yaml``
 (``openclaw`` | ``nanobot`` | ``hermes``), or env ``ARBITEROS_TOOL_AGENT``. Default: openclaw.
 """
 
 import logging
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 from ..tool_agent_config import get_tool_agent
 from ..types import TaintStatus, ToolParseResult, make_security_type
-from .hermes import HERMES_TOOL_PARSER_REGISTRY
-from .nanobot import NANOBOT_TOOL_PARSER_REGISTRY
-from .openclaw import TOOL_PARSER_REGISTRY
+from .dsl.engine import load_registry
 
 logger = logging.getLogger(__name__)
+
+_DSL_DIR = Path(__file__).parent / "dsl"
+
+TOOL_PARSER_REGISTRY = load_registry(_DSL_DIR / "openclaw.yaml")
+NANOBOT_TOOL_PARSER_REGISTRY = load_registry(_DSL_DIR / "nanobot.yaml")
+HERMES_TOOL_PARSER_REGISTRY = load_registry(_DSL_DIR / "hermes.yaml")
+
+_FALLBACK = ToolParseResult(
+    "EXEC",
+    make_security_type(
+        confidentiality="UNKNOWN",
+        trustworthiness="UNKNOWN",
+        confidence="UNKNOWN",
+        reversible=False,
+        authority="UNKNOWN",
+    ),
+)
+
+_REGISTRIES = {
+    "openclaw": TOOL_PARSER_REGISTRY,
+    "nanobot": NANOBOT_TOOL_PARSER_REGISTRY,
+    "hermes": HERMES_TOOL_PARSER_REGISTRY,
+}
 
 
 def parse_tool_instruction(
@@ -30,67 +55,19 @@ def parse_tool_instruction(
     Unregistered tools fall back to EXEC with all-UNKNOWN security_type.
 
     ``arguments`` are passed through unchanged (including ``reference_tool_id``);
-    parsers ignore fields they do not need, same as OpenClaw.
+    parsers ignore fields they do not need.
     """
     agent = get_tool_agent()
-    if agent == "hermes":
-        args = arguments or {}
-        parser = HERMES_TOOL_PARSER_REGISTRY.get(tool_name)
-        if not parser:
-            logger.warning(
-                "No hermes parser for tool %r; falling back to EXEC", tool_name
-            )
-            return ToolParseResult(
-                "EXEC",
-                make_security_type(
-                    confidentiality="UNKNOWN",
-                    trustworthiness="UNKNOWN",
-                    confidence="UNKNOWN",
-                    reversible=False,
-                    authority="UNKNOWN",
-                ),
-            )
-        result = parser(args, taint_status)
-        logger.debug("Parsed (hermes) tool call %r(%r): %r", tool_name, args, result)
-        return result
-
-    if agent == "nanobot":
-        args = arguments or {}
-        parser = NANOBOT_TOOL_PARSER_REGISTRY.get(tool_name)
-        if not parser:
-            logger.warning(
-                "No nanobot parser for tool %r; falling back to EXEC", tool_name
-            )
-            return ToolParseResult(
-                "EXEC",
-                make_security_type(
-                    confidentiality="UNKNOWN",
-                    trustworthiness="UNKNOWN",
-                    confidence="UNKNOWN",
-                    reversible=False,
-                    authority="UNKNOWN",
-                ),
-            )
-        result = parser(args, taint_status)
-        logger.debug("Parsed (nanobot) tool call %r(%r): %r", tool_name, args, result)
-        return result
-
+    registry = _REGISTRIES.get(agent, TOOL_PARSER_REGISTRY)
     args = arguments or {}
-    parser = TOOL_PARSER_REGISTRY.get(tool_name)
+    parser = registry.get(tool_name)
     if not parser:
-        logger.warning("No parser registered for tool %r; falling back to EXEC", tool_name)
-        return ToolParseResult(
-            "EXEC",
-            make_security_type(
-                confidentiality="UNKNOWN",
-                trustworthiness="UNKNOWN",
-                confidence="UNKNOWN",
-                reversible=False,
-                authority="UNKNOWN",
-            ),
+        logger.warning(
+            "No %s parser for tool %r; falling back to EXEC", agent, tool_name
         )
+        return _FALLBACK
     result = parser(args, taint_status)
-    logger.debug("Parsed tool call %r(%r): %r", tool_name, args, result)
+    logger.debug("Parsed (%s) tool call %r(%r): %r", agent, tool_name, args, result)
     return result
 
 

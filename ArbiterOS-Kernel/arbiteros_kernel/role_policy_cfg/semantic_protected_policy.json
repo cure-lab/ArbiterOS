@@ -64,7 +64,7 @@
       "arg_text_trigger_chars": 1000
     },
     "postexec": {
-      "enabled": false,
+      "enabled": true,
       "ingress_tools": ["web_fetch", "web_search", "image", "browser"],
       "browser_ingress_actions": ["snapshot", "console", "pdf", "screenshot"],
       "prompt_injection_markers": [

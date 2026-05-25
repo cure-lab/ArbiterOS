@@ -100,7 +100,10 @@ def _default_registry_data() -> list[dict[str, object]]:
         {
             "name": "RateLimitPolicy",
             "enabled": True,
-            "description": "Limits consecutive repeated tool calls per config.",
+            "description": (
+                "Enforces per-conversation and per-tool hard tool-call budgets, "
+                "plus consecutive-repeat limits."
+            ),
         },
         {
             "name": "OutputBudgetPolicy",
