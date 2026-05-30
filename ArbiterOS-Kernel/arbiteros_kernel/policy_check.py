@@ -120,11 +120,7 @@ def _prompt_local_policy_confirmation(
         print(header, file=sys.stderr)
         reason_preview = (error_type or "").strip()
         if reason_preview:
-            lines = reason_preview.splitlines()
-            preview = "\n".join(lines[:8])
-            if len(lines) > 8:
-                preview += "\n... (truncated)"
-            print(preview, file=sys.stderr)
+            print(reason_preview, file=sys.stderr)
         while True:
             try:
                 choice = input("[ArbiterOS][LocalConfirm] Enter Y or N: ").strip().lower()
