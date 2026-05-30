@@ -2,7 +2,7 @@
 
 Each sub-module implements parsers for a specific toolset.
 Agent selection: ``arbiteros_config.tool_agent`` in ``litellm_config.yaml``
-(``openclaw`` | ``nanobot`` | ``hermes``), or env ``ARBITEROS_TOOL_AGENT``. Default: openclaw.
+(``openclaw`` | ``nanobot`` | ``hermes`` | ``codex``), or env ``ARBITEROS_TOOL_AGENT``. Default: openclaw.
 """
 
 import logging
@@ -10,6 +10,7 @@ from typing import Any, Dict, Optional
 
 from ..tool_agent_config import get_tool_agent
 from ..types import TaintStatus, ToolParseResult, make_security_type
+from .codex import CODEX_TOOL_PARSER_REGISTRY
 from .hermes import HERMES_TOOL_PARSER_REGISTRY
 from .nanobot import NANOBOT_TOOL_PARSER_REGISTRY
 from .openclaw import TOOL_PARSER_REGISTRY
@@ -75,6 +76,29 @@ def parse_tool_instruction(
         logger.debug("Parsed (nanobot) tool call %r(%r): %r", tool_name, args, result)
         return result
 
+    if agent == "codex":
+        args = arguments or {}
+        parser = CODEX_TOOL_PARSER_REGISTRY.get(tool_name) or CODEX_TOOL_PARSER_REGISTRY.get(
+            tool_name.lower() if isinstance(tool_name, str) else ""
+        )
+        if not parser:
+            logger.warning(
+                "No codex parser for tool %r; falling back to EXEC", tool_name
+            )
+            return ToolParseResult(
+                "EXEC",
+                make_security_type(
+                    confidentiality="UNKNOWN",
+                    trustworthiness="UNKNOWN",
+                    confidence="UNKNOWN",
+                    reversible=False,
+                    authority="UNKNOWN",
+                ),
+            )
+        result = parser(args, taint_status)
+        logger.debug("Parsed (codex) tool call %r(%r): %r", tool_name, args, result)
+        return result
+
     args = arguments or {}
     parser = TOOL_PARSER_REGISTRY.get(tool_name)
     if not parser:
@@ -98,5 +122,6 @@ __all__ = [
     "TOOL_PARSER_REGISTRY",
     "NANOBOT_TOOL_PARSER_REGISTRY",
     "HERMES_TOOL_PARSER_REGISTRY",
+    "CODEX_TOOL_PARSER_REGISTRY",
     "parse_tool_instruction",
 ]
