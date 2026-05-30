@@ -34,7 +34,13 @@ model_list:
 # ArbiterOS kernel: which agent tool names to parse (instruction_parsing). 
 # Now support : openclaw, nanobot, hermes
 arbiteros_config:
-  tool_agent: openclaw
+  tool_agent: codex
+  upstream_compat:
+    enabled: true
+    rules:
+      - match_model: "gpt-5.5"
+        strip_metadata: true
+        force_non_stream: true
 
 # When true, enforced policy modifications are confirmed locally in the kernel terminal:
 #   Y => keep blocked response
