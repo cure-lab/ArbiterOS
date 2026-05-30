@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "cisco-ai-skill-scanner==1.0.2",
+    "hypercorn>=0.18.0",
     "langfuse>=3.14.1",
     "litellm[proxy]>=1.81.5",
     "mlflow[genai]>=3.9.0",
@@ -27,7 +28,8 @@ dev = [
 mlflow = "uv run mlflow server"
 warm-skills = "uv run python -m arbiteros_kernel.warm_skill_trust"
 # Proxy only (after warm-up). Use ``poe litellm`` to run warm-skills then this.
-litellm-proxy = "uv run litellm --config litellm_config.yaml --host 0.0.0.0 --port 4000"
+# Use hypercorn runtime for HTTP/2 compatibility with clients like Codex.
+litellm-proxy = "uv run litellm --config litellm_config.yaml --host 0.0.0.0 --port 4000 --run_hypercorn"
 run.parallel = ["mlflow", "litellm"]
 
 [tool.poe.tasks.litellm]
