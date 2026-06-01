@@ -1,0 +1,487 @@
+# Codex tool parser definitions.
+# Codex tools are normalized to OpenClaw semantics.
+# Tools with cmd/file_path/target_directory args are handled by arg-alias patterns.
+
+# ─── Shell / Command execution ───────────────────────────────────────────────
+
+- tool: exec
+  passes:
+  - match_type: shell
+    arg: command
+  - match_type: shell
+    arg: cmd
+
+- tool: exec_command
+  passes:
+  - match_type: shell
+    arg: command
+  - match_type: shell
+    arg: cmd
+
+- tool: shell
+  passes:
+  - match_type: shell
+    arg: command
+  - match_type: shell
+    arg: cmd
+
+- tool: terminal
+  passes:
+  - match_type: shell
+    arg: command
+  - match_type: shell
+    arg: cmd
+
+- tool: run_command
+  passes:
+  - match_type: shell
+    arg: command
+  - match_type: shell
+    arg: cmd
+
+- tool: run_terminal_command
+  passes:
+  - match_type: shell
+    arg: command
+  - match_type: shell
+    arg: cmd
+
+# ─── Filesystem reads ────────────────────────────────────────────────────────
+
+- tool: read
+  passes:
+  - match_type: default
+    result:
+      instruction_type: READ
+      metadata:
+        confidentiality: UNKNOWN
+        trustworthiness: UNKNOWN
+        reversible: true
+  - match_type: path
+    arg: path
+  - match_type: path
+    arg: file_path
+  - match_type: path
+    arg: target_directory
+  - match_type: path
+    arg: target_notebook
+  - match_type: regex
+    cases:
+    - arg: path
+      pattern: "(^|/)(SOUL|MEMORY|AGENTS|USER|IDENTITY)\\.md$|/memory/[^/]+\\.md$"
+      result:
+        instruction_type: RETRIEVE
+        metadata:
+          confidentiality: HIGH
+          trustworthiness: HIGH
+          reversible: true
+    - arg: file_path
+      pattern: "(^|/)(SOUL|MEMORY|AGENTS|USER|IDENTITY)\\.md$|/memory/[^/]+\\.md$"
+      result:
+        instruction_type: RETRIEVE
+        metadata:
+          confidentiality: HIGH
+          trustworthiness: HIGH
+          reversible: true
+
+- tool: read_file
+  passes:
+  - match_type: default
+    result:
+      instruction_type: READ
+      metadata:
+        confidentiality: UNKNOWN
+        trustworthiness: UNKNOWN
+        reversible: true
+  - match_type: path
+    arg: path
+  - match_type: path
+    arg: file_path
+  - match_type: path
+    arg: target_directory
+  - match_type: path
+    arg: target_notebook
+  - match_type: regex
+    cases:
+    - arg: path
+      pattern: "(^|/)(SOUL|MEMORY|AGENTS|USER|IDENTITY)\\.md$|/memory/[^/]+\\.md$"
+      result:
+        instruction_type: RETRIEVE
+        metadata:
+          confidentiality: HIGH
+          trustworthiness: HIGH
+          reversible: true
+    - arg: file_path
+      pattern: "(^|/)(SOUL|MEMORY|AGENTS|USER|IDENTITY)\\.md$|/memory/[^/]+\\.md$"
+      result:
+        instruction_type: RETRIEVE
+        metadata:
+          confidentiality: HIGH
+          trustworthiness: HIGH
+          reversible: true
+
+- tool: readfile
+  passes:
+  - match_type: default
+    result:
+      instruction_type: READ
+      metadata:
+        confidentiality: UNKNOWN
+        trustworthiness: UNKNOWN
+        reversible: true
+  - match_type: path
+    arg: path
+  - match_type: path
+    arg: file_path
+
+- tool: glob
+  passes:
+  - match_type: default
+    result:
+      instruction_type: READ
+      metadata:
+        confidentiality: UNKNOWN
+        trustworthiness: UNKNOWN
+        reversible: true
+  - match_type: path
+    arg: path
+  - match_type: path
+    arg: pattern
+
+- tool: rg
+  passes:
+  - match_type: default
+    result:
+      instruction_type: READ
+      metadata:
+        confidentiality: UNKNOWN
+        trustworthiness: UNKNOWN
+        reversible: true
+  - match_type: path
+    arg: path
+
+- tool: list_dir
+  passes:
+  - match_type: default
+    result:
+      instruction_type: READ
+      metadata:
+        confidentiality: UNKNOWN
+        trustworthiness: UNKNOWN
+        reversible: true
+  - match_type: path
+    arg: path
+  - match_type: path
+    arg: target_directory
+
+# ─── Filesystem writes ───────────────────────────────────────────────────────
+
+- tool: write
+  passes:
+  - match_type: default
+    result:
+      instruction_type: WRITE
+      metadata:
+        confidentiality: UNKNOWN
+        trustworthiness: UNKNOWN
+        reversible: true
+  - match_type: path
+    arg: path
+  - match_type: path
+    arg: file_path
+  - match_type: path
+    arg: target_notebook
+  - match_type: regex
+    cases:
+    - arg: path
+      pattern: "(^|/)(SOUL|MEMORY|AGENTS|USER|IDENTITY)\\.md$|/memory/[^/]+\\.md$"
+      result:
+        instruction_type: STORE
+        metadata:
+          confidentiality: HIGH
+          trustworthiness: HIGH
+          reversible: true
+    - arg: file_path
+      pattern: "(^|/)(SOUL|MEMORY|AGENTS|USER|IDENTITY)\\.md$|/memory/[^/]+\\.md$"
+      result:
+        instruction_type: STORE
+        metadata:
+          confidentiality: HIGH
+          trustworthiness: HIGH
+          reversible: true
+
+- tool: write_file
+  passes:
+  - match_type: default
+    result:
+      instruction_type: WRITE
+      metadata:
+        confidentiality: UNKNOWN
+        trustworthiness: UNKNOWN
+        reversible: true
+  - match_type: path
+    arg: path
+  - match_type: path
+    arg: file_path
+  - match_type: path
+    arg: target_notebook
+  - match_type: regex
+    cases:
+    - arg: path
+      pattern: "(^|/)(SOUL|MEMORY|AGENTS|USER|IDENTITY)\\.md$|/memory/[^/]+\\.md$"
+      result:
+        instruction_type: STORE
+        metadata:
+          confidentiality: HIGH
+          trustworthiness: HIGH
+          reversible: true
+    - arg: file_path
+      pattern: "(^|/)(SOUL|MEMORY|AGENTS|USER|IDENTITY)\\.md$|/memory/[^/]+\\.md$"
+      result:
+        instruction_type: STORE
+        metadata:
+          confidentiality: HIGH
+          trustworthiness: HIGH
+          reversible: true
+
+- tool: edit_file
+  passes:
+  - match_type: default
+    result:
+      instruction_type: WRITE
+      metadata:
+        confidentiality: UNKNOWN
+        trustworthiness: UNKNOWN
+        reversible: true
+  - match_type: path
+    arg: path
+  - match_type: path
+    arg: file_path
+
+- tool: delete_file
+  passes:
+  - match_type: default
+    result:
+      instruction_type: WRITE
+      metadata:
+        confidentiality: UNKNOWN
+        trustworthiness: UNKNOWN
+        reversible: false
+
+- tool: add_file
+  passes:
+  - match_type: default
+    result:
+      instruction_type: WRITE
+      metadata:
+        confidentiality: UNKNOWN
+        trustworthiness: UNKNOWN
+        reversible: true
+  - match_type: path
+    arg: path
+  - match_type: path
+    arg: file_path
+
+- tool: update_file
+  passes:
+  - match_type: default
+    result:
+      instruction_type: WRITE
+      metadata:
+        confidentiality: UNKNOWN
+        trustworthiness: UNKNOWN
+        reversible: true
+  - match_type: path
+    arg: path
+  - match_type: path
+    arg: file_path
+
+- tool: edit_notebook
+  passes:
+  - match_type: default
+    result:
+      instruction_type: WRITE
+      metadata:
+        confidentiality: UNKNOWN
+        trustworthiness: UNKNOWN
+        reversible: true
+  - match_type: path
+    arg: path
+  - match_type: path
+    arg: target_notebook
+
+# ─── MCP / gateway ───────────────────────────────────────────────────────────
+
+- tool: gateway
+  passes:
+  - match_type: default
+    result:
+      instruction_type: EXEC
+      metadata:
+        confidentiality: LOW
+        trustworthiness: HIGH
+        reversible: false
+  - match_type: regex
+    cases:
+    - arg: action
+      pattern: "^config\\.(get|schema)$"
+      result:
+        instruction_type: READ
+        metadata:
+          confidentiality: HIGH
+          trustworthiness: HIGH
+          reversible: true
+    - arg: action
+      pattern: "^config\\.(apply|patch)$"
+      result:
+        instruction_type: WRITE
+        metadata:
+          confidentiality: LOW
+          trustworthiness: HIGH
+          reversible: true
+
+- tool: call_mcp_tool
+  passes:
+  - match_type: default
+    result:
+      instruction_type: EXEC
+      metadata:
+        confidentiality: LOW
+        trustworthiness: HIGH
+        reversible: false
+
+- tool: fetch_mcp_resource
+  passes:
+  - match_type: default
+    result:
+      instruction_type: READ
+      metadata:
+        confidentiality: LOW
+        trustworthiness: HIGH
+        reversible: true
+
+- tool: list_mcp_resources
+  passes:
+  - match_type: default
+    result:
+      instruction_type: READ
+      metadata:
+        confidentiality: LOW
+        trustworthiness: HIGH
+        reversible: true
+
+# ─── Web / image ─────────────────────────────────────────────────────────────
+
+- tool: web_search
+  passes:
+  - match_type: default
+    result:
+      instruction_type: READ
+      metadata:
+        confidentiality: LOW
+        trustworthiness: LOW
+        reversible: true
+
+- tool: web_fetch
+  passes:
+  - match_type: default
+    result:
+      instruction_type: READ
+      metadata:
+        confidentiality: LOW
+        trustworthiness: LOW
+        reversible: true
+
+- tool: image
+  passes:
+  - match_type: default
+    result:
+      instruction_type: READ
+      metadata:
+        confidentiality: HIGH
+        trustworthiness: LOW
+        reversible: true
+  - match_type: path
+    arg: image
+  - match_type: path
+    arg: path
+
+- tool: generate_image
+  passes:
+  - match_type: default
+    result:
+      instruction_type: EXEC
+      metadata:
+        confidentiality: LOW
+        trustworthiness: HIGH
+        reversible: false
+
+# ─── Interaction / delegation ────────────────────────────────────────────────
+
+- tool: message
+  passes:
+  - match_type: default
+    result:
+      instruction_type: EXEC
+      metadata:
+        confidentiality: LOW
+        trustworthiness: HIGH
+        reversible: false
+  - match_type: regex
+    cases:
+    - arg: action
+      pattern: "^edit$"
+      result:
+        instruction_type: WRITE
+        metadata:
+          confidentiality: HIGH
+          trustworthiness: HIGH
+          reversible: true
+
+- tool: ask_question
+  passes:
+  - match_type: default
+    result:
+      instruction_type: ASK
+      metadata:
+        confidentiality: LOW
+        trustworthiness: HIGH
+        reversible: true
+
+- tool: subagent
+  passes:
+  - match_type: default
+    result:
+      instruction_type: DELEGATE
+      metadata:
+        confidentiality: HIGH
+        trustworthiness: LOW
+        reversible: false
+
+- tool: process
+  passes:
+  - match_type: default
+    result:
+      instruction_type: EXEC
+      metadata:
+        confidentiality: LOW
+        trustworthiness: HIGH
+        reversible: false
+  - match_type: regex
+    cases:
+    - arg: action
+      pattern: "^(list|log)$"
+      result:
+        instruction_type: READ
+        metadata:
+          confidentiality: HIGH
+          trustworthiness: HIGH
+          reversible: true
+    - arg: action
+      pattern: "^poll$"
+      result:
+        instruction_type: WAIT
+        metadata:
+          confidentiality: LOW
+          trustworthiness: HIGH
+          reversible: true

@@ -23,6 +23,7 @@ _DSL_DIR = Path(__file__).parent / "dsl"
 TOOL_PARSER_REGISTRY = load_registry(_DSL_DIR / "openclaw.yaml")
 NANOBOT_TOOL_PARSER_REGISTRY = load_registry(_DSL_DIR / "nanobot.yaml")
 HERMES_TOOL_PARSER_REGISTRY = load_registry(_DSL_DIR / "hermes.yaml")
+CODEX_TOOL_PARSER_REGISTRY = load_registry(_DSL_DIR / "codex.yaml")
 
 _FALLBACK = ToolParseResult(
     "EXEC",
@@ -39,6 +40,7 @@ _REGISTRIES = {
     "openclaw": TOOL_PARSER_REGISTRY,
     "nanobot": NANOBOT_TOOL_PARSER_REGISTRY,
     "hermes": HERMES_TOOL_PARSER_REGISTRY,
+    "codex": CODEX_TOOL_PARSER_REGISTRY,
 }
 
 
@@ -58,75 +60,7 @@ def parse_tool_instruction(
     parsers ignore fields they do not need.
     """
     agent = get_tool_agent()
-<<<<<<< HEAD
-    if agent == "hermes":
-        args = arguments or {}
-        parser = HERMES_TOOL_PARSER_REGISTRY.get(tool_name)
-        if not parser:
-            logger.warning(
-                "No hermes parser for tool %r; falling back to EXEC", tool_name
-            )
-            return ToolParseResult(
-                "EXEC",
-                make_security_type(
-                    confidentiality="UNKNOWN",
-                    trustworthiness="UNKNOWN",
-                    confidence="UNKNOWN",
-                    reversible=False,
-                    authority="UNKNOWN",
-                ),
-            )
-        result = parser(args, taint_status)
-        logger.debug("Parsed (hermes) tool call %r(%r): %r", tool_name, args, result)
-        return result
-
-    if agent == "nanobot":
-        args = arguments or {}
-        parser = NANOBOT_TOOL_PARSER_REGISTRY.get(tool_name)
-        if not parser:
-            logger.warning(
-                "No nanobot parser for tool %r; falling back to EXEC", tool_name
-            )
-            return ToolParseResult(
-                "EXEC",
-                make_security_type(
-                    confidentiality="UNKNOWN",
-                    trustworthiness="UNKNOWN",
-                    confidence="UNKNOWN",
-                    reversible=False,
-                    authority="UNKNOWN",
-                ),
-            )
-        result = parser(args, taint_status)
-        logger.debug("Parsed (nanobot) tool call %r(%r): %r", tool_name, args, result)
-        return result
-
-    if agent == "codex":
-        args = arguments or {}
-        parser = CODEX_TOOL_PARSER_REGISTRY.get(tool_name) or CODEX_TOOL_PARSER_REGISTRY.get(
-            tool_name.lower() if isinstance(tool_name, str) else ""
-        )
-        if not parser:
-            logger.warning(
-                "No codex parser for tool %r; falling back to EXEC", tool_name
-            )
-            return ToolParseResult(
-                "EXEC",
-                make_security_type(
-                    confidentiality="UNKNOWN",
-                    trustworthiness="UNKNOWN",
-                    confidence="UNKNOWN",
-                    reversible=False,
-                    authority="UNKNOWN",
-                ),
-            )
-        result = parser(args, taint_status)
-        logger.debug("Parsed (codex) tool call %r(%r): %r", tool_name, args, result)
-        return result
-
-=======
     registry = _REGISTRIES.get(agent, TOOL_PARSER_REGISTRY)
->>>>>>> main
     args = arguments or {}
     parser = registry.get(tool_name)
     if not parser:
