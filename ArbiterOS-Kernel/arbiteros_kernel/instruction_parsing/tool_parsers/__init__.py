@@ -5,7 +5,7 @@ DSL engine.  The three agent-specific registries are built at import time and
 exposed for backwards-compatible access.
 
 Agent selection: ``arbiteros_config.tool_agent`` in ``litellm_config.yaml``
-(``openclaw`` | ``nanobot`` | ``hermes``), or env ``ARBITEROS_TOOL_AGENT``. Default: openclaw.
+(``openclaw`` | ``nanobot`` | ``hermes`` | ``codex``), or env ``ARBITEROS_TOOL_AGENT``. Default: openclaw.
 """
 
 import logging
@@ -23,6 +23,7 @@ _DSL_DIR = Path(__file__).parent / "dsl"
 TOOL_PARSER_REGISTRY = load_registry(_DSL_DIR / "openclaw.yaml")
 NANOBOT_TOOL_PARSER_REGISTRY = load_registry(_DSL_DIR / "nanobot.yaml")
 HERMES_TOOL_PARSER_REGISTRY = load_registry(_DSL_DIR / "hermes.yaml")
+CODEX_TOOL_PARSER_REGISTRY = load_registry(_DSL_DIR / "codex.yaml")
 
 _FALLBACK = ToolParseResult(
     "EXEC",
@@ -39,6 +40,7 @@ _REGISTRIES = {
     "openclaw": TOOL_PARSER_REGISTRY,
     "nanobot": NANOBOT_TOOL_PARSER_REGISTRY,
     "hermes": HERMES_TOOL_PARSER_REGISTRY,
+    "codex": CODEX_TOOL_PARSER_REGISTRY,
 }
 
 
@@ -75,5 +77,6 @@ __all__ = [
     "TOOL_PARSER_REGISTRY",
     "NANOBOT_TOOL_PARSER_REGISTRY",
     "HERMES_TOOL_PARSER_REGISTRY",
+    "CODEX_TOOL_PARSER_REGISTRY",
     "parse_tool_instruction",
 ]

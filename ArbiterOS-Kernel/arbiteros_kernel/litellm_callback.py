@@ -5,6 +5,7 @@ import json
 import os
 import re
 import threading
+import time
 import urllib.error
 import urllib.request
 from contextlib import nullcontext
@@ -35,7 +36,6 @@ from litellm.types.utils import (
     Choices,
     Delta,
     LLMResponseTypes,
-    Message,
     ModelResponse,
     ModelResponseStream,
     StreamingChoices,
@@ -53,6 +53,23 @@ from arbiteros_kernel.policy_check import (
     check_response_policy,
     resolve_role_policy_enabled_override,
     split_model_and_role,
+)
+from arbiteros_kernel.protocol_adapter import (
+    ResponsesStreamTracker as _ResponsesStreamTracker,
+    apply_canonical_message_to_response as _apply_canonical_message_to_response,
+    build_synthetic_responses_completed_event as _pa_build_synthetic_responses_completed_event,
+    extract_all_user_messages_from_request as _pa_extract_all_user_messages_from_request,
+    extract_stream_chunk_dump_and_event_type as _pa_extract_stream_chunk_dump_and_event_type,
+    extract_stream_text_from_responses_chunk as _pa_extract_stream_text_from_responses_chunk,
+    extract_text_from_message_content as _pa_extract_text_from_message_content,
+    extract_text_from_responses_input as _pa_extract_text_from_responses_input,
+    extract_text_from_responses_output as _pa_extract_text_from_responses_output,
+    finalize_responses_stream as _pa_finalize_responses_stream,
+    inject_system_hint_into_request as _pa_inject_system_hint_into_request,
+    is_responses_api_request as _pa_is_responses_api_request,
+    to_canonical_assistant_message as _to_canonical_assistant_message,
+    update_responses_tracker_from_chunk as _pa_update_responses_tracker_from_chunk,
+    collect_responses_stream_text as _pa_collect_responses_stream_text,
 )
 from arbiteros_kernel.user_approval import apply_user_approval_preprocessing
 from arbiteros_kernel.policy_runtime import get_runtime, policy_runtime_override
@@ -537,6 +554,90 @@ def _read_skill_scanner_llm_triple_from_litellm_config() -> tuple[Optional[str],
     if model and api_base and api_key:
         return model, api_base, api_key
     return None, None, None
+
+
+def _read_tool_agent_from_litellm_config() -> Optional[str]:
+    cfg = _read_litellm_config_yaml()
+    arb_cfg = cfg.get("arbiteros_config") if isinstance(cfg, dict) else {}
+    if not isinstance(arb_cfg, dict):
+        return None
+    raw_tool_agent = arb_cfg.get("tool_agent")
+    if not isinstance(raw_tool_agent, str):
+        return None
+    normalized = raw_tool_agent.strip().lower()
+    return normalized or None
+
+
+def _normalize_model_name_for_compat(raw_model: Any) -> str:
+    if not isinstance(raw_model, str):
+        return ""
+    parsed_model, _ = split_model_and_role(raw_model)
+    model_name = parsed_model if isinstance(parsed_model, str) and parsed_model else raw_model
+    return _upstream_model_name_for_chat_api(model_name.strip())
+
+
+def _model_matches_compat_rule(rule_value: Any, normalized_model: str) -> bool:
+    if not normalized_model:
+        return False
+    if isinstance(rule_value, str):
+        return _normalize_model_name_for_compat(rule_value) == normalized_model
+    if isinstance(rule_value, list):
+        for item in rule_value:
+            if isinstance(item, str) and _normalize_model_name_for_compat(item) == normalized_model:
+                return True
+    return False
+
+
+def _resolve_upstream_compat_flags(model: Any) -> dict[str, bool]:
+    """
+    Resolve upstream compatibility flags for the current request model.
+
+    Supports both:
+    - new format: arbiteros_config.upstream_compat.rules[]
+    - legacy format: arbiteros_config.upstream_compat.<flag>_for[]
+    """
+    defaults = {
+        "strip_metadata": False,
+        "force_non_stream": False,
+        "prefer_chat_completions": False,
+    }
+    normalized_model = _normalize_model_name_for_compat(model)
+    if not normalized_model:
+        return defaults
+
+    cfg = _read_litellm_config_yaml()
+    arb_cfg = cfg.get("arbiteros_config") if isinstance(cfg, dict) else {}
+    if not isinstance(arb_cfg, dict):
+        return defaults
+    compat_cfg = arb_cfg.get("upstream_compat")
+    if not isinstance(compat_cfg, dict):
+        return defaults
+    if compat_cfg.get("enabled") is False:
+        return defaults
+
+    resolved = dict(defaults)
+    rules = compat_cfg.get("rules")
+    if isinstance(rules, list):
+        for rule in rules:
+            if not isinstance(rule, dict):
+                continue
+            if not _model_matches_compat_rule(rule.get("match_model"), normalized_model):
+                continue
+            for key in resolved:
+                if isinstance(rule.get(key), bool):
+                    resolved[key] = resolved[key] or bool(rule.get(key))
+
+    # Backward-compatible shorthand flags.
+    shorthand_map = {
+        "strip_metadata_for": "strip_metadata",
+        "force_non_stream_for": "force_non_stream",
+        "force_chat_completions_for": "prefer_chat_completions",
+    }
+    for source_key, target_key in shorthand_map.items():
+        if _model_matches_compat_rule(compat_cfg.get(source_key), normalized_model):
+            resolved[target_key] = True
+
+    return resolved
 
 
 _ALIGNMENT_SENTINEL_POSTEXEC_PROMPT = """
@@ -1705,166 +1806,46 @@ def _save_precall_to_log(data: dict) -> None:
 
 
 def _extract_text_from_message_content(content: Any) -> str:
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts: list[str] = []
-        for part in content:
-            if not isinstance(part, dict):
-                continue
-            text = part.get("text")
-            if isinstance(text, str):
-                parts.append(text)
-        return "\n".join(parts)
-    return ""
+    return _pa_extract_text_from_message_content(content)
 
 
 def _extract_text_from_responses_output(response_obj: Any) -> str:
     """Best-effort text extraction from OpenAI Responses API payload (dict)."""
-    if not isinstance(response_obj, dict):
-        return ""
-
-    direct_output_text = response_obj.get("output_text")
-    if isinstance(direct_output_text, str) and direct_output_text.strip():
-        return direct_output_text.strip()
-
-    texts: list[str] = []
-    output_items = response_obj.get("output")
-    if not isinstance(output_items, list):
-        return ""
-
-    for item in output_items:
-        if not isinstance(item, dict):
-            continue
-
-        # Some SDK dumps may include a direct "text" field.
-        item_text = item.get("text")
-        if isinstance(item_text, str) and item_text.strip():
-            texts.append(item_text.strip())
-
-        # Standard Responses API: items often contain "content" parts with "text".
-        content = item.get("content")
-        content_text = _extract_text_from_message_content(content)
-        if content_text.strip():
-            texts.append(content_text.strip())
-
-    return "\n".join(texts).strip()
+    return _pa_extract_text_from_responses_output(response_obj)
 
 
 def _is_responses_api_request(request_data: Any) -> bool:
     """Detect OpenAI Responses API style requests in LiteLLM hooks."""
-    if not isinstance(request_data, dict):
-        return False
-    # Responses API requests are centered around `input`, while chat-completions
-    # use `messages`. Accept str/list/dict input to support old/new callers.
-    has_input = "input" in request_data and isinstance(
-        request_data.get("input"), (str, list, dict)
-    )
-    has_chat_messages = isinstance(request_data.get("messages"), list)
-    return has_input and not has_chat_messages
+    return _pa_is_responses_api_request(request_data)
 
 
 def _extract_text_from_responses_input(input_payload: Any) -> str:
     """Best-effort extraction of latest user text from Responses API `input`."""
-    if isinstance(input_payload, str):
-        return input_payload.strip()
-    if isinstance(input_payload, dict):
-        role = input_payload.get("role")
-        if isinstance(role, str) and role != "user":
-            return ""
-        return _extract_text_from_message_content(input_payload.get("content")).strip()
-    if isinstance(input_payload, list):
-        user_texts: list[str] = []
-        for item in input_payload:
-            if isinstance(item, str):
-                text = item.strip()
-                if text:
-                    user_texts.append(text)
-                continue
-            if not isinstance(item, dict):
-                continue
-            role = item.get("role")
-            if isinstance(role, str) and role != "user":
-                continue
-            text = _extract_text_from_message_content(item.get("content")).strip()
-            if text:
-                user_texts.append(text)
-        if user_texts:
-            return user_texts[-1]
-    return ""
+    return _pa_extract_text_from_responses_input(input_payload)
 
 
 def _extract_all_user_messages_from_request(request_data: Any) -> list[str]:
     """Extract all user-message texts from current precall payload."""
-    if not isinstance(request_data, dict):
-        return []
-
-    out: list[str] = []
-    messages = request_data.get("messages")
-    if isinstance(messages, list):
-        for msg in messages:
-            if not isinstance(msg, dict):
-                continue
-            if msg.get("role") != "user":
-                continue
-            text = _extract_text_from_message_content(msg.get("content")).strip()
-            if text:
-                out.append(text)
-        return out
-
-    # Responses API fallback
-    if _is_responses_api_request(request_data):
-        input_payload = request_data.get("input")
-        if isinstance(input_payload, str):
-            text = input_payload.strip()
-            if text:
-                out.append(text)
-            return out
-        if isinstance(input_payload, dict):
-            role = input_payload.get("role")
-            if isinstance(role, str) and role != "user":
-                return out
-            text = _extract_text_from_message_content(input_payload.get("content")).strip()
-            if text:
-                out.append(text)
-            return out
-        if isinstance(input_payload, list):
-            for item in input_payload:
-                if isinstance(item, str):
-                    text = item.strip()
-                    if text:
-                        out.append(text)
-                    continue
-                if not isinstance(item, dict):
-                    continue
-                role = item.get("role")
-                if isinstance(role, str) and role != "user":
-                    continue
-                text = _extract_text_from_message_content(item.get("content")).strip()
-                if text:
-                    out.append(text)
-    return out
+    return _pa_extract_all_user_messages_from_request(request_data)
 
 
 def _extract_stream_text_from_responses_chunk(
     chunk: Any, chunk_dump: Optional[dict]
 ) -> str:
     """Extract delta text from a Responses API stream chunk."""
-    text_parts: list[str] = []
-    # LiteLLM helper can parse ModelResponseStream/ModelResponse chunks.
-    try:
-        if isinstance(chunk, (ModelResponseStream, ModelResponse)):
-            parsed = litellm.get_response_string(response_obj=chunk)
-            if isinstance(parsed, str) and parsed:
-                text_parts.append(parsed)
-    except Exception:
-        pass
-    # Native Responses events may expose `delta`.
-    if isinstance(chunk_dump, dict):
-        delta = chunk_dump.get("delta")
-        if isinstance(delta, str) and delta:
-            text_parts.append(delta)
-    return "".join(text_parts)
+    return _pa_extract_stream_text_from_responses_chunk(chunk, chunk_dump)
+
+
+def _build_synthetic_responses_completed_event(
+    *,
+    text: str,
+    response_id: Optional[str],
+    model: Optional[str],
+) -> dict[str, Any]:
+    """Build a minimal OpenAI Responses `response.completed` event."""
+    return _pa_build_synthetic_responses_completed_event(
+        text=text, response_id=response_id, model=model
+    )
 
 
 def _extract_latest_message_text(messages: list[Any], *, role: str) -> Optional[str]:
@@ -2076,6 +2057,21 @@ def _extract_reset_requested_from_metadata(incoming: dict) -> bool:
     return False
 
 
+def _extract_prompt_cache_key(incoming: dict) -> Optional[str]:
+    raw_prompt_cache_key = incoming.get("prompt_cache_key")
+    if not isinstance(raw_prompt_cache_key, str):
+        return None
+    normalized = _normalize_device_fragment(raw_prompt_cache_key)
+    return normalized or None
+
+
+def _build_codex_user_id_from_prompt_cache_key(prompt_cache_key: str) -> str:
+    digest = hashlib.sha256(
+        prompt_cache_key.encode("utf-8", errors="ignore")
+    ).hexdigest()[:24]
+    return f"codex-pck-{digest}"
+
+
 def _parse_device_key(device_key: str) -> tuple[str, str]:
     raw_channel, _, raw_user_id = device_key.partition(":")
     channel = (
@@ -2143,6 +2139,9 @@ def _build_device_context(incoming: dict) -> _DeviceContext:
     messages = incoming.get("messages")
     if not isinstance(messages, list):
         messages = []
+    tool_agent = _read_tool_agent_from_litellm_config()
+    is_codex_agent = tool_agent == "codex"
+    prompt_cache_key = _extract_prompt_cache_key(incoming) if is_codex_agent else None
 
     latest_user_text = _extract_latest_message_text(messages, role="user")
     if not latest_user_text and _is_responses_api_request(incoming):
@@ -2186,6 +2185,14 @@ def _build_device_context(incoming: dict) -> _DeviceContext:
     channel = _normalize_device_fragment(channel)
     if metadata_channel_hint and metadata_channel_hint != "unknown-channel":
         channel = metadata_channel_hint
+
+    # For codex/responses traffic, prompt_cache_key is the most reliable session
+    # discriminator. Bind user_id to it so each codex session maps to its own trace.
+    if prompt_cache_key:
+        raw_user_id = _build_codex_user_id_from_prompt_cache_key(prompt_cache_key)
+        has_explicit_user_id = True
+        if channel == "unknown-channel":
+            channel = "codex"
 
     normalized_user_cmd = (latest_user_text or "").strip().lower()
     reset_requested = (
@@ -3229,12 +3236,11 @@ def _add_instructions_from_modified_response(
             pass
     content = modified_response.get("content")
     if isinstance(content, str) and content.strip():
-        try:
-            builder.add_from_structured_output(
-                structured={"intent": "RESPOND", "content": content},
-            )
-        except Exception:
-            pass
+        _add_non_strict_content_instructions(
+            builder=builder,
+            content=content,
+            trace_id=getattr(builder, "trace_id", None),
+        )
     count_after = len(getattr(builder, "instructions", []) or [])
     return count_after - count_before
 
@@ -3284,12 +3290,11 @@ def _replace_instructions_from_modified_response(
 
     content = modified_response.get("content")
     if isinstance(content, str) and content.strip():
-        try:
-            builder.add_from_structured_output(
-                structured={"intent": "RESPOND", "content": content},
-            )
-        except Exception:
-            pass
+        _add_non_strict_content_instructions(
+            builder=builder,
+            content=content,
+            trace_id=getattr(builder, "trace_id", None),
+        )
 
 
 def _extract_tool_call_details_from_response(
@@ -5224,16 +5229,227 @@ def _add_instruction_for_non_strict(data: dict, content: str) -> None:
     builder = _get_instruction_builder_for_trace(trace_id)
     if builder is None:
         return
-    try:
-        builder.add_from_structured_output(
-            structured={
-                "intent": "RESPOND",
-                "content": content,
-            }
+    _add_non_strict_content_instructions(
+        builder=builder,
+        content=content,
+        trace_id=trace_id,
+    )
+    _save_instructions_to_trace_file(trace_id, builder)
+
+
+def _is_codex_tool_agent() -> bool:
+    return _read_tool_agent_from_litellm_config() == "codex"
+
+
+def _extract_codex_suffix_json_objects(content: str) -> tuple[str, list[dict[str, Any]]]:
+    """
+    Best-effort split for Codex non-strict outputs:
+    - keep natural language text as RESPOND content
+    - parse trailing contiguous JSON objects as synthetic tool calls
+    """
+    if not isinstance(content, str):
+        return "", []
+    raw = content
+    right = len(raw.rstrip())
+    if right <= 0:
+        return "", []
+
+    decoder = json.JSONDecoder()
+    parsed_candidates: list[tuple[int, int, dict[str, Any]]] = []
+    scan = 0
+    while scan < right:
+        brace = raw.find("{", scan, right)
+        if brace < 0:
+            break
+        try:
+            obj, end = decoder.raw_decode(raw, brace)
+        except Exception:
+            scan = brace + 1
+            continue
+        if isinstance(obj, dict):
+            parsed_candidates.append((brace, end, obj))
+        scan = brace + 1
+
+    if not parsed_candidates:
+        return raw.strip(), []
+
+    by_end: dict[int, list[tuple[int, int, dict[str, Any]]]] = {}
+    for candidate in parsed_candidates:
+        by_end.setdefault(candidate[1], []).append(candidate)
+
+    suffix_objects_rev: list[dict[str, Any]] = []
+    cursor = right
+    while True:
+        batch = by_end.get(cursor) or []
+        if not batch:
+            break
+        # Prefer the nearest-start candidate to consume the longest suffix step-by-step.
+        start, _end, obj = min(batch, key=lambda x: x[0])
+        suffix_objects_rev.append(obj)
+        cursor = len(raw[:start].rstrip())
+
+    if not suffix_objects_rev:
+        return raw.strip(), []
+
+    text_part = raw[:cursor].rstrip()
+    suffix_objects = list(reversed(suffix_objects_rev))
+    return text_part, suffix_objects
+
+
+def _infer_codex_tool_name_from_arguments(arguments: dict[str, Any]) -> str:
+    if not isinstance(arguments, dict):
+        return "unknown_tool"
+    explicit = arguments.get("tool_name") or arguments.get("tool") or arguments.get("name")
+    if isinstance(explicit, str) and explicit.strip():
+        return explicit.strip()
+    if "search_term" in arguments:
+        return "web_search"
+    if "url" in arguments:
+        return "web_fetch"
+    if "glob_pattern" in arguments:
+        return "glob"
+    if "pattern" in arguments and (
+        "output_mode" in arguments or "head_limit" in arguments
+    ):
+        return "rg"
+    if "target_notebook" in arguments:
+        return "edit_notebook"
+    if "path" in arguments and ("old_string" in arguments or "new_string" in arguments):
+        return "update_file"
+    if "path" in arguments:
+        return "read_file"
+    if "questions" in arguments:
+        return "ask_question"
+    if "description" in arguments and (
+        "filename" in arguments or "reference_image_paths" in arguments
+    ):
+        return "generate_image"
+    if any(k in arguments for k in ("cmd", "shell", "login", "yield_time_ms")):
+        return "exec"
+    if "server" in arguments and "toolName" in arguments:
+        return "gateway"
+    return "unknown_tool"
+
+
+def _extract_request_tool_names(request_data: Any) -> set[str]:
+    names: set[str] = set()
+    if not isinstance(request_data, dict):
+        return names
+    tools = request_data.get("tools")
+    if not isinstance(tools, list):
+        return names
+    for item in tools:
+        if not isinstance(item, dict):
+            continue
+        direct_name = item.get("name")
+        if isinstance(direct_name, str) and direct_name.strip():
+            names.add(direct_name.strip())
+        fn = item.get("function")
+        if isinstance(fn, dict):
+            fn_name = fn.get("name")
+            if isinstance(fn_name, str) and fn_name.strip():
+                names.add(fn_name.strip())
+    return names
+
+
+def _resolve_codex_tool_name_for_request(
+    inferred_name: str, available_tool_names: set[str]
+) -> str:
+    inferred = inferred_name.strip() if isinstance(inferred_name, str) else ""
+    if inferred and inferred in available_tool_names:
+        return inferred
+    # Most Codex shells expose `exec_command` rather than OpenClaw's `exec`.
+    if inferred in {"exec", "shell", "terminal"}:
+        for candidate in ("exec_command", "run_command", "terminal", "exec"):
+            if candidate in available_tool_names:
+                return candidate
+    if inferred in {"web_search", "web_fetch", "list_mcp_resources"}:
+        if inferred in available_tool_names:
+            return inferred
+    if inferred:
+        for candidate in available_tool_names:
+            if candidate.lower() == inferred.lower():
+                return candidate
+    return inferred or "unknown_tool"
+
+
+def _build_codex_synthetic_tool_call_id(
+    *,
+    trace_id: Optional[str],
+    ordinal: int,
+    arguments: dict[str, Any],
+) -> str:
+    seed = json.dumps(arguments, ensure_ascii=False, sort_keys=True, default=str)
+    digest = hashlib.sha256(seed.encode("utf-8", errors="ignore")).hexdigest()[:10]
+    prefix = (
+        trace_id.strip()[:12]
+        if isinstance(trace_id, str) and trace_id.strip()
+        else "no-trace"
+    )
+    return f"codex-synth-{prefix}-{ordinal}-{digest}"
+
+
+def _add_non_strict_content_instructions(
+    *,
+    builder: Any,
+    content: str,
+    trace_id: Optional[str],
+) -> None:
+    if InstructionBuilder is None or builder is None:
+        return
+    if not isinstance(content, str) or not content.strip():
+        return
+
+    if not _is_codex_tool_agent():
+        try:
+            builder.add_from_structured_output(
+                structured={"intent": "RESPOND", "content": content},
+            )
+        except Exception:
+            pass
+        return
+
+    text_part, tool_args_list = _extract_codex_suffix_json_objects(content)
+    parsed_any_tool = False
+    for idx, args in enumerate(tool_args_list, start=1):
+        if not isinstance(args, dict):
+            continue
+        parsed_any_tool = True
+        tool_name = _infer_codex_tool_name_from_arguments(args)
+        tool_call_id = _build_codex_synthetic_tool_call_id(
+            trace_id=trace_id,
+            ordinal=idx,
+            arguments=args,
         )
-        _save_instructions_to_trace_file(trace_id, builder)
-    except Exception:
-        pass
+        try:
+            normalized_args = _ensure_reference_tool_id_in_arguments(
+                args,
+                tool_call_id,
+                trace_id,
+            )
+            builder.add_from_tool_call(
+                tool_name=tool_name,
+                tool_call_id=tool_call_id,
+                arguments=normalized_args,
+                result=None,
+            )
+        except Exception:
+            pass
+
+    if text_part.strip():
+        try:
+            builder.add_from_structured_output(
+                structured={"intent": "RESPOND", "content": text_part},
+            )
+        except Exception:
+            pass
+    elif not parsed_any_tool:
+        try:
+            builder.add_from_structured_output(
+                structured={"intent": "RESPOND", "content": content},
+            )
+        except Exception:
+            pass
 
 
 def _is_strict_topic_category_content(obj: dict) -> bool:
@@ -5410,8 +5626,6 @@ def _extract_text_to_wrap(
 def _inject_topic_summary_hint(
     data: dict, *, state: _TraceState, context: _DeviceContext
 ) -> dict:
-    messages = data.get("messages")
-
     previous_topic_raw = (
         state.latest_topic_summary
         if isinstance(state.latest_topic_summary, str)
@@ -5457,42 +5671,11 @@ def _inject_topic_summary_hint(
         f"Current summarized topic: {previous_topic}\n"
         f"Latest user turn: {latest_user_turn}"
     )
-    hint_message = {"role": "system", "content": hint_content}
-
-    # Chat Completions style requests.
-    if isinstance(messages, list):
-        for message in messages:
-            if not isinstance(message, dict):
-                continue
-            if message.get("role") != "system":
-                continue
-            content = message.get("content")
-            if isinstance(content, str) and marker in content:
-                return data
-
-        insert_at = 0
-        for i in range(len(messages) - 1, -1, -1):
-            msg = messages[i]
-            if isinstance(msg, dict) and msg.get("role") == "user":
-                insert_at = i
-                break
-
-        new_messages = list(messages)
-        new_messages.insert(insert_at, hint_message)
-        return {**data, "messages": new_messages}
-
-    # Responses API style requests: append hint into `instructions`.
-    if _is_responses_api_request(data):
-        instructions = data.get("instructions")
-        if isinstance(instructions, str) and marker in instructions:
-            return data
-        if isinstance(instructions, str) and instructions.strip():
-            new_instructions = f"{instructions.rstrip()}\n\n{hint_content}"
-        else:
-            new_instructions = hint_content
-        return {**data, "instructions": new_instructions}
-
-    return data
+    return _pa_inject_system_hint_into_request(
+        data,
+        hint_content=hint_content,
+        marker=marker,
+    )
 
 
 def _wrap_reference_tool_ids_into_messages(
@@ -6085,9 +6268,23 @@ class MyCustomHandler(CustomLogger):
             )
             _save_json("pre_call", {"call_type": call_type, "incoming": filtered_data})
         _inject_reference_tool_id_into_tools(data)
+        compat_flags = _resolve_upstream_compat_flags(data.get("model"))
+        metadata_for_backup = data.get("metadata") if isinstance(data, dict) else None
+        if compat_flags.get("strip_metadata"):
+            # Keep metadata for local backup/logical flow, but do not forward upstream
+            # when provider does not support the `metadata` parameter.
+            data = dict(data)
+            data.pop("metadata", None)
+        if compat_flags.get("force_non_stream"):
+            # Keep Responses API streaming for Codex/OpenAI-compatible clients.
+            # Only force non-stream for chat-completions-style payloads where
+            # upstream chunk format is known to be unstable.
+            is_chat_payload = isinstance(data.get("messages"), list)
+            if is_chat_payload:
+                data = {**data, "stream": False}
         _persist_trace_backup_state(
             state.trace_id if state is not None else None,
-            metadata=(data.get("metadata") if isinstance(data, dict) else None),
+            metadata=(metadata_for_backup if isinstance(metadata_for_backup, dict) else None),
         )
         _save_precall_to_log(data)
         return data
@@ -6121,50 +6318,9 @@ class MyCustomHandler(CustomLogger):
     ) -> Any:
         # data is the original request data
         # response is the response from the LLM API
-        # LiteLLM may return either a ChatCompletions-like ModelResponse (with `.choices`)
-        # or an OpenAI Responses API response (no `.choices`, uses `output/output_text`).
-        choices = getattr(response, "choices", None)
-        is_chat_completion = isinstance(choices, list)
-
-        msg: Any = None
-        if is_chat_completion:
-            msg = choices[0].message if choices else None
-        else:
-            # Synthesize a chat-style message dict from Responses API payload so
-            # existing logging/Langfuse/transform logic can continue to work.
-            response_dump: Any = None
-            if hasattr(response, "model_dump"):
-                try:
-                    response_dump = response.model_dump()
-                except Exception:
-                    response_dump = None
-            if response_dump is None and hasattr(response, "dict"):
-                try:
-                    response_dump = response.dict()
-                except Exception:
-                    response_dump = None
-            if response_dump is None:
-                response_dump = _to_json(response)
-
-            output_text = (
-                _extract_text_from_responses_output(response_dump)
-                if isinstance(response_dump, dict)
-                else ""
-            )
-            provider_fields: dict[str, Any] = {"format": "openai-responses-v1"}
-            if isinstance(response_dump, dict):
-                for k in ("id", "model", "status"):
-                    v = response_dump.get(k)
-                    if isinstance(v, (str, int, float, bool)) and v is not None:
-                        provider_fields[k] = v
-            msg = {
-                "content": output_text if output_text else None,
-                "role": "assistant",
-                "tool_calls": None,
-                "function_call": None,
-                "provider_specific_fields": provider_fields,
-                "annotations": [],
-            }
+        canonical_response = _to_canonical_assistant_message(response)
+        is_chat_completion = canonical_response.is_chat_completion
+        msg = canonical_response.message
         if os.getenv("ARBITEROS_LITELLM_CALLBACK_DEBUG", "").strip() == "1":
             _console.print(
                 Panel(
@@ -6192,15 +6348,7 @@ class MyCustomHandler(CustomLogger):
         if not _is_mock_response_path:
             _save_json("post_call_success", {"response": msg})
 
-        raw_msg_dict = (
-            _to_json(msg)
-            if isinstance(msg, dict)
-            else (
-                msg.model_dump()
-                if hasattr(msg, "model_dump")
-                else (msg.dict() if hasattr(msg, "dict") else None)
-            )
-        )
+        raw_msg_dict = msg if isinstance(msg, dict) else None
         final_msg_dict = raw_msg_dict
 
         # 记录 instruction 数量，供 policy 保护时标记本次添加的 instructions
@@ -6214,6 +6362,17 @@ class MyCustomHandler(CustomLogger):
                 else None
             )
             if (
+                not isinstance(_policy_trace_id_for_block, str)
+                or not _policy_trace_id_for_block.strip()
+            ):
+                context_for_policy_count = _build_device_context(data)
+                state_for_policy_count, _ = _ensure_trace_state(context_for_policy_count)
+                _policy_trace_id_for_block = (
+                    state_for_policy_count.trace_id
+                    if state_for_policy_count is not None
+                    else None
+                )
+            if (
                 isinstance(_policy_trace_id_for_block, str)
                 and _policy_trace_id_for_block.strip()
             ):
@@ -6223,39 +6382,6 @@ class MyCustomHandler(CustomLogger):
                 _policy_instruction_count_before = (
                     len(getattr(builder_pre, "instructions", [])) if builder_pre else 0
                 )
-
-        # instruction_parsing: 在 post_call_success 时立即截获 tool_calls（name+arguments），单独存一条
-        if raw_msg_dict is not None and InstructionBuilder is not None:
-            metadata = data.get("metadata") if isinstance(data, dict) else {}
-            trace_id_tc = (
-                metadata.get("arbiteros_trace_id")
-                if isinstance(metadata, dict)
-                else None
-            )
-            if not isinstance(trace_id_tc, str) or not trace_id_tc.strip():
-                context = _build_device_context(data)
-                _state, _ = _ensure_trace_state(context)
-                trace_id_tc = _state.trace_id if _state is not None else None
-            if isinstance(trace_id_tc, str) and trace_id_tc.strip():
-                for tc_detail in _extract_tool_call_details_from_response(raw_msg_dict):
-                    try:
-                        args = tc_detail.get("arguments") or {}
-                        args = _ensure_reference_tool_id_in_arguments(
-                            args,
-                            tc_detail.get("tool_call_id"),
-                            trace_id_tc,
-                        )
-                        builder = _get_instruction_builder_for_trace(trace_id_tc)
-                        if builder is not None:
-                            builder.add_from_tool_call(
-                                tool_name=tc_detail["tool_name"],
-                                tool_call_id=tc_detail["tool_call_id"],
-                                arguments=args,
-                                result=None,
-                            )
-                            _save_instructions_to_trace_file(trace_id_tc, builder)
-                    except Exception:
-                        pass
 
         # 提前解析 trace_id 和 apply_info，供 response_transform 是否跳过判断
         metadata = data.get("metadata") if isinstance(data, dict) else None
@@ -6301,13 +6427,12 @@ class MyCustomHandler(CustomLogger):
                 if apply_info is not None or skip_policy_check:
                     data_for_transform = dict(data) if isinstance(data, dict) else {}
                     data_for_transform["_skip_category_topic_recording"] = True
-                    # 用户选 Yes 时 pre_call 已追加 protected instruction，response_transform 不再重复添加
-                    if (
-                        apply_info is not None
-                        and apply_info.get("instruction_already_applied")
-                        and apply_info.get("policy_confirmation_accepted")
-                    ):
-                        data_for_transform["_skip_instruction_adding"] = True
+                # instruction 统一在 policy 决策后落库，避免出现“用户未确认先累计”。
+                if (
+                    (apply_info is None and not skip_policy_check)
+                    or apply_info is not None
+                ):
+                    data_for_transform["_skip_instruction_adding"] = True
                 if asyncio.iscoroutinefunction(response_transform):
                     modified_dict = await response_transform(
                         data_for_transform, msg_dict
@@ -6316,18 +6441,11 @@ class MyCustomHandler(CustomLogger):
                     modified_dict = response_transform(data_for_transform, msg_dict)
                 if modified_dict is not None and isinstance(modified_dict, dict):
                     final_msg_dict = modified_dict
-                    try:
-                        if is_chat_completion:
-                            response.choices[0].message = Message(**modified_dict)
-                        else:
-                            # Best-effort for Responses API objects: update `output_text` when present.
-                            new_content = modified_dict.get("content")
-                            if isinstance(new_content, str) and hasattr(
-                                response, "output_text"
-                            ):
-                                setattr(response, "output_text", new_content)
-                    except Exception:
-                        pass
+                    _apply_canonical_message_to_response(
+                        response,
+                        modified_dict,
+                        is_chat_completion=is_chat_completion,
+                    )
 
         # Policy check: 剥完 category/topic 后，在回复 agent 前检查
         policy_violation_reason_for_langfuse: Optional[str] = None
@@ -6387,11 +6505,16 @@ class MyCustomHandler(CustomLogger):
                             )
                         _save_instructions_to_trace_file(trace_id, builder)
             elif apply_info.get("policy_confirmation_rejected"):
-                # 用户选 No（放行）：本次 post_call 已通过 4942 块加入了 original 的 instructions
+                # 用户选 No（放行）：在确认后再写回 original instructions，并标记 user_approved
                 builder = _get_instruction_builder_for_trace(trace_id)
                 if builder is not None:
+                    count_before = len(getattr(builder, "instructions", []) or [])
+                    _add_instructions_from_modified_response(
+                        builder,
+                        final_msg_dict if isinstance(final_msg_dict, dict) else {},
+                    )
                     instrs = getattr(builder, "instructions", []) or []
-                    for instr in instrs[_policy_instruction_count_before:]:
+                    for instr in instrs[count_before:]:
                         instr["user_approved"] = True
                     _save_instructions_to_trace_file(trace_id, builder)
         elif not skip_policy_check and isinstance(final_msg_dict, dict):
@@ -6446,80 +6569,134 @@ class MyCustomHandler(CustomLogger):
                     _ia_policy = policy_result.inactivate_error_type
                     if isinstance(_ia_policy, str) and _ia_policy.strip():
                         inactivate_error_type_for_langfuse = _ia_policy.strip()
+                    if builder is not None:
+                        count_before = len(getattr(builder, "instructions", []) or [])
+                        _add_instructions_from_modified_response(builder, final_msg_dict)
+                        if len(getattr(builder, "instructions", []) or []) > count_before:
+                            _save_instructions_to_trace_file(trace_id, builder)
                 if policy_result.modified:
                     error_type_str = (policy_result.error_type or "").strip()
-                    # Defer: store state, return confirmation message, don't emit Langfuse violation
-                    with _policy_confirmation_lock:
+                    if bool(
+                        getattr(policy_result, "local_confirmation_resolved", False)
+                    ):
+                        final_msg_dict = (
+                            dict(policy_result.response)
+                            if isinstance(policy_result.response, dict)
+                            else final_msg_dict
+                        )
+                        policy_violation_reason_for_langfuse = error_type_str or None
+                        policy_names_for_langfuse = list(policy_result.policy_names)
+                        policy_sources_for_langfuse = dict(policy_result.policy_sources)
+                        policy_confirmation_state_for_langfuse = "accepted"
+                        policy_confirmation_accepted_for_langfuse = True
+                        policy_confirmation_rejected_for_langfuse = False
+                        if policy_violation_reason_for_langfuse:
+                            _record_policy_protected_tool_calls(
+                                trace_id=trace_id,
+                                raw_response=raw_msg_dict,
+                                policy_checked_response=final_msg_dict,
+                                policy_reason=policy_violation_reason_for_langfuse,
+                            )
                         if (
-                            len(_policy_confirmation_pending)
-                            >= _MAX_POLICY_CONFIRMATION_PENDING
+                            isinstance(final_msg_dict, dict)
+                            and _extract_text_from_message_content(
+                                final_msg_dict.get("content")
+                            ).strip()
                         ):
-                            _policy_confirmation_pending.pop(
-                                next(iter(_policy_confirmation_pending)), None
+                            _record_stripped_category(
+                                data, "COGNITIVE_CORE__RESPOND", topic="policy protected"
                             )
-                        raw_content = (
-                            raw_msg_dict.get("content")
-                            if isinstance(raw_msg_dict, dict)
-                            else None
-                        )
-                        had_content_before_replace = bool(
-                            _extract_text_from_message_content(raw_content).strip()
-                        )
-                        # 剥壳时已记录 category/topic，pop 出来复用，无需再解析原始格式
-                        popped_ct = (
-                            _pop_and_get_latest_category_topic_for_trace(trace_id)
-                            if had_content_before_replace
-                            else None
-                        )
-                        _policy_confirmation_pending[trace_id] = {
-                            "original_response": dict(raw_msg_dict)
-                            if isinstance(raw_msg_dict, dict)
-                            else {},
-                            "protected_response": dict(policy_result.response),
-                            "policy_reason": error_type_str,
-                            "policy_names": list(policy_result.policy_names),
-                            "policy_sources": dict(policy_result.policy_sources),
-                            "had_content_before_replace": had_content_before_replace,
-                            "popped_category_topic": popped_ct,
-                            "instruction_count_before": _policy_instruction_count_before,
-                        }
-                    confirm_content = f"{error_type_str}\n{_POLICY_CONFIRMATION_SUFFIX}"
-                    final_msg_dict = {"content": confirm_content, "role": "assistant"}
-                    # 确认消息按普通信息包：默认 category + topic "protection confirmation"
-                    _append_category_topic_for_trace(
-                        trace_id,
-                        category="COGNITIVE_CORE__RESPOND",
-                        topic="protection confirmation",
-                    )
-                    policy_confirmation_state_for_langfuse = "ask"
-                    policy_confirmation_accepted_for_langfuse = False
-                    policy_confirmation_rejected_for_langfuse = False
-                    policy_violation_reason_for_langfuse = None
-                    policy_names_for_langfuse = list(policy_result.policy_names)
-                    policy_sources_for_langfuse = dict(policy_result.policy_sources)
-                    if builder is not None:
-                        builder.instructions = list(
-                            builder.instructions[:_policy_instruction_count_before]
-                        )
-                        try:
-                            instr = builder.add_from_structured_output(
-                                structured={
-                                    "intent": "RESPOND",
-                                    "content": confirm_content,
-                                }
+                        if builder is not None:
+                            count_before = len(getattr(builder, "instructions", []) or [])
+                            _add_instructions_from_modified_response(
+                                builder,
+                                final_msg_dict if isinstance(final_msg_dict, dict) else {},
                             )
-                            instr["policy_confirmation_ask"] = True
-                        except Exception:
-                            pass
-                        _save_instructions_to_trace_file(trace_id, builder)
-                    try:
-                        if is_chat_completion:
-                            response.choices[0].message = Message(**final_msg_dict)
-                        else:
-                            if hasattr(response, "output_text"):
-                                setattr(response, "output_text", confirm_content)
-                    except Exception:
-                        pass
+                            for instr in builder.instructions[count_before:]:
+                                instr["policy_protected"] = (
+                                    policy_violation_reason_for_langfuse or ""
+                                )
+                            if len(getattr(builder, "instructions", []) or []) > count_before:
+                                _save_instructions_to_trace_file(trace_id, builder)
+                        _apply_canonical_message_to_response(
+                            response,
+                            (
+                                final_msg_dict
+                                if isinstance(final_msg_dict, dict)
+                                else {"content": "", "role": "assistant"}
+                            ),
+                            is_chat_completion=is_chat_completion,
+                        )
+                    else:
+                        # Defer: store state, return confirmation message, don't emit Langfuse violation
+                        with _policy_confirmation_lock:
+                            if (
+                                len(_policy_confirmation_pending)
+                                >= _MAX_POLICY_CONFIRMATION_PENDING
+                            ):
+                                _policy_confirmation_pending.pop(
+                                    next(iter(_policy_confirmation_pending)), None
+                                )
+                            raw_content = (
+                                raw_msg_dict.get("content")
+                                if isinstance(raw_msg_dict, dict)
+                                else None
+                            )
+                            had_content_before_replace = bool(
+                                _extract_text_from_message_content(raw_content).strip()
+                            )
+                            # 剥壳时已记录 category/topic，pop 出来复用，无需再解析原始格式
+                            popped_ct = (
+                                _pop_and_get_latest_category_topic_for_trace(trace_id)
+                                if had_content_before_replace
+                                else None
+                            )
+                            _policy_confirmation_pending[trace_id] = {
+                                "original_response": dict(raw_msg_dict)
+                                if isinstance(raw_msg_dict, dict)
+                                else {},
+                                "protected_response": dict(policy_result.response),
+                                "policy_reason": error_type_str,
+                                "policy_names": list(policy_result.policy_names),
+                                "policy_sources": dict(policy_result.policy_sources),
+                                "had_content_before_replace": had_content_before_replace,
+                                "popped_category_topic": popped_ct,
+                                "instruction_count_before": _policy_instruction_count_before,
+                            }
+                        confirm_content = f"{error_type_str}\n{_POLICY_CONFIRMATION_SUFFIX}"
+                        final_msg_dict = {"content": confirm_content, "role": "assistant"}
+                        # 确认消息按普通信息包：默认 category + topic "protection confirmation"
+                        _append_category_topic_for_trace(
+                            trace_id,
+                            category="COGNITIVE_CORE__RESPOND",
+                            topic="protection confirmation",
+                        )
+                        policy_confirmation_state_for_langfuse = "ask"
+                        policy_confirmation_accepted_for_langfuse = False
+                        policy_confirmation_rejected_for_langfuse = False
+                        policy_violation_reason_for_langfuse = None
+                        policy_names_for_langfuse = list(policy_result.policy_names)
+                        policy_sources_for_langfuse = dict(policy_result.policy_sources)
+                        if builder is not None:
+                            builder.instructions = list(
+                                builder.instructions[:_policy_instruction_count_before]
+                            )
+                            try:
+                                instr = builder.add_from_structured_output(
+                                    structured={
+                                        "intent": "RESPOND",
+                                        "content": confirm_content,
+                                    }
+                                )
+                                instr["policy_confirmation_ask"] = True
+                            except Exception:
+                                pass
+                            _save_instructions_to_trace_file(trace_id, builder)
+                        _apply_canonical_message_to_response(
+                            response,
+                            final_msg_dict,
+                            is_chat_completion=is_chat_completion,
+                        )
 
         fallback_text = os.getenv(
             "ARBITEROS_EMPTY_ASSISTANT_FALLBACK",
@@ -6536,14 +6713,11 @@ class MyCustomHandler(CustomLogger):
                 final_msg_dict.get("tool_calls") or final_msg_dict.get("function_call")
             )
         ):
-            try:
-                if is_chat_completion:
-                    response.choices[0].message = Message(**final_msg_dict)
-                else:
-                    if hasattr(response, "output_text"):
-                        setattr(response, "output_text", final_msg_dict.get("content"))
-            except Exception:
-                pass
+            _apply_canonical_message_to_response(
+                response,
+                final_msg_dict,
+                is_chat_completion=is_chat_completion,
+            )
         _emit_response_nodes(
             request_data=data,
             response_before_transform=raw_msg_dict,
@@ -6577,14 +6751,11 @@ class MyCustomHandler(CustomLogger):
                 final_msg_dict.get("tool_calls") or final_msg_dict.get("function_call")
             )
         ):
-            try:
-                if is_chat_completion:
-                    response.choices[0].message = Message(**final_msg_dict)
-                else:
-                    if hasattr(response, "output_text"):
-                        setattr(response, "output_text", final_msg_dict.get("content"))
-            except Exception:
-                pass
+            _apply_canonical_message_to_response(
+                response,
+                final_msg_dict,
+                is_chat_completion=is_chat_completion,
+            )
         _persist_trace_backup_state(
             _trace_id,
             metadata=(data.get("metadata") if isinstance(data, dict) else None),
@@ -6617,72 +6788,56 @@ class MyCustomHandler(CustomLogger):
         apply_transform = (
             response_transform is not None and not is_responses_input_request
         )
-        completed_response_obj: Optional[dict] = None
-        responses_text_parts: list[str] = []
+        responses_tracker = _ResponsesStreamTracker()
+        responses_stream_error: Optional[Exception] = None
 
-        async for chunk in response:
-            chunk_dump: Optional[dict] = None
-            event_type: Optional[str] = None
-            if hasattr(chunk, "type") and isinstance(getattr(chunk, "type"), str):
-                event_type = getattr(chunk, "type")
-            elif isinstance(chunk, dict) and isinstance(chunk.get("type"), str):
-                event_type = chunk.get("type")
-
-            if hasattr(chunk, "model_dump"):
-                try:
-                    maybe_dump = chunk.model_dump()
-                except Exception:
-                    maybe_dump = None
-                if isinstance(maybe_dump, dict):
-                    chunk_dump = maybe_dump
-                    if event_type is None and isinstance(chunk_dump.get("type"), str):
-                        event_type = chunk_dump.get("type")
-            elif isinstance(chunk, dict):
-                chunk_dump = chunk
-
-            if event_type in {"response.completed", "response.failed"}:
-                response_obj = (
-                    chunk_dump.get("response") if isinstance(chunk_dump, dict) else None
+        try:
+            async for chunk in response:
+                chunk_dump, event_type = _pa_extract_stream_chunk_dump_and_event_type(chunk)
+                _pa_update_responses_tracker_from_chunk(
+                    responses_tracker, chunk_dump=chunk_dump, event_type=event_type
                 )
-                if isinstance(response_obj, dict):
-                    completed_response_obj = response_obj
 
-            if is_responses_input_request:
-                part = _extract_stream_text_from_responses_chunk(chunk, chunk_dump)
-                if part:
-                    responses_text_parts.append(part)
-            if (
-                isinstance(chunk, (ModelResponseStream, ModelResponse))
-                and not is_responses_input_request
-            ):
-                collected.append(chunk)
-            if not apply_transform:
-                out = chunk
-                if stream_chunk_transform is not None:
-                    if asyncio.iscoroutinefunction(stream_chunk_transform):
-                        out = await stream_chunk_transform(request_data, chunk)
-                    else:
-                        out = stream_chunk_transform(request_data, chunk)
-                    if out is None:
-                        out = chunk
-                yield out
+                if is_responses_input_request:
+                    _pa_collect_responses_stream_text(
+                        responses_tracker, chunk=chunk, chunk_dump=chunk_dump
+                    )
+                if (
+                    isinstance(chunk, (ModelResponseStream, ModelResponse))
+                    and not is_responses_input_request
+                ):
+                    collected.append(chunk)
+                if not apply_transform and not is_responses_input_request:
+                    out = chunk
+                    if stream_chunk_transform is not None:
+                        if asyncio.iscoroutinefunction(stream_chunk_transform):
+                            out = await stream_chunk_transform(request_data, chunk)
+                        else:
+                            out = stream_chunk_transform(request_data, chunk)
+                        if out is None:
+                            out = chunk
+                    yield out
+        except Exception as stream_exc:
+            # Responses API stream can fail on malformed provider chunks
+            # (e.g. `response.completed` missing `response.output`).
+            # Preserve already-streamed deltas and synthesize completion below.
+            if not is_responses_input_request:
+                raise
+            responses_stream_error = stream_exc
 
         if is_responses_input_request:
-            completed_text = (
-                _extract_text_from_responses_output(completed_response_obj)
-                if isinstance(completed_response_obj, dict)
-                else ""
+            request_model = (
+                request_data.get("model")
+                if isinstance(request_data.get("model"), str)
+                else None
             )
-            if not completed_text and responses_text_parts:
-                completed_text = "".join(responses_text_parts).strip()
-            synthesized_response = {
-                "content": completed_text if completed_text else None,
-                "role": "assistant",
-                "tool_calls": None,
-                "function_call": None,
-                "provider_specific_fields": {"format": "openai-responses-v1"},
-                "annotations": [],
-            }
+            responses_final = _pa_finalize_responses_stream(
+                tracker=responses_tracker,
+                request_model=request_model,
+                stream_error=responses_stream_error,
+            )
+            completed_response_obj = responses_final.completed_response_obj
+            synthesized_response = responses_final.synthesized_response
             fallback_text = os.getenv(
                 "ARBITEROS_EMPTY_ASSISTANT_FALLBACK",
                 "抱歉，我这次没有生成有效回复，请重试。",
@@ -6691,15 +6846,11 @@ class MyCustomHandler(CustomLogger):
                 synthesized_response, fallback_text=fallback_text
             )
             _save_json(
-                "post_call_success",
+                "post_call_stream_responses",
                 {
                     "response": synthesized_response,
                     "response_summary": {
-                        "source": (
-                            "responses.completed_event"
-                            if isinstance(completed_response_obj, dict)
-                            else "responses.stream_delta_fallback"
-                        ),
+                        "source": responses_final.response_summary_source,
                         "status": (
                             completed_response_obj.get("status")
                             if isinstance(completed_response_obj, dict)
@@ -6711,34 +6862,402 @@ class MyCustomHandler(CustomLogger):
                             and isinstance(completed_response_obj.get("output"), list)
                             else None
                         ),
+                        "stream_error_type": (
+                            type(responses_stream_error).__name__
+                            if responses_stream_error is not None
+                            else None
+                        ),
                     },
                 },
             )
-            _emit_response_nodes(
-                request_data=request_data,
-                response_before_transform=synthesized_response,
-                response_after_transform=synthesized_response,
-            )
-            _metadata_rsp = (
-                request_data.get("metadata") if isinstance(request_data, dict) else None
-            )
-            _trace_id_rsp = (
-                _metadata_rsp.get("arbiteros_trace_id")
-                if isinstance(_metadata_rsp, dict)
-                else None
-            )
-            if not isinstance(_trace_id_rsp, str) or not _trace_id_rsp.strip():
-                _context_rsp = _build_device_context(request_data)
-                _state_rsp, _ = _ensure_trace_state(_context_rsp)
-                _trace_id_rsp = _state_rsp.trace_id if _state_rsp is not None else None
-            _accumulate_trace_total_tokens(_trace_id_rsp, completed_response_obj)
-            _persist_trace_backup_state(
-                _trace_id_rsp,
-                metadata=(
-                    request_data.get("metadata")
+            synthesized_model_response = _msg_dict_to_model_response(
+                synthesized_response,
+                model=(
+                    request_data.get("model")
                     if isinstance(request_data, dict)
-                    else None
+                    and isinstance(request_data.get("model"), str)
+                    else "arbiteros-responses-stream"
                 ),
+            )
+            # For responses/codex, policy + local confirm must run before any client-visible
+            # completion event is emitted. This keeps governance semantics identical to
+            # chat-completions agents (pre-return policy gate).
+            post_processed_response = synthesized_model_response
+            try:
+                keepalive_interval_sec = float(
+                    os.getenv("ARBITEROS_RESPONSES_KEEPALIVE_INTERVAL_SEC", "5")
+                )
+                keepalive_interval_sec = (
+                    keepalive_interval_sec if keepalive_interval_sec > 0 else 5.0
+                )
+                progress_response_id = (
+                    completed_response_obj.get("id")
+                    if isinstance(completed_response_obj, dict)
+                    and isinstance(completed_response_obj.get("id"), str)
+                    else (
+                        responses_tracker.response_id
+                        if isinstance(responses_tracker.response_id, str)
+                        and responses_tracker.response_id.strip()
+                        else f"resp_arbiteros_progress_{int(time.time() * 1000)}"
+                    )
+                )
+                progress_model_name = (
+                    completed_response_obj.get("model")
+                    if isinstance(completed_response_obj, dict)
+                    and isinstance(completed_response_obj.get("model"), str)
+                    else (responses_tracker.model_name or request_model or "")
+                )
+
+                def _run_post_call_success_sync() -> Any:
+                    return asyncio.run(
+                        self.async_post_call_success_hook(
+                            data=request_data,
+                            user_api_key_dict=user_api_key_dict,
+                            response=synthesized_model_response,
+                        )
+                    )
+
+                post_hook_task = asyncio.create_task(
+                    asyncio.to_thread(_run_post_call_success_sync)
+                )
+                last_keepalive_at = 0.0
+                while not post_hook_task.done():
+                    now = time.monotonic()
+                    if now - last_keepalive_at >= keepalive_interval_sec:
+                        keepalive_event = {
+                            "type": "response.in_progress",
+                            "response": {
+                                "id": progress_response_id,
+                                "object": "response",
+                                "status": "in_progress",
+                                "model": progress_model_name,
+                            },
+                        }
+                        yield json.dumps(
+                            keepalive_event,
+                            ensure_ascii=False,
+                            default=str,
+                        )
+                        last_keepalive_at = now
+                    await asyncio.sleep(0.2)
+                post_processed_response = await post_hook_task
+            except Exception as post_exc:
+                _save_json(
+                    "post_call_stream_responses_post_hook_error",
+                    {"error": repr(post_exc)},
+                )
+
+            post_canonical = _to_canonical_assistant_message(post_processed_response)
+            post_msg_dict = (
+                post_canonical.message
+                if isinstance(post_canonical.message, dict)
+                else synthesized_response
+            )
+            final_text = _extract_text_from_message_content(
+                post_msg_dict.get("content") if isinstance(post_msg_dict, dict) else None
+            ).strip()
+            if not final_text:
+                final_text = _extract_text_from_message_content(
+                    synthesized_response.get("content")
+                    if isinstance(synthesized_response, dict)
+                    else None
+                ).strip()
+            if not final_text:
+                final_text = responses_final.completed_text
+
+            final_response_id = (
+                completed_response_obj.get("id")
+                if isinstance(completed_response_obj, dict)
+                and isinstance(completed_response_obj.get("id"), str)
+                and completed_response_obj.get("id").strip()
+                else (
+                    responses_tracker.response_id
+                    if isinstance(responses_tracker.response_id, str)
+                    and responses_tracker.response_id.strip()
+                    else f"resp_arbiteros_{int(time.time() * 1000)}"
+                )
+            )
+            final_model_name = (
+                completed_response_obj.get("model")
+                if isinstance(completed_response_obj, dict)
+                and isinstance(completed_response_obj.get("model"), str)
+                else (responses_tracker.model_name or request_model)
+            )
+            final_tool_calls: list[dict[str, Any]] = []
+            request_tool_names = _extract_request_tool_names(request_data)
+            if isinstance(post_msg_dict, dict) and isinstance(
+                post_msg_dict.get("tool_calls"), list
+            ):
+                for tc in post_msg_dict.get("tool_calls") or []:
+                    if isinstance(tc, dict):
+                        final_tool_calls.append(dict(tc))
+            if _is_codex_tool_agent() and not final_tool_calls and final_text:
+                trace_id_for_synth = (
+                    request_data.get("metadata", {}).get("arbiteros_trace_id")
+                    if isinstance(request_data, dict)
+                    and isinstance(request_data.get("metadata"), dict)
+                    else None
+                )
+                text_part_for_tool, tool_args_list = _extract_codex_suffix_json_objects(
+                    final_text
+                )
+                if tool_args_list:
+                    final_text = text_part_for_tool.strip()
+                    for idx, tool_args in enumerate(tool_args_list, start=1):
+                        if not isinstance(tool_args, dict):
+                            continue
+                        tc_id = _build_codex_synthetic_tool_call_id(
+                            trace_id=trace_id_for_synth
+                            if isinstance(trace_id_for_synth, str)
+                            else None,
+                            ordinal=idx,
+                            arguments=tool_args,
+                        )
+                        inferred_name = _infer_codex_tool_name_from_arguments(tool_args)
+                        tc_name = _resolve_codex_tool_name_for_request(
+                            inferred_name, request_tool_names
+                        )
+                        final_tool_calls.append(
+                            {
+                                "id": tc_id,
+                                "type": "function",
+                                "function": {
+                                    "name": tc_name,
+                                    "arguments": json.dumps(
+                                        tool_args, ensure_ascii=False, default=str
+                                    ),
+                                },
+                            }
+                        )
+
+            now_token = datetime.utcnow().strftime("%Y%m%d%H%M%S%f")
+            final_item_id = f"msg_arbiteros_{now_token}"
+            final_output_items: list[dict[str, Any]] = []
+            created_event = {
+                "type": "response.created",
+                "response": {
+                    "id": final_response_id,
+                    "object": "response",
+                    "status": "in_progress",
+                    "model": final_model_name or "",
+                    "metadata": {},
+                    "output": [],
+                },
+            }
+            yield json.dumps(created_event, ensure_ascii=False, default=str)
+            in_progress_event = {
+                "type": "response.in_progress",
+                "response": {
+                    "id": final_response_id,
+                    "object": "response",
+                    "status": "in_progress",
+                    "model": final_model_name or "",
+                },
+            }
+            yield json.dumps(in_progress_event, ensure_ascii=False, default=str)
+
+            output_index = 0
+            if isinstance(final_text, str) and final_text:
+                output_item_payload = {
+                    "type": "message",
+                    "id": final_item_id,
+                    "status": "completed",
+                    "role": "assistant",
+                    "content": [],
+                }
+                content_part_payload = {
+                    "type": "output_text",
+                    "text": "",
+                    "annotations": [],
+                }
+                output_item_payload["content"].append(content_part_payload)
+                output_item_added_event = {
+                    "type": "response.output_item.added",
+                    "response_id": final_response_id,
+                    "output_index": output_index,
+                    "item": output_item_payload,
+                }
+                yield json.dumps(
+                    output_item_added_event,
+                    ensure_ascii=False,
+                    default=str,
+                )
+                content_part_added_event = {
+                    "type": "response.content_part.added",
+                    "response_id": final_response_id,
+                    "output_index": output_index,
+                    "item_id": final_item_id,
+                    "content_index": 0,
+                    "part": content_part_payload,
+                }
+                yield json.dumps(
+                    content_part_added_event,
+                    ensure_ascii=False,
+                    default=str,
+                )
+                # Codex responses UI relies on text-delta events to render content.
+                text_delta_event = {
+                    "type": "response.output_text.delta",
+                    "response_id": final_response_id,
+                    "item_id": final_item_id,
+                    "output_index": output_index,
+                    "content_index": 0,
+                    "delta": final_text,
+                }
+                yield json.dumps(
+                    text_delta_event,
+                    ensure_ascii=False,
+                    default=str,
+                )
+                text_done_event = {
+                    "type": "response.output_text.done",
+                    "response_id": final_response_id,
+                    "item_id": final_item_id,
+                    "output_index": output_index,
+                    "content_index": 0,
+                    "text": final_text,
+                }
+                yield json.dumps(
+                    text_done_event,
+                    ensure_ascii=False,
+                    default=str,
+                )
+            content_part_done_event = {
+                "type": "response.content_part.done",
+                "response_id": final_response_id,
+                "output_index": output_index,
+                "item_id": final_item_id,
+                "content_index": 0,
+                "part": {
+                    "type": "output_text",
+                    "text": final_text if isinstance(final_text, str) else "",
+                    "annotations": [],
+                },
+            }
+            yield json.dumps(
+                content_part_done_event,
+                ensure_ascii=False,
+                default=str,
+            )
+            output_item_done_event = {
+                "type": "response.output_item.done",
+                "response_id": final_response_id,
+                "output_index": output_index,
+                "item": {
+                    "type": "message",
+                    "id": final_item_id,
+                    "status": "completed",
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": final_text if isinstance(final_text, str) else "",
+                            "annotations": [],
+                        }
+                    ],
+                },
+            }
+            yield json.dumps(
+                output_item_done_event,
+                ensure_ascii=False,
+                default=str,
+            )
+            final_output_items.append(
+                {
+                    "type": "message",
+                    "id": final_item_id,
+                    "status": "completed",
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": final_text if isinstance(final_text, str) else "",
+                            "annotations": [],
+                        }
+                    ],
+                }
+            )
+            output_index += 1
+            for tc_idx, tc in enumerate(final_tool_calls, start=1):
+                fn = tc.get("function") if isinstance(tc, dict) else None
+                fn_name = (
+                    fn.get("name")
+                    if isinstance(fn, dict) and isinstance(fn.get("name"), str)
+                    else "unknown_tool"
+                )
+                fn_args = (
+                    fn.get("arguments")
+                    if isinstance(fn, dict) and isinstance(fn.get("arguments"), str)
+                    else "{}"
+                )
+                tc_call_id = (
+                    tc.get("id")
+                    if isinstance(tc, dict) and isinstance(tc.get("id"), str)
+                    else f"call_arbiteros_{tc_idx}_{now_token}"
+                )
+                function_item_id = f"fc_{tc_call_id}"
+                function_item = {
+                    "type": "function_call",
+                    "id": function_item_id,
+                    "call_id": tc_call_id,
+                    "name": fn_name,
+                    "arguments": fn_args,
+                    "status": "completed",
+                }
+                function_item_added_event = {
+                    "type": "response.output_item.added",
+                    "response_id": final_response_id,
+                    "output_index": output_index,
+                    "item": function_item,
+                }
+                yield json.dumps(
+                    function_item_added_event,
+                    ensure_ascii=False,
+                    default=str,
+                )
+                fn_args_done_event = {
+                    "type": "response.function_call_arguments.done",
+                    "response_id": final_response_id,
+                    "item_id": function_item_id,
+                    "output_index": output_index,
+                    "arguments": fn_args,
+                }
+                yield json.dumps(
+                    fn_args_done_event,
+                    ensure_ascii=False,
+                    default=str,
+                )
+                function_item_done_event = {
+                    "type": "response.output_item.done",
+                    "response_id": final_response_id,
+                    "output_index": output_index,
+                    "item": function_item,
+                }
+                yield json.dumps(
+                    function_item_done_event,
+                    ensure_ascii=False,
+                    default=str,
+                )
+                final_output_items.append(function_item)
+                output_index += 1
+
+            final_completed_event = {
+                "type": "response.completed",
+                "response": {
+                    "id": final_response_id,
+                    "object": "response",
+                    "status": "completed",
+                    "model": final_model_name or "",
+                    "metadata": {},
+                    "output": final_output_items,
+                    "output_text": final_text if isinstance(final_text, str) else "",
+                },
+            }
+            # Emit explicit JSON string to guarantee valid SSE payload for Codex.
+            yield json.dumps(
+                final_completed_event,
+                ensure_ascii=False,
+                default=str,
             )
             return
 
@@ -6777,371 +7296,15 @@ class MyCustomHandler(CustomLogger):
                     )
             return
 
-        msg = complete.choices[0].message
-        msg_dict = (
-            _to_json(msg)
-            if isinstance(msg, dict)
-            else (
-                msg.model_dump()
-                if hasattr(msg, "model_dump")
-                else (msg.dict() if hasattr(msg, "dict") else None)
-            )
+        await self.async_post_call_success_hook(
+            data=request_data,
+            user_api_key_dict=user_api_key_dict,
+            response=complete,
         )
-        raw_msg_dict = msg_dict
+        canonical_complete = _to_canonical_assistant_message(complete)
+        msg_dict = canonical_complete.message
 
-        # 记录 instruction 数量，供 policy 保护时标记本次添加的 instructions
-        _policy_instruction_count_before_stream = 0
-        if InstructionBuilder is not None:
-            metadata_pre = (
-                request_data.get("metadata") if isinstance(request_data, dict) else {}
-            )
-            _policy_trace_id_stream = (
-                metadata_pre.get("arbiteros_trace_id")
-                if isinstance(metadata_pre, dict)
-                else None
-            )
-            if (
-                isinstance(_policy_trace_id_stream, str)
-                and _policy_trace_id_stream.strip()
-            ):
-                builder_pre = _get_instruction_builder_for_trace(
-                    _policy_trace_id_stream
-                )
-                _policy_instruction_count_before_stream = (
-                    len(getattr(builder_pre, "instructions", [])) if builder_pre else 0
-                )
-
-        # 提前解析 trace_id 和 apply_info_stream，供 mock 路径判断（避免重复 log）及 response_transform 是否跳过
-        metadata = (
-            request_data.get("metadata") if isinstance(request_data, dict) else None
-        )
-        trace_id_stream = (
-            metadata.get("arbiteros_trace_id") if isinstance(metadata, dict) else None
-        )
-        if not isinstance(trace_id_stream, str) or not trace_id_stream.strip():
-            context = _build_device_context(request_data)
-            _state, _ = _ensure_trace_state(context)
-            trace_id_stream = _state.trace_id if _state is not None else None
-        _accumulate_trace_total_tokens(trace_id_stream, complete)
-        with _policy_confirmation_lock:
-            apply_info_stream = (
-                _policy_confirmation_apply_info.pop(trace_id_stream.strip(), None)
-                if isinstance(trace_id_stream, str) and trace_id_stream.strip()
-                else None
-            )
-            skip_policy_check_stream = (
-                (trace_id_stream.strip() in _policy_confirmation_no_apply)
-                if isinstance(trace_id_stream, str) and trace_id_stream.strip()
-                else False
-            )
-            if skip_policy_check_stream:
-                _policy_confirmation_no_apply.discard(trace_id_stream.strip())
-
-        # mock_response 路径不重复 log（pre_call 已返回 mock，post_call 仍会执行，避免 api_calls 重复）
-        if not (apply_info_stream is not None or skip_policy_check_stream):
-            _save_json("post_call_success", {"response": msg_dict})
-
-        # 有 apply_info 时跳过 response_transform 的 instruction 添加（避免重复），但需补上 category/topic slot
-        # 仅当 mock 返回的 response 有 content 时才追加；tool_calls-only 不包、不消耗槽位，追加会导致多一个 policy protected 错位
-        if apply_info_stream is not None and not apply_info_stream.get(
-            "slot_appended_in_pre_call"
-        ):
-            mock_content = (
-                msg_dict.get("content") if isinstance(msg_dict, dict) else None
-            )
-            if _extract_text_from_message_content(mock_content).strip():
-                _record_stripped_category(
-                    request_data, "COGNITIVE_CORE__RESPOND", topic="policy protected"
-                )
-
-        # instruction_parsing: 流式场景下同样在 post_call 时立即截获 tool_calls
-        if msg_dict is not None and InstructionBuilder is not None:
-            trace_id = trace_id_stream
-            if isinstance(trace_id, str) and trace_id.strip():
-                for tc_detail in _extract_tool_call_details_from_response(msg_dict):
-                    try:
-                        args = tc_detail.get("arguments") or {}
-                        args = _ensure_reference_tool_id_in_arguments(
-                            args,
-                            tc_detail.get("tool_call_id"),
-                            trace_id,
-                        )
-                        builder = _get_instruction_builder_for_trace(trace_id)
-                        if builder is not None:
-                            builder.add_from_tool_call(
-                                tool_name=tc_detail["tool_name"],
-                                tool_call_id=tc_detail["tool_call_id"],
-                                arguments=args,
-                                result=None,
-                            )
-                            _save_instructions_to_trace_file(trace_id, builder)
-                    except Exception:
-                        pass
-
-        if apply_transform and msg_dict is not None:
-            req_for_transform = request_data
-            if apply_info_stream is not None or skip_policy_check_stream:
-                req_for_transform = (
-                    dict(request_data) if isinstance(request_data, dict) else {}
-                )
-                req_for_transform["_skip_category_topic_recording"] = True
-                # 用户选 Yes 时 pre_call 已追加 protected instruction，response_transform 不再重复添加
-                if (
-                    apply_info_stream is not None
-                    and apply_info_stream.get("instruction_already_applied")
-                    and apply_info_stream.get("policy_confirmation_accepted")
-                ):
-                    req_for_transform["_skip_instruction_adding"] = True
-            if asyncio.iscoroutinefunction(response_transform):
-                modified_dict = await response_transform(req_for_transform, msg_dict)
-            else:
-                modified_dict = response_transform(req_for_transform, msg_dict)
-            if modified_dict is not None and isinstance(modified_dict, dict):
-                msg_dict = modified_dict
-
-        # Policy check: 剥完 category/topic 后，在回复 agent 前检查
-        policy_violation_reason_for_langfuse: Optional[str] = None
-        policy_names_for_langfuse: list[str] = []
-        policy_sources_for_langfuse: dict[str, str] = {}
-        policy_confirmation_state_for_langfuse: Optional[str] = None
-        policy_confirmation_accepted_for_langfuse: Optional[bool] = None
-        policy_confirmation_rejected_for_langfuse: Optional[bool] = None
-        inactivate_error_type_for_langfuse: Optional[str] = None
-        trace_id = trace_id_stream
-        if apply_info_stream is not None:
-            policy_confirmation_state = apply_info_stream.get(
-                "policy_confirmation_state"
-            )
-            if (
-                isinstance(policy_confirmation_state, str)
-                and policy_confirmation_state.strip()
-            ):
-                policy_confirmation_state_for_langfuse = (
-                    policy_confirmation_state.strip()
-                )
-            elif apply_info_stream.get("policy_reason"):
-                policy_confirmation_state_for_langfuse = "accepted"
-            if isinstance(apply_info_stream.get("policy_confirmation_accepted"), bool):
-                policy_confirmation_accepted_for_langfuse = apply_info_stream.get(
-                    "policy_confirmation_accepted"
-                )
-            if isinstance(apply_info_stream.get("policy_confirmation_rejected"), bool):
-                policy_confirmation_rejected_for_langfuse = apply_info_stream.get(
-                    "policy_confirmation_rejected"
-                )
-            if policy_confirmation_state_for_langfuse != "rejected":
-                policy_violation_reason_for_langfuse = (
-                    apply_info_stream.get("policy_reason") or None
-                )
-            policy_names_for_langfuse = list(
-                apply_info_stream.get("policy_names") or []
-            )
-            policy_sources_for_langfuse = dict(
-                apply_info_stream.get("policy_sources") or {}
-            )
-            if policy_violation_reason_for_langfuse:
-                _record_policy_protected_tool_calls(
-                    trace_id=trace_id,
-                    raw_response=apply_info_stream.get("raw_response"),
-                    policy_checked_response=apply_info_stream.get("protected_response"),
-                    policy_reason=policy_violation_reason_for_langfuse,
-                )
-            if (
-                InstructionBuilder is not None
-                and isinstance(trace_id, str)
-                and trace_id.strip()
-                and not apply_info_stream.get("instruction_already_applied")
-            ):
-                builder = _get_instruction_builder_for_trace(trace_id)
-                if builder is not None:
-                    protected = apply_info_stream.get("protected_response")
-                    if isinstance(protected, dict):
-                        count_before = len(getattr(builder, "instructions", []) or [])
-                        _add_instructions_from_modified_response(builder, protected)
-                        for instr in builder.instructions[count_before:]:
-                            instr["policy_protected"] = (
-                                policy_violation_reason_for_langfuse or ""
-                            )
-                        _save_instructions_to_trace_file(trace_id, builder)
-            elif apply_info_stream.get("policy_confirmation_rejected"):
-                builder = _get_instruction_builder_for_trace(trace_id)
-                if builder is not None:
-                    instrs = getattr(builder, "instructions", []) or []
-                    for instr in instrs[
-                        _policy_instruction_count_before_stream:
-                    ]:
-                        instr["user_approved"] = True
-                    _save_instructions_to_trace_file(trace_id, builder)
-        elif not skip_policy_check_stream and isinstance(msg_dict, dict):
-            if isinstance(trace_id, str) and trace_id.strip():
-                builder = _get_instruction_builder_for_trace(trace_id)
-                instructions = (
-                    list(getattr(builder, "instructions", [])) if builder else []
-                )
-                latest_instructions = instructions[
-                    _policy_instruction_count_before_stream:
-                ]
-                instructions_for_policy, latest_for_policy = (
-                    apply_user_approval_preprocessing(
-                        instructions=instructions,
-                        latest_instructions=latest_instructions,
-                    )
-                )
-                extracted_user_messages = _extract_all_user_messages_from_request(
-                    request_data
-                )
-                role_policy_override = _extract_role_policy_override_from_request(
-                    request_data
-                )
-                role_name_for_policy_cfg = _extract_role_name_for_policy_config(
-                    request_data
-                )
-                (
-                    role_policy_config_override,
-                    _role_policy_config_source,
-                    role_policy_config_fallback_reason,
-                ) = load_role_policy_config(role_name_for_policy_cfg)
-                if isinstance(role_policy_config_fallback_reason, str):
-                    _save_json(
-                        "role_policy_config_fallback",
-                        {
-                            "trace_id": trace_id,
-                            "role_name": role_name_for_policy_cfg or "",
-                            "reason": role_policy_config_fallback_reason,
-                        },
-                    )
-                policy_runtime_context = _build_policy_runtime_context(
-                    trace_id, instructions_for_policy
-                )
-                runtime_override_ctx = (
-                    policy_runtime_override(role_policy_config_override)
-                    if isinstance(role_policy_config_override, dict)
-                    else nullcontext()
-                )
-                with runtime_override_ctx:
-                    policy_result = check_response_policy(
-                        user_messages=extracted_user_messages,
-                        trace_id=trace_id,
-                        instructions=instructions_for_policy,
-                        current_response=msg_dict,
-                        latest_instructions=latest_for_policy,
-                        policy_enabled_override=role_policy_override,
-                        policy_runtime_context=policy_runtime_context,
-                    )
-                if not policy_result.modified:
-                    _ia_policy = policy_result.inactivate_error_type
-                    if isinstance(_ia_policy, str) and _ia_policy.strip():
-                        inactivate_error_type_for_langfuse = _ia_policy.strip()
-                if policy_result.modified:
-                    error_type_str = (policy_result.error_type or "").strip()
-                    # Defer: store state, return confirmation message, don't emit Langfuse violation
-                    with _policy_confirmation_lock:
-                        if (
-                            len(_policy_confirmation_pending)
-                            >= _MAX_POLICY_CONFIRMATION_PENDING
-                        ):
-                            _policy_confirmation_pending.pop(
-                                next(iter(_policy_confirmation_pending)), None
-                            )
-                        raw_content = (
-                            raw_msg_dict.get("content")
-                            if isinstance(raw_msg_dict, dict)
-                            else None
-                        )
-                        had_content_before_replace = bool(
-                            _extract_text_from_message_content(raw_content).strip()
-                        )
-                        popped_ct = (
-                            _pop_and_get_latest_category_topic_for_trace(trace_id)
-                            if had_content_before_replace
-                            else None
-                        )
-                        _policy_confirmation_pending[trace_id] = {
-                            "original_response": dict(raw_msg_dict)
-                            if isinstance(raw_msg_dict, dict)
-                            else {},
-                            "protected_response": dict(policy_result.response),
-                            "policy_reason": error_type_str,
-                            "policy_names": list(policy_result.policy_names),
-                            "policy_sources": dict(policy_result.policy_sources),
-                            "had_content_before_replace": had_content_before_replace,
-                            "popped_category_topic": popped_ct,
-                            "instruction_count_before": _policy_instruction_count_before_stream,
-                        }
-                    confirm_content = f"{error_type_str}\n{_POLICY_CONFIRMATION_SUFFIX}"
-                    msg_dict = {"content": confirm_content, "role": "assistant"}
-                    # 确认消息按普通信息包：默认 category + topic "protection confirmation"
-                    _append_category_topic_for_trace(
-                        trace_id,
-                        category="COGNITIVE_CORE__RESPOND",
-                        topic="protection confirmation",
-                    )
-                    policy_confirmation_state_for_langfuse = "ask"
-                    policy_confirmation_accepted_for_langfuse = False
-                    policy_confirmation_rejected_for_langfuse = False
-                    policy_violation_reason_for_langfuse = None
-                    policy_names_for_langfuse = list(policy_result.policy_names)
-                    policy_sources_for_langfuse = dict(policy_result.policy_sources)
-                    if builder is not None:
-                        builder.instructions = list(
-                            builder.instructions[
-                                :_policy_instruction_count_before_stream
-                            ]
-                        )
-                        try:
-                            instr = builder.add_from_structured_output(
-                                structured={
-                                    "intent": "RESPOND",
-                                    "content": confirm_content,
-                                }
-                            )
-                            instr["policy_confirmation_ask"] = True
-                        except Exception:
-                            pass
-                        _save_instructions_to_trace_file(trace_id, builder)
-
-        fallback_text = os.getenv(
-            "ARBITEROS_EMPTY_ASSISTANT_FALLBACK",
-            "抱歉，我这次没有生成有效回复，请重试。",
-        )
-        msg_dict = _ensure_non_empty_assistant_message(
-            msg_dict, fallback_text=fallback_text
-        )
-
-        _emit_response_nodes(
-            request_data=request_data,
-            response_before_transform=raw_msg_dict,
-            response_after_transform=msg_dict,
-            policy_violation_reason=policy_violation_reason_for_langfuse,
-            policy_names=policy_names_for_langfuse,
-            policy_sources=policy_sources_for_langfuse,
-            policy_confirmation_state=policy_confirmation_state_for_langfuse,
-            policy_confirmation_accepted=policy_confirmation_accepted_for_langfuse,
-            policy_confirmation_rejected=policy_confirmation_rejected_for_langfuse,
-            inactivate_error_type=inactivate_error_type_for_langfuse,
-        )
-        _ctx_warn_s = _build_device_context(request_data)
-        _state_warn_s = _resolve_trace_state_from_metadata(
-            request_data, context=_ctx_warn_s
-        )
-        if _state_warn_s is None:
-            _state_warn_s, _ = _ensure_trace_state(_ctx_warn_s)
-        _append_bootstrap_scan_notice_if_needed(
-            _state_warn_s,
-            msg_dict,
-            policy_confirmation_state=policy_confirmation_state_for_langfuse,
-        )
-        _append_pending_warnings_to_assistant_content_if_needed(
-            _state_warn_s,
-            msg_dict,
-            policy_confirmation_state=policy_confirmation_state_for_langfuse,
-        )
-        _persist_trace_backup_state(
-            trace_id_stream,
-            metadata=(request_data.get("metadata") if isinstance(request_data, dict) else None),
-        )
-
-        if apply_transform and msg_dict is not None:
+        if apply_transform and isinstance(msg_dict, dict):
             # 用修改后的内容重放为流式：拆成多个小 chunk 逐个 yield，避免下游按字符拆导致显示异常
             content = (
                 msg_dict.get("content")

@@ -1,0 +1,320 @@
+[
+    {
+        "type": "function",
+        "name": "exec_command",
+        "description": "Runs a command in a PTY, returning output or a session ID for ongoing interaction.",
+        "strict": false,
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "cmd": {
+                    "type": "string",
+                    "description": "Shell command to execute."
+                },
+                "justification": {
+                    "type": "string",
+                    "description": "Only set if sandbox_permissions is \\\"require_escalated\\\".\n                    Request approval from the user to run this command outside the sandbox.\n                    Phrased as a simple question that summarizes the purpose of the\n                    command as it relates to the task at hand - e.g. 'Do you want to\n                    fetch and pull the latest version of this git branch?'"
+                },
+                "login": {
+                    "type": "boolean",
+                    "description": "Whether to run the shell with -l/-i semantics. Defaults to true."
+                },
+                "max_output_tokens": {
+                    "type": "number",
+                    "description": "Maximum number of tokens to return. Excess output will be truncated."
+                },
+                "prefix_rule": {
+                    "type": "array",
+                    "description": "Only specify when sandbox_permissions is `require_escalated`.\n                        Suggest a prefix command pattern that will allow you to fulfill similar requests from the user in the future.\n                        Should be a short but reasonable prefix, e.g. [\\\"git\\\", \\\"pull\\\"] or [\\\"uv\\\", \\\"run\\\"] or [\\\"pytest\\\"].",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "sandbox_permissions": {
+                    "type": "string",
+                    "description": "Sandbox permissions for the command. Set to \"require_escalated\" to request running without sandbox restrictions; defaults to \"use_default\"."
+                },
+                "shell": {
+                    "type": "string",
+                    "description": "Shell binary to launch. Defaults to the user's default shell."
+                },
+                "tty": {
+                    "type": "boolean",
+                    "description": "Whether to allocate a TTY for the command. Defaults to false (plain pipes); set to true to open a PTY and access TTY process."
+                },
+                "workdir": {
+                    "type": "string",
+                    "description": "Optional working directory to run the command in; defaults to the turn cwd."
+                },
+                "yield_time_ms": {
+                    "type": "number",
+                    "description": "How long to wait (in milliseconds) for output before yielding."
+                }
+            },
+            "required": [
+                "cmd"
+            ],
+            "additionalProperties": false
+        }
+    },
+    {
+        "type": "function",
+        "name": "write_stdin",
+        "description": "Writes characters to an existing unified exec session and returns recent output.",
+        "strict": false,
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "chars": {
+                    "type": "string",
+                    "description": "Bytes to write to stdin (may be empty to poll)."
+                },
+                "max_output_tokens": {
+                    "type": "number",
+                    "description": "Maximum number of tokens to return. Excess output will be truncated."
+                },
+                "session_id": {
+                    "type": "number",
+                    "description": "Identifier of the running unified exec session."
+                },
+                "yield_time_ms": {
+                    "type": "number",
+                    "description": "How long to wait (in milliseconds) for output before yielding."
+                }
+            },
+            "required": [
+                "session_id"
+            ],
+            "additionalProperties": false
+        }
+    },
+    {
+        "type": "function",
+        "name": "update_plan",
+        "description": "Updates the task plan.\nProvide an optional explanation and a list of plan items, each with a step and status.\nAt most one step can be in_progress at a time.\n",
+        "strict": false,
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "explanation": {
+                    "type": "string"
+                },
+                "plan": {
+                    "type": "array",
+                    "description": "The list of steps",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "status": {
+                                "type": "string",
+                                "description": "One of: pending, in_progress, completed"
+                            },
+                            "step": {
+                                "type": "string"
+                            }
+                        },
+                        "required": [
+                            "step",
+                            "status"
+                        ],
+                        "additionalProperties": false
+                    }
+                }
+            },
+            "required": [
+                "plan"
+            ],
+            "additionalProperties": false
+        }
+    },
+    {
+        "type": "function",
+        "name": "get_goal",
+        "description": "Get the current goal for this thread, including status, budgets, token and elapsed-time usage, and remaining token budget.",
+        "strict": false,
+        "parameters": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": false
+        }
+    },
+    {
+        "type": "function",
+        "name": "create_goal",
+        "description": "Create a goal only when explicitly requested by the user or system/developer instructions; do not infer goals from ordinary tasks.\nSet token_budget only when an explicit token budget is requested. Fails if a goal exists; use update_goal only for status.",
+        "strict": false,
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "objective": {
+                    "type": "string",
+                    "description": "Required. The concrete objective to start pursuing. This starts a new active goal only when no goal is currently defined; if a goal already exists, this tool fails."
+                },
+                "token_budget": {
+                    "type": "integer",
+                    "description": "Optional positive token budget for the new active goal."
+                }
+            },
+            "required": [
+                "objective"
+            ],
+            "additionalProperties": false
+        }
+    },
+    {
+        "type": "function",
+        "name": "update_goal",
+        "description": "Update the existing goal.\nUse this tool only to mark the goal achieved or genuinely blocked.\nSet status to `complete` only when the objective has actually been achieved and no required work remains.\nSet status to `blocked` only when the same blocking condition has repeated for at least three consecutive goal turns, counting the original/user-triggered turn and any automatic continuations, and the agent cannot make meaningful progress without user input or an external-state change.\nIf the user resumes a goal that was previously marked `blocked`, treat the resumed run as a fresh blocked audit. If the same blocking condition then repeats for at least three consecutive resumed goal turns, set status to `blocked` again.\nOnce the blocked threshold is satisfied, do not keep reporting that you are still blocked while leaving the goal active; set status to `blocked`.\nDo not use `blocked` merely because the work is hard, slow, uncertain, incomplete, or would benefit from clarification.\nDo not mark a goal complete merely because its budget is nearly exhausted or because you are stopping work.\nYou cannot use this tool to pause, resume, budget-limit, or usage-limit a goal; those status changes are controlled by the user or system.\nWhen marking a budgeted goal achieved with status `complete`, report the final token usage from the tool result to the user.",
+        "strict": false,
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "status": {
+                    "type": "string",
+                    "description": "Required. Set to `complete` only when the objective is achieved and no required work remains. Set to `blocked` only after the same blocking condition has recurred for at least three consecutive goal turns and the agent is at an impasse. After a previously blocked goal is resumed, the resumed run starts a fresh blocked audit.",
+                    "enum": [
+                        "complete",
+                        "blocked"
+                    ]
+                }
+            },
+            "required": [
+                "status"
+            ],
+            "additionalProperties": false
+        }
+    },
+    {
+        "type": "function",
+        "name": "request_user_input",
+        "description": "Request user input for one to three short questions and wait for the response. This tool is only available in Plan mode.",
+        "strict": false,
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "questions": {
+                    "type": "array",
+                    "description": "Questions to show the user. Prefer 1 and do not exceed 3",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "header": {
+                                "type": "string",
+                                "description": "Short header label shown in the UI (12 or fewer chars)."
+                            },
+                            "id": {
+                                "type": "string",
+                                "description": "Stable identifier for mapping answers (snake_case)."
+                            },
+                            "options": {
+                                "type": "array",
+                                "description": "Provide 2-3 mutually exclusive choices. Put the recommended option first and suffix its label with \"(Recommended)\". Do not include an \"Other\" option in this list; the client will add a free-form \"Other\" option automatically.",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "description": {
+                                            "type": "string",
+                                            "description": "One short sentence explaining impact/tradeoff if selected."
+                                        },
+                                        "label": {
+                                            "type": "string",
+                                            "description": "User-facing label (1-5 words)."
+                                        }
+                                    },
+                                    "required": [
+                                        "label",
+                                        "description"
+                                    ],
+                                    "additionalProperties": false
+                                }
+                            },
+                            "question": {
+                                "type": "string",
+                                "description": "Single-sentence prompt shown to the user."
+                            }
+                        },
+                        "required": [
+                            "id",
+                            "header",
+                            "question",
+                            "options"
+                        ],
+                        "additionalProperties": false
+                    }
+                }
+            },
+            "required": [
+                "questions"
+            ],
+            "additionalProperties": false
+        }
+    },
+    {
+        "type": "custom",
+        "name": "apply_patch",
+        "description": "Use the `apply_patch` tool to edit files. This is a FREEFORM tool, so do not wrap the patch in JSON.",
+        "format": {
+            "type": "grammar",
+            "syntax": "lark",
+            "definition": "start: begin_patch hunk+ end_patch\nbegin_patch: \"*** Begin Patch\" LF\nend_patch: \"*** End Patch\" LF?\n\nhunk: add_hunk | delete_hunk | update_hunk\nadd_hunk: \"*** Add File: \" filename LF add_line+\ndelete_hunk: \"*** Delete File: \" filename LF\nupdate_hunk: \"*** Update File: \" filename LF change_move? change?\n\nfilename: /(.+)/\nadd_line: \"+\" /(.*)/ LF -> line\n\nchange_move: \"*** Move to: \" filename LF\nchange: (change_context | change_line)+ eof_line?\nchange_context: (\"@@\" | \"@@ \" /(.+)/) LF\nchange_line: (\"+\" | \"-\" | \" \") /(.*)/ LF\neof_line: \"*** End of File\" LF\n\n%import common.LF\n"
+        }
+    },
+    {
+        "type": "function",
+        "name": "view_image",
+        "description": "View a local image file from the filesystem when visual inspection is needed. Use this for images already available on disk.",
+        "strict": false,
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "detail": {
+                    "type": "string",
+                    "description": "Optional detail override. Supported values are `high` and `original`; omit this field for default high resized behavior. Use `original` to preserve the file's original resolution instead of resizing to fit. This is important when high-fidelity image perception or precise localization is needed, especially for CUA agents.",
+                    "enum": [
+                        "high",
+                        "original"
+                    ]
+                },
+                "path": {
+                    "type": "string",
+                    "description": "Local filesystem path to an image file"
+                }
+            },
+            "required": [
+                "path"
+            ],
+            "additionalProperties": false
+        }
+    },
+    {
+        "type": "tool_search",
+        "execution": "client",
+        "description": "# Tool discovery\n\nSearches over deferred tool metadata with BM25 and exposes matching tools for the next model call.\n\nYou have access to tools from the following sources:\n- Multi-agent tools: Spawn and manage sub-agents.\nSome of the tools may not have been provided to you upfront, and you should use this tool (`tool_search`) to search for the required tools. For MCP tool discovery, always use `tool_search` instead of `list_mcp_resources` or `list_mcp_resource_templates`.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "limit": {
+                    "type": "number",
+                    "description": "Maximum number of tools to return (defaults to 8)."
+                },
+                "query": {
+                    "type": "string",
+                    "description": "Search query for deferred tools."
+                }
+            },
+            "required": [
+                "query"
+            ],
+            "additionalProperties": false
+        }
+    },
+    {
+        "type": "web_search",
+        "external_web_access": false,
+        "search_content_types": [
+            "text",
+            "image"
+        ]
+    }
+]

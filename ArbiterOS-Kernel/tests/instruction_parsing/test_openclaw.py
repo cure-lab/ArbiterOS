@@ -2,7 +2,29 @@
 
 import pytest
 
-from arbiteros_kernel.instruction_parsing.tool_parsers import parse_tool_instruction
+from arbiteros_kernel.instruction_parsing.tool_parsers import (
+    TOOL_PARSER_REGISTRY as _OPENCLAW_REGISTRY,
+)
+from arbiteros_kernel.instruction_parsing.types import TaintStatus
+
+
+def parse_tool_instruction(tool_name, arguments=None, *, taint_status=None):
+    """Thin wrapper that always uses the openclaw registry, ignoring litellm_config."""
+    args = arguments or {}
+    parser = _OPENCLAW_REGISTRY.get(tool_name)
+    if not parser:
+        from arbiteros_kernel.instruction_parsing.types import ToolParseResult, make_security_type
+        return ToolParseResult(
+            "EXEC",
+            make_security_type(
+                confidentiality="UNKNOWN",
+                trustworthiness="UNKNOWN",
+                confidence="UNKNOWN",
+                reversible=False,
+                authority="UNKNOWN",
+            ),
+        )
+    return parser(args, taint_status)
 from arbiteros_kernel.instruction_parsing.registries._base import (
     _path_matches,
 )

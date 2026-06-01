@@ -1,0 +1,123 @@
+# Codex tool parser definitions
+# Based on the Codex agent tool schema (11 tools total)
+
+# ─── Shell / Command execution ───────────────────────────────────────────────
+
+- tool: exec_command
+  passes:
+  - match_type: shell
+    arg: cmd
+
+# ─── PTY session interaction ─────────────────────────────────────────────────
+
+- tool: write_stdin
+  passes:
+  - match_type: default
+    result:
+      instruction_type: EXEC
+      metadata:
+        confidentiality: LOW
+        trustworthiness: HIGH
+        reversible: false
+
+# ─── Goal / plan management ──────────────────────────────────────────────────
+
+- tool: update_plan
+  passes:
+  - match_type: default
+    result:
+      instruction_type: WRITE
+      metadata:
+        confidentiality: LOW
+        trustworthiness: HIGH
+        reversible: true
+
+- tool: get_goal
+  passes:
+  - match_type: default
+    result:
+      instruction_type: READ
+      metadata:
+        confidentiality: LOW
+        trustworthiness: HIGH
+        reversible: true
+
+- tool: create_goal
+  passes:
+  - match_type: default
+    result:
+      instruction_type: WRITE
+      metadata:
+        confidentiality: LOW
+        trustworthiness: HIGH
+        reversible: true
+
+- tool: update_goal
+  passes:
+  - match_type: default
+    result:
+      instruction_type: WRITE
+      metadata:
+        confidentiality: LOW
+        trustworthiness: HIGH
+        reversible: true
+
+- tool: request_user_input
+  passes:
+  - match_type: default
+    result:
+      instruction_type: ASK
+      metadata:
+        confidentiality: LOW
+        trustworthiness: HIGH
+        reversible: true
+
+# ─── File editing ────────────────────────────────────────────────────────────
+
+- tool: apply_patch
+  passes:
+  - match_type: default
+    result:
+      instruction_type: WRITE
+      metadata:
+        confidentiality: UNKNOWN
+        trustworthiness: UNKNOWN
+        reversible: true
+
+# ─── Image viewing ───────────────────────────────────────────────────────────
+
+- tool: view_image
+  passes:
+  - match_type: default
+    result:
+      instruction_type: READ
+      metadata:
+        confidentiality: HIGH
+        trustworthiness: LOW
+        reversible: true
+  - match_type: path
+    arg: path
+
+# ─── Tool discovery ──────────────────────────────────────────────────────────
+
+- tool: tool_search
+  passes:
+  - match_type: default
+    result:
+      instruction_type: READ
+      metadata:
+        confidentiality: LOW
+        trustworthiness: HIGH
+        reversible: true
+
+# ─── Web search ──────────────────────────────────────────────────────────────
+
+- tool: web_search
+  passes:
+  - match_type: default
+    result:
+      instruction_type: READ
+      metadata:
+        confidentiality: LOW
+        trustworthiness: LOW
+        reversible: true
