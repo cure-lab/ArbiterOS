@@ -1,0 +1,398 @@
+# OpenClaw tool parser definitions.
+# Memory file regex covers: SOUL.md, MEMORY.md, AGENTS.md, USER.md, IDENTITY.md
+# and any *.md file whose immediate parent directory is named "memory".
+
+- tool: read
+  passes:
+  - match_type: default
+    result:
+      instruction_type: READ
+      metadata:
+        confidentiality: UNKNOWN
+        trustworthiness: UNKNOWN
+        reversible: true
+  - match_type: path
+    arg: path
+  - match_type: path
+    arg: file_path
+  - match_type: regex
+    cases:
+    - arg: path
+      pattern: "(^|/)(SOUL|MEMORY|AGENTS|USER|IDENTITY)\\.md$|/memory/[^/]+\\.md$"
+      result:
+        instruction_type: RETRIEVE
+        metadata:
+          confidentiality: HIGH
+          trustworthiness: HIGH
+          reversible: true
+    - arg: file_path
+      pattern: "(^|/)(SOUL|MEMORY|AGENTS|USER|IDENTITY)\\.md$|/memory/[^/]+\\.md$"
+      result:
+        instruction_type: RETRIEVE
+        metadata:
+          confidentiality: HIGH
+          trustworthiness: HIGH
+          reversible: true
+
+- tool: edit
+  passes:
+  - match_type: default
+    result:
+      instruction_type: WRITE
+      metadata:
+        confidentiality: UNKNOWN
+        trustworthiness: UNKNOWN
+        reversible: true
+  - match_type: path
+    arg: path
+  - match_type: path
+    arg: file_path
+  - match_type: regex
+    cases:
+    - arg: path
+      pattern: "(^|/)(SOUL|MEMORY|AGENTS|USER|IDENTITY)\\.md$|/memory/[^/]+\\.md$"
+      result:
+        instruction_type: STORE
+        metadata:
+          confidentiality: HIGH
+          trustworthiness: HIGH
+          reversible: true
+    - arg: file_path
+      pattern: "(^|/)(SOUL|MEMORY|AGENTS|USER|IDENTITY)\\.md$|/memory/[^/]+\\.md$"
+      result:
+        instruction_type: STORE
+        metadata:
+          confidentiality: HIGH
+          trustworthiness: HIGH
+          reversible: true
+
+- tool: write
+  passes:
+  - match_type: default
+    result:
+      instruction_type: WRITE
+      metadata:
+        confidentiality: UNKNOWN
+        trustworthiness: UNKNOWN
+        reversible: true
+  - match_type: path
+    arg: path
+  - match_type: path
+    arg: file_path
+  - match_type: regex
+    cases:
+    - arg: path
+      pattern: "(^|/)(SOUL|MEMORY|AGENTS|USER|IDENTITY)\\.md$|/memory/[^/]+\\.md$"
+      result:
+        instruction_type: STORE
+        metadata:
+          confidentiality: HIGH
+          trustworthiness: HIGH
+          reversible: true
+    - arg: file_path
+      pattern: "(^|/)(SOUL|MEMORY|AGENTS|USER|IDENTITY)\\.md$|/memory/[^/]+\\.md$"
+      result:
+        instruction_type: STORE
+        metadata:
+          confidentiality: HIGH
+          trustworthiness: HIGH
+          reversible: true
+
+- tool: exec
+  passes:
+  - match_type: shell
+    arg: command
+
+- tool: process
+  passes:
+  - match_type: default
+    result:
+      instruction_type: EXEC
+      metadata:
+        confidentiality: LOW
+        trustworthiness: HIGH
+        reversible: false
+  - match_type: regex
+    cases:
+    - arg: action
+      pattern: "^(list|log)$"
+      result:
+        instruction_type: READ
+        metadata:
+          confidentiality: HIGH
+          trustworthiness: HIGH
+          reversible: true
+    - arg: action
+      pattern: "^poll$"
+      result:
+        instruction_type: WAIT
+        metadata:
+          confidentiality: LOW
+          trustworthiness: HIGH
+          reversible: true
+
+- tool: browser
+  passes:
+  - match_type: default
+    result:
+      instruction_type: EXEC
+      metadata:
+        confidentiality: LOW
+        trustworthiness: LOW
+        reversible: false
+  - match_type: regex
+    cases:
+    - arg: action
+      pattern: "^(status|profiles|tabs|snapshot|screenshot|console|pdf)$"
+      result:
+        instruction_type: READ
+        metadata:
+          confidentiality: UNKNOWN
+          trustworthiness: LOW
+          reversible: true
+    - arg: action
+      pattern: "^dialog$"
+      result:
+        instruction_type: ASK
+        metadata:
+          confidentiality: LOW
+          trustworthiness: LOW
+          reversible: true
+
+- tool: canvas
+  passes:
+  - match_type: default
+    result:
+      instruction_type: EXEC
+      metadata:
+        confidentiality: LOW
+        trustworthiness: HIGH
+        reversible: false
+  - match_type: regex
+    cases:
+    - arg: action
+      pattern: "^snapshot$"
+      result:
+        instruction_type: READ
+        metadata:
+          confidentiality: LOW
+          trustworthiness: HIGH
+          reversible: true
+
+- tool: nodes
+  passes:
+  - match_type: default
+    result:
+      instruction_type: EXEC
+      metadata:
+        confidentiality: LOW
+        trustworthiness: LOW
+        reversible: false
+  - match_type: regex
+    cases:
+    - arg: action
+      pattern: "^(status|describe|pending|camera_list|camera_snap|camera_clip|screen_record|location_get)$"
+      result:
+        instruction_type: READ
+        metadata:
+          confidentiality: HIGH
+          trustworthiness: LOW
+          reversible: true
+
+- tool: cron
+  passes:
+  - match_type: default
+    result:
+      instruction_type: EXEC
+      metadata:
+        confidentiality: LOW
+        trustworthiness: HIGH
+        reversible: false
+  - match_type: regex
+    cases:
+    - arg: action
+      pattern: "^(status|list|runs)$"
+      result:
+        instruction_type: READ
+        metadata:
+          confidentiality: LOW
+          trustworthiness: HIGH
+          reversible: true
+    - arg: action
+      pattern: "^(add|update)$"
+      result:
+        instruction_type: SUBSCRIBE
+        metadata:
+          confidentiality: LOW
+          trustworthiness: HIGH
+          reversible: true
+
+- tool: message
+  passes:
+  - match_type: default
+    result:
+      instruction_type: EXEC
+      metadata:
+        confidentiality: LOW
+        trustworthiness: HIGH
+        reversible: false
+  - match_type: regex
+    cases:
+    - arg: action
+      pattern: "^edit$"
+      result:
+        instruction_type: WRITE
+        metadata:
+          confidentiality: HIGH
+          trustworthiness: HIGH
+          reversible: true
+
+- tool: tts
+  passes:
+  - match_type: default
+    result:
+      instruction_type: EXEC
+      metadata:
+        confidentiality: LOW
+        trustworthiness: HIGH
+        reversible: false
+
+- tool: gateway
+  passes:
+  - match_type: default
+    result:
+      instruction_type: EXEC
+      metadata:
+        confidentiality: LOW
+        trustworthiness: HIGH
+        reversible: false
+  - match_type: regex
+    cases:
+    - arg: action
+      pattern: "^config\\.(get|schema)$"
+      result:
+        instruction_type: READ
+        metadata:
+          confidentiality: HIGH
+          trustworthiness: HIGH
+          reversible: true
+    - arg: action
+      pattern: "^config\\.(apply|patch)$"
+      result:
+        instruction_type: WRITE
+        metadata:
+          confidentiality: LOW
+          trustworthiness: HIGH
+          reversible: true
+
+- tool: agents_list
+  passes:
+  - match_type: default
+    result:
+      instruction_type: RETRIEVE
+      metadata:
+        confidentiality: LOW
+        trustworthiness: HIGH
+        reversible: true
+
+- tool: sessions_list
+  passes:
+  - match_type: default
+    result:
+      instruction_type: RETRIEVE
+      metadata:
+        confidentiality: LOW
+        trustworthiness: HIGH
+        reversible: true
+
+- tool: sessions_history
+  passes:
+  - match_type: default
+    result:
+      instruction_type: RETRIEVE
+      metadata:
+        confidentiality: HIGH
+        trustworthiness: HIGH
+        reversible: true
+
+- tool: sessions_send
+  passes:
+  - match_type: default
+    result:
+      instruction_type: DELEGATE
+      metadata:
+        confidentiality: HIGH
+        trustworthiness: LOW
+        reversible: false
+
+- tool: sessions_spawn
+  passes:
+  - match_type: default
+    result:
+      instruction_type: DELEGATE
+      metadata:
+        confidentiality: HIGH
+        trustworthiness: LOW
+        reversible: false
+
+- tool: session_status
+  passes:
+  - match_type: default
+    result:
+      instruction_type: RETRIEVE
+      metadata:
+        confidentiality: LOW
+        trustworthiness: HIGH
+        reversible: true
+
+- tool: web_search
+  passes:
+  - match_type: default
+    result:
+      instruction_type: READ
+      metadata:
+        confidentiality: LOW
+        trustworthiness: LOW
+        reversible: true
+
+- tool: web_fetch
+  passes:
+  - match_type: default
+    result:
+      instruction_type: READ
+      metadata:
+        confidentiality: LOW
+        trustworthiness: LOW
+        reversible: true
+
+- tool: image
+  passes:
+  - match_type: default
+    result:
+      instruction_type: READ
+      metadata:
+        confidentiality: HIGH
+        trustworthiness: LOW
+        reversible: true
+  - match_type: path
+    arg: image
+
+- tool: memory_search
+  passes:
+  - match_type: default
+    result:
+      instruction_type: RETRIEVE
+      metadata:
+        confidentiality: HIGH
+        trustworthiness: HIGH
+        reversible: true
+
+- tool: memory_get
+  passes:
+  - match_type: default
+    result:
+      instruction_type: RETRIEVE
+      metadata:
+        confidentiality: HIGH
+        trustworthiness: HIGH
+        reversible: true

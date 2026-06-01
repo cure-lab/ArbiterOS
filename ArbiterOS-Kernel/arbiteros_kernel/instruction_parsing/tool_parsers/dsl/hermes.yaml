@@ -1,0 +1,308 @@
+# Hermes tool parser definitions.
+
+- tool: read_file
+  passes:
+  - match_type: default
+    result:
+      instruction_type: READ
+      metadata:
+        confidentiality: UNKNOWN
+        trustworthiness: UNKNOWN
+        reversible: true
+  - match_type: path
+    arg: path
+  - match_type: path
+    arg: file_path
+  - match_type: regex
+    cases:
+    - arg: path
+      pattern: "(^|/)(SOUL|MEMORY|AGENTS|USER|IDENTITY)\\.md$|/memory/[^/]+\\.md$"
+      result:
+        instruction_type: RETRIEVE
+        metadata:
+          confidentiality: HIGH
+          trustworthiness: HIGH
+          reversible: true
+    - arg: file_path
+      pattern: "(^|/)(SOUL|MEMORY|AGENTS|USER|IDENTITY)\\.md$|/memory/[^/]+\\.md$"
+      result:
+        instruction_type: RETRIEVE
+        metadata:
+          confidentiality: HIGH
+          trustworthiness: HIGH
+          reversible: true
+
+- tool: write_file
+  passes:
+  - match_type: default
+    result:
+      instruction_type: WRITE
+      metadata:
+        confidentiality: UNKNOWN
+        trustworthiness: UNKNOWN
+        reversible: true
+  - match_type: path
+    arg: path
+  - match_type: path
+    arg: file_path
+  - match_type: regex
+    cases:
+    - arg: path
+      pattern: "(^|/)(SOUL|MEMORY|AGENTS|USER|IDENTITY)\\.md$|/memory/[^/]+\\.md$"
+      result:
+        instruction_type: STORE
+        metadata:
+          confidentiality: HIGH
+          trustworthiness: HIGH
+          reversible: true
+    - arg: file_path
+      pattern: "(^|/)(SOUL|MEMORY|AGENTS|USER|IDENTITY)\\.md$|/memory/[^/]+\\.md$"
+      result:
+        instruction_type: STORE
+        metadata:
+          confidentiality: HIGH
+          trustworthiness: HIGH
+          reversible: true
+
+- tool: patch
+  passes:
+  - match_type: default
+    result:
+      instruction_type: WRITE
+      metadata:
+        confidentiality: UNKNOWN
+        trustworthiness: UNKNOWN
+        reversible: true
+  - match_type: path
+    arg: path
+  - match_type: path
+    arg: file_path
+  - match_type: regex
+    cases:
+    - arg: path
+      pattern: "(^|/)(SOUL|MEMORY|AGENTS|USER|IDENTITY)\\.md$|/memory/[^/]+\\.md$"
+      result:
+        instruction_type: STORE
+        metadata:
+          confidentiality: HIGH
+          trustworthiness: HIGH
+          reversible: true
+    - arg: file_path
+      pattern: "(^|/)(SOUL|MEMORY|AGENTS|USER|IDENTITY)\\.md$|/memory/[^/]+\\.md$"
+      result:
+        instruction_type: STORE
+        metadata:
+          confidentiality: HIGH
+          trustworthiness: HIGH
+          reversible: true
+
+- tool: terminal
+  passes:
+  - match_type: shell
+    arg: command
+
+- tool: process
+  passes:
+  - match_type: default
+    result:
+      instruction_type: EXEC
+      metadata:
+        confidentiality: LOW
+        trustworthiness: HIGH
+        reversible: false
+  - match_type: regex
+    cases:
+    - arg: action
+      pattern: "^(list|log)$"
+      result:
+        instruction_type: READ
+        metadata:
+          confidentiality: HIGH
+          trustworthiness: HIGH
+          reversible: true
+    - arg: action
+      pattern: "^poll$"
+      result:
+        instruction_type: WAIT
+        metadata:
+          confidentiality: LOW
+          trustworthiness: HIGH
+          reversible: true
+
+- tool: cronjob
+  passes:
+  - match_type: default
+    result:
+      instruction_type: EXEC
+      metadata:
+        confidentiality: LOW
+        trustworthiness: HIGH
+        reversible: false
+  - match_type: regex
+    cases:
+    - arg: action
+      pattern: "^list$"
+      result:
+        instruction_type: READ
+        metadata:
+          confidentiality: LOW
+          trustworthiness: HIGH
+          reversible: true
+    - arg: action
+      pattern: "^(create|update)$"
+      result:
+        instruction_type: SUBSCRIBE
+        metadata:
+          confidentiality: LOW
+          trustworthiness: HIGH
+          reversible: true
+
+- tool: text_to_speech
+  passes:
+  - match_type: default
+    result:
+      instruction_type: EXEC
+      metadata:
+        confidentiality: LOW
+        trustworthiness: HIGH
+        reversible: false
+
+- tool: session_search
+  passes:
+  - match_type: default
+    result:
+      instruction_type: RETRIEVE
+      metadata:
+        confidentiality: HIGH
+        trustworthiness: HIGH
+        reversible: true
+
+- tool: delegate_task
+  passes:
+  - match_type: default
+    result:
+      instruction_type: DELEGATE
+      metadata:
+        confidentiality: HIGH
+        trustworthiness: LOW
+        reversible: false
+
+- tool: web_search
+  passes:
+  - match_type: default
+    result:
+      instruction_type: READ
+      metadata:
+        confidentiality: LOW
+        trustworthiness: LOW
+        reversible: true
+
+- tool: vision_analyze
+  passes:
+  - match_type: default
+    result:
+      instruction_type: READ
+      metadata:
+        confidentiality: HIGH
+        trustworthiness: LOW
+        reversible: true
+
+- tool: browser_navigate
+  passes:
+  - match_type: default
+    result:
+      instruction_type: EXEC
+      metadata:
+        confidentiality: LOW
+        trustworthiness: LOW
+        reversible: false
+
+- tool: browser_click
+  passes:
+  - match_type: default
+    result:
+      instruction_type: EXEC
+      metadata:
+        confidentiality: LOW
+        trustworthiness: LOW
+        reversible: false
+
+- tool: browser_type
+  passes:
+  - match_type: default
+    result:
+      instruction_type: EXEC
+      metadata:
+        confidentiality: LOW
+        trustworthiness: LOW
+        reversible: false
+
+- tool: browser_press
+  passes:
+  - match_type: default
+    result:
+      instruction_type: EXEC
+      metadata:
+        confidentiality: LOW
+        trustworthiness: LOW
+        reversible: false
+
+- tool: browser_scroll
+  passes:
+  - match_type: default
+    result:
+      instruction_type: EXEC
+      metadata:
+        confidentiality: LOW
+        trustworthiness: LOW
+        reversible: false
+
+- tool: browser_back
+  passes:
+  - match_type: default
+    result:
+      instruction_type: EXEC
+      metadata:
+        confidentiality: LOW
+        trustworthiness: LOW
+        reversible: false
+
+- tool: browser_snapshot
+  passes:
+  - match_type: default
+    result:
+      instruction_type: READ
+      metadata:
+        confidentiality: UNKNOWN
+        trustworthiness: LOW
+        reversible: true
+
+- tool: browser_console
+  passes:
+  - match_type: default
+    result:
+      instruction_type: READ
+      metadata:
+        confidentiality: UNKNOWN
+        trustworthiness: LOW
+        reversible: true
+
+- tool: browser_get_images
+  passes:
+  - match_type: default
+    result:
+      instruction_type: READ
+      metadata:
+        confidentiality: UNKNOWN
+        trustworthiness: LOW
+        reversible: true
+
+- tool: browser_vision
+  passes:
+  - match_type: default
+    result:
+      instruction_type: READ
+      metadata:
+        confidentiality: UNKNOWN
+        trustworthiness: LOW
+        reversible: true

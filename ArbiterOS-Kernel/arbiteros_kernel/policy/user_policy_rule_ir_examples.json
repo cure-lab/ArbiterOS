@@ -1,0 +1,585 @@
+{
+  "version": 1,
+  "source": "arbiteros-example-policy-pack",
+  "rules": [
+    {
+      "id": "USER-PENTEST-OUT-OF-SCOPE-001",
+      "kind": "unary_tool_call",
+      "enabled": true,
+      "title": "block out of scope pentest actions",
+      "description": "block pentesting actions when the target is not explicitly in scope",
+      "effect": "BLOCK",
+      "severity": "CRITICAL",
+      "message": "目标不在授权测试范围内，已拦截。",
+      "rule": {
+        "selector": {
+          "instruction_types": ["EXEC"]
+        },
+        "predicate": {
+          "all": [
+            { "truthy": { "var": "pentest_action" } },
+            { "falsy": { "var": "pentest_target_in_scope" } }
+          ]
+        }
+      }
+    },
+    {
+      "id": "USER-PENTEST-DESTRUCTIVE-001",
+      "kind": "unary_tool_call",
+      "enabled": true,
+      "title": "block destructive pentest actions",
+      "description": "block destructive exploit actions even when a target is in scope",
+      "effect": "BLOCK",
+      "severity": "CRITICAL",
+      "message": "当前动作属于破坏性漏洞利用，已拦截。",
+      "rule": {
+        "selector": {
+          "instruction_types": ["EXEC"]
+        },
+        "predicate": {
+          "all": [
+            { "truthy": { "var": "pentest_action" } },
+            { "truthy": { "var": "pentest_destructive" } }
+          ]
+        }
+      }
+    },
+    {
+      "id": "USER-EMAIL-EXTERNAL-RECIPIENTS-001",
+      "kind": "unary_tool_call",
+      "enabled": true,
+      "title": "block many external email recipients",
+      "description": "block send_email when more than 3 external recipients are present",
+      "effect": "BLOCK",
+      "severity": "MEDIUM",
+      "message": "外部收件人数量超过用户设定阈值，已拦截。",
+      "rule": {
+        "selector": {
+          "tools": ["send_email"]
+        },
+        "predicate": {
+          "gt": [
+            { "var": "email_external_recipient_count" },
+            { "const": 3 }
+          ]
+        }
+      }
+    },
+    {
+      "id": "USER-EMAIL-DOMAIN-FANOUT-001",
+      "kind": "unary_tool_call",
+      "enabled": true,
+      "title": "block broad external email domain fanout",
+      "description": "block send_email when recipients span more than 2 external domains",
+      "effect": "BLOCK",
+      "severity": "MEDIUM",
+      "message": "外部收件人域名过于分散，已拦截。",
+      "rule": {
+        "selector": {
+          "tools": ["send_email"]
+        },
+        "predicate": {
+          "gt": [
+            { "len": { "var": "email_external_domains" } },
+            { "const": 2 }
+          ]
+        }
+      }
+    },
+    {
+      "id": "USER-BROWSER-SENSITIVE-SUBMIT-001",
+      "kind": "unary_tool_call",
+      "enabled": true,
+      "title": "block browser sensitive submit",
+      "description": "block browser side-effect actions that submit credential or local config content",
+      "effect": "BLOCK",
+      "severity": "HIGH",
+      "message": "浏览器动作疑似提交密码、令牌或本地配置内容，已拦截。",
+      "rule": {
+        "selector": {
+          "tools": ["browser"]
+        },
+        "predicate": {
+          "all": [
+            { "truthy": { "var": "browser_side_effect_action" } },
+            {
+              "intersects": [
+                { "var": "browser_content_labels" },
+                { "const": ["PASSWORD", "TOKEN", "LOCAL_CONFIG"] }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "USER-APPSEC-LIVE-PROD-EXPLOIT-001",
+      "kind": "unary_tool_call",
+      "enabled": true,
+      "title": "block live exploit against production",
+      "description": "block source-aware AppSec agents from running live high-impact PoCs against production targets",
+      "effect": "BLOCK",
+      "severity": "CRITICAL",
+      "message": "当前 AppSec PoC 会攻击生产环境，已拦截。",
+      "rule": {
+        "selector": {
+          "instruction_types": ["EXEC"]
+        },
+        "predicate": {
+          "all": [
+            { "truthy": { "var": "appsec_live_exploit" } },
+            {
+              "in": [
+                { "var": "appsec_target_env" },
+                { "const": ["PRODUCTION", "PROD"] }
+              ]
+            },
+            {
+              "intersects": [
+                { "var": "appsec_vulnerability_types" },
+                { "const": ["RCE", "SSRF", "SQLI", "AUTH_BYPASS"] }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "USER-EGRESS-LARGE-EXTERNAL-001",
+      "kind": "unary_tool_call",
+      "enabled": true,
+      "title": "block large external egress",
+      "description": "block external egress whose lowered payload size is within the high-volume exfiltration band",
+      "effect": "BLOCK",
+      "severity": "HIGH",
+      "message": "外部数据传输体量过大，已拦截。",
+      "rule": {
+        "selector": {
+          "instruction_types": ["EXEC", "WRITE"]
+        },
+        "predicate": {
+          "all": [
+            { "truthy": { "var": "egress_external_destination" } },
+            {
+              "between": [
+                { "var": "egress_payload_mb" },
+                { "const": 100 },
+                { "const": 10000 }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "USER-CLOUD-IAM-ADMIN-SCOPE-001",
+      "kind": "unary_tool_call",
+      "enabled": true,
+      "title": "block broad cloud iam permission changes",
+      "description": "block cloud IAM changes when requested scopes are not a subset of the approved low-risk scope set",
+      "effect": "BLOCK",
+      "severity": "CRITICAL",
+      "message": "云权限变更超出允许的低风险权限集合，已拦截。",
+      "rule": {
+        "selector": {
+          "tools": ["cloud_iam"]
+        },
+        "predicate": {
+          "all": [
+            { "truthy": { "var": "iam_permission_change" } },
+            {
+              "not": {
+                "subset_of": [
+                  { "var": "iam_requested_scopes" },
+                  { "const": ["READ_ONLY", "LOG_VIEWER", "METRICS_VIEWER"] }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "USER-BROWSER-UNTRUSTED-PASTE-SUBMIT-001",
+      "kind": "unary_tool_call",
+      "enabled": true,
+      "title": "block browser submit to paste sites",
+      "description": "block browser side-effect actions that submit content to untrusted paste or snippet hosting sites",
+      "effect": "BLOCK",
+      "severity": "HIGH",
+      "message": "浏览器动作会向未信任的 paste/snippet 站点提交内容，已拦截。",
+      "rule": {
+        "selector": {
+          "tools": ["browser"]
+        },
+        "predicate": {
+          "all": [
+            { "truthy": { "var": "browser_side_effect_action" } },
+            {
+              "matches": [
+                { "var": "browser_target_hostname" },
+                { "const": "(^|\\.)pastebin\\.com$|(^|\\.)gist\\.github\\.com$" }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "USER-REPO-PROTECTED-BRANCH-001",
+      "kind": "unary_tool_call",
+      "enabled": true,
+      "title": "block generated changes on protected branches",
+      "description": "block repository mutations on release branches when lowered change labels indicate generated code or security configuration updates",
+      "effect": "BLOCK",
+      "severity": "HIGH",
+      "message": "release 分支上的生成代码或安全配置变更需要人工处理，已拦截。",
+      "rule": {
+        "selector": {
+          "tools": ["git"]
+        },
+        "predicate": {
+          "all": [
+            { "truthy": { "var": "repo_mutating_operation" } },
+            {
+              "starts_with": [
+                { "var": "repo_target_branch" },
+                { "const": "release/" }
+              ]
+            },
+            {
+              "intersects": [
+                { "var": "repo_change_labels" },
+                { "const": ["GENERATED_CODE", "SECURITY_CONFIG"] }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "USER-RETRIEVAL-PII-FANOUT-001",
+      "kind": "unary_tool_call",
+      "enabled": true,
+      "title": "block retrieval query with multiple pii labels",
+      "description": "block retrieval/search queries whose lowered labels contain at least two direct personal-data identifiers",
+      "effect": "BLOCK",
+      "severity": "HIGH",
+      "message": "检索请求同时包含多个个人数据标识，已拦截。",
+      "rule": {
+        "selector": {
+          "tools": ["retrieve", "web_search"]
+        },
+        "predicate": {
+          "ge": [
+            {
+              "count_intersections": [
+                { "var": "retrieval_query_labels" },
+                { "const": ["SSN", "PHONE", "EMAIL", "CUSTOMER_ID"] }
+              ]
+            },
+            { "const": 2 }
+          ]
+        }
+      }
+    }
+  ],
+  "required_metadata": [
+    {
+      "field": "pentest_action",
+      "type": "boolean",
+      "description": "True when the current tool call is part of a penetration testing or vulnerability validation action.",
+      "applies_to": {
+        "instruction_types": ["EXEC"]
+      },
+      "source": {
+        "kind": "llm_lowering",
+        "paths": ["command", "url", "target"]
+      },
+      "normalization": "Classify reconnaissance, scanning, exploitation, fuzzing, browser exploit validation, or vulnerability probing as pentest actions.",
+      "on_missing": "fail_closed",
+      "required_for_rules": ["USER-PENTEST-OUT-OF-SCOPE-001", "USER-PENTEST-DESTRUCTIVE-001"]
+    },
+    {
+      "field": "pentest_target_in_scope",
+      "type": "boolean",
+      "description": "True only when the target host, URL, IP, or repository is explicitly within the authorized test scope.",
+      "applies_to": {
+        "instruction_types": ["EXEC"]
+      },
+      "source": {
+        "kind": "llm_lowering",
+        "paths": ["command", "url", "target"]
+      },
+      "normalization": "Compare extracted targets against the configured authorized scope for the run.",
+      "on_missing": "fail_closed",
+      "required_for_rules": ["USER-PENTEST-OUT-OF-SCOPE-001"]
+    },
+    {
+      "field": "pentest_destructive",
+      "type": "boolean",
+      "description": "True when the action may destroy data, modify production state, persist payloads, or cause denial of service.",
+      "applies_to": {
+        "instruction_types": ["EXEC"]
+      },
+      "source": {
+        "kind": "llm_lowering",
+        "paths": ["command", "url", "target"]
+      },
+      "normalization": "Classify destructive exploit, DoS, data deletion, persistence, credential spraying, and privilege escalation attempts as destructive.",
+      "on_missing": "fail_closed",
+      "required_for_rules": ["USER-PENTEST-DESTRUCTIVE-001"]
+    },
+    {
+      "field": "email_external_recipient_count",
+      "type": "integer",
+      "description": "Number of email recipients outside the configured organization domains.",
+      "applies_to": {
+        "tools": ["send_email"]
+      },
+      "source": {
+        "kind": "tool_arguments",
+        "paths": ["to", "cc", "bcc"],
+        "transform": "external_domain_count"
+      },
+      "normalization": "Count recipients whose email domain is outside the configured organization domains.",
+      "on_missing": "validation_error",
+      "required_for_rules": ["USER-EMAIL-EXTERNAL-RECIPIENTS-001"]
+    },
+    {
+      "field": "email_external_domains",
+      "type": "string_array",
+      "description": "Distinct external recipient domains after organization domains are removed.",
+      "applies_to": {
+        "tools": ["send_email"]
+      },
+      "source": {
+        "kind": "tool_arguments",
+        "paths": ["to", "cc", "bcc"],
+        "transform": "external_domains"
+      },
+      "normalization": "Extract and uppercase distinct external domains from all recipient fields.",
+      "on_missing": "validation_error",
+      "required_for_rules": ["USER-EMAIL-DOMAIN-FANOUT-001"]
+    },
+    {
+      "field": "browser_side_effect_action",
+      "type": "boolean",
+      "description": "True when the browser action may submit, upload, click, confirm, or otherwise mutate page-visible state.",
+      "applies_to": {
+        "tools": ["browser"]
+      },
+      "source": {
+        "kind": "tool_arguments",
+        "paths": ["action", "request.kind"],
+        "transform": "in_set",
+        "values": ["act", "click", "type", "press", "submit", "upload", "confirm", "accept", "fill", "select", "drag"]
+      },
+      "normalization": "Classify submit, upload, click, dialog accept, form interaction, or navigation with side effects as true.",
+      "on_missing": "fail_closed",
+      "required_for_rules": ["USER-BROWSER-SENSITIVE-SUBMIT-001"]
+    },
+    {
+      "field": "browser_content_labels",
+      "type": "string_array",
+      "description": "Labels for sensitive content being submitted by a browser action.",
+      "applies_to": {
+        "tools": ["browser"]
+      },
+      "source": {
+        "kind": "llm_lowering",
+        "paths": ["text", "value", "file", "request"]
+      },
+      "normalization": "Return uppercase labels such as PASSWORD, TOKEN, API_KEY, LOCAL_CONFIG, or SECRET when submitted browser content contains those classes.",
+      "on_missing": "validation_error",
+      "required_for_rules": ["USER-BROWSER-SENSITIVE-SUBMIT-001"]
+    },
+    {
+      "field": "appsec_live_exploit",
+      "type": "boolean",
+      "description": "True when an AppSec agent is executing a live exploit or PoC against a running target.",
+      "applies_to": {
+        "instruction_types": ["EXEC"]
+      },
+      "source": {
+        "kind": "llm_lowering",
+        "paths": ["command", "url", "target", "payload"]
+      },
+      "normalization": "Classify browser/API requests or CLI invocations that actively validate exploitability against a running app as true.",
+      "on_missing": "fail_closed",
+      "required_for_rules": ["USER-APPSEC-LIVE-PROD-EXPLOIT-001"]
+    },
+    {
+      "field": "appsec_target_env",
+      "type": "string",
+      "description": "Normalized environment for the AppSec target.",
+      "applies_to": {
+        "instruction_types": ["EXEC"]
+      },
+      "source": {
+        "kind": "llm_lowering",
+        "paths": ["url", "target", "environment"]
+      },
+      "normalization": "Return one of LOCAL, DEV, STAGING, PRODUCTION, or UNKNOWN when target environment can be inferred.",
+      "on_missing": "fail_closed",
+      "required_for_rules": ["USER-APPSEC-LIVE-PROD-EXPLOIT-001"]
+    },
+    {
+      "field": "appsec_vulnerability_types",
+      "type": "string_array",
+      "description": "High-level vulnerability classes exercised by the AppSec action.",
+      "applies_to": {
+        "instruction_types": ["EXEC"]
+      },
+      "source": {
+        "kind": "llm_lowering",
+        "paths": ["command", "payload", "url", "finding"]
+      },
+      "normalization": "Return uppercase vulnerability labels such as RCE, SSRF, SQLI, XSS, AUTH_BYPASS, or IDOR.",
+      "on_missing": "no_match",
+      "required_for_rules": ["USER-APPSEC-LIVE-PROD-EXPLOIT-001"]
+    },
+    {
+      "field": "egress_external_destination",
+      "type": "boolean",
+      "description": "True when the destination is outside local or organization-controlled boundaries.",
+      "applies_to": {
+        "instruction_types": ["EXEC", "WRITE"]
+      },
+      "source": {
+        "kind": "tool_arguments",
+        "paths": ["url", "host", "destination", "command"],
+        "transform": "has_external_domain"
+      },
+      "normalization": "Classify external network destinations, public object storage, external email, or third-party APIs as true.",
+      "on_missing": "fail_closed",
+      "required_for_rules": ["USER-EGRESS-LARGE-EXTERNAL-001"]
+    },
+    {
+      "field": "egress_payload_mb",
+      "type": "number",
+      "description": "Estimated outbound payload size in megabytes.",
+      "applies_to": {
+        "instruction_types": ["EXEC", "WRITE"]
+      },
+      "source": {
+        "kind": "derived",
+        "paths": ["size", "bytes", "file_size", "content_length", "command"],
+        "transform": "scaled_number"
+      },
+      "normalization": "Normalize known byte, KB, MB, or file-size evidence into a numeric MB estimate.",
+      "on_missing": "no_match",
+      "required_for_rules": ["USER-EGRESS-LARGE-EXTERNAL-001"]
+    },
+    {
+      "field": "iam_permission_change",
+      "type": "boolean",
+      "description": "True when the current cloud IAM operation creates, updates, grants, binds, or revokes permissions.",
+      "applies_to": {
+        "tools": ["cloud_iam"]
+      },
+      "source": {
+        "kind": "tool_arguments",
+        "paths": ["action", "operation", "policy", "binding"],
+        "transform": "contains_any",
+        "values": ["create", "update", "grant", "bind", "revoke", "delete", "attach", "detach", "set"]
+      },
+      "normalization": "Classify IAM create/update/grant/bind/revoke operations as true.",
+      "on_missing": "fail_closed",
+      "required_for_rules": ["USER-CLOUD-IAM-ADMIN-SCOPE-001"]
+    },
+    {
+      "field": "iam_requested_scopes",
+      "type": "string_array",
+      "description": "Normalized permission scopes or role classes requested by the current IAM operation.",
+      "applies_to": {
+        "tools": ["cloud_iam"]
+      },
+      "source": {
+        "kind": "llm_lowering",
+        "paths": ["role", "roles", "scope", "scopes", "policy", "binding"]
+      },
+      "normalization": "Return uppercase role/scope classes such as READ_ONLY, LOG_VIEWER, METRICS_VIEWER, ADMIN, OWNER, WRITE, or SECRET_ACCESS.",
+      "on_missing": "fail_closed",
+      "required_for_rules": ["USER-CLOUD-IAM-ADMIN-SCOPE-001"]
+    },
+    {
+      "field": "browser_target_hostname",
+      "type": "string",
+      "description": "Normalized hostname of the browser action target.",
+      "applies_to": {
+        "tools": ["browser"]
+      },
+      "source": {
+        "kind": "tool_arguments",
+        "paths": ["url", "href", "request.url"],
+        "transform": "hostname"
+      },
+      "normalization": "Parse the target URL and return the lowercase hostname without scheme, path, query, or credentials.",
+      "on_missing": "no_match",
+      "required_for_rules": ["USER-BROWSER-UNTRUSTED-PASTE-SUBMIT-001"]
+    },
+    {
+      "field": "repo_mutating_operation",
+      "type": "boolean",
+      "description": "True when the repository action mutates local or remote repository state.",
+      "applies_to": {
+        "tools": ["git"]
+      },
+      "source": {
+        "kind": "tool_arguments",
+        "paths": ["action", "command", "subcommand"],
+        "transform": "contains_any",
+        "values": ["commit", "push", "merge", "rebase", "tag", "checkout", "switch", "branch", "config"]
+      },
+      "normalization": "Classify commit, push, merge, rebase, tag creation, branch update, and config writes as mutating operations.",
+      "on_missing": "fail_closed",
+      "required_for_rules": ["USER-REPO-PROTECTED-BRANCH-001"]
+    },
+    {
+      "field": "repo_target_branch",
+      "type": "string",
+      "description": "Normalized target branch affected by the repository operation.",
+      "applies_to": {
+        "tools": ["git"]
+      },
+      "source": {
+        "kind": "kernel_lowering",
+        "paths": ["branch", "target_branch", "ref", "command"]
+      },
+      "normalization": "Return a branch/ref name such as main, release/1.2, or feature/foo without remote prefix when safely inferable.",
+      "on_missing": "no_match",
+      "required_for_rules": ["USER-REPO-PROTECTED-BRANCH-001"]
+    },
+    {
+      "field": "repo_change_labels",
+      "type": "string_array",
+      "description": "Semantic labels for repository changes touched by the operation.",
+      "applies_to": {
+        "tools": ["git"]
+      },
+      "source": {
+        "kind": "llm_lowering",
+        "paths": ["diff_summary", "changed_files", "commit_message", "command"]
+      },
+      "normalization": "Return uppercase labels such as GENERATED_CODE, SECURITY_CONFIG, DEPENDENCY_UPDATE, DOCS, TESTS, or PRODUCT_CODE.",
+      "on_missing": "no_match",
+      "required_for_rules": ["USER-REPO-PROTECTED-BRANCH-001"]
+    },
+    {
+      "field": "retrieval_query_labels",
+      "type": "string_array",
+      "description": "Sensitive-data labels inferred for a retrieval or search query.",
+      "applies_to": {
+        "tools": ["retrieve", "web_search"]
+      },
+      "source": {
+        "kind": "llm_lowering",
+        "paths": ["query", "filters", "prompt"]
+      },
+      "normalization": "Return uppercase labels such as SSN, PHONE, EMAIL, CUSTOMER_ID, HEALTH, FINANCIAL, or PUBLIC.",
+      "on_missing": "no_match",
+      "required_for_rules": ["USER-RETRIEVAL-PII-FANOUT-001"]
+    }
+  ]
+}

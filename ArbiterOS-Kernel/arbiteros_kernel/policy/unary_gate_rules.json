@@ -4,8 +4,154 @@
   "protected_identity_llm": {
     "enabled": true,
     "max_content_chars": 12000,
-    "note": "When enabled, UG-060/061 use skill_scanner_llm. User prompt is plain text; model must reply first line SAFE or BLOCK. Transport/parse errors still block."
+    "timeout_seconds": 10,
+    "fail_closed_on_error": true,
+    "note": "When enabled, UG-060/061 use skill_scanner_llm. User prompt is plain text; model must reply first line SAFE or BLOCK. Transport/parse errors are reported as LLM unavailable and block only when fail_closed_on_error is true."
   },
+  "required_metadata": [
+    {
+      "field": "argument_total_string_length",
+      "type": "integer",
+      "description": "Total length of string values in the current tool arguments, lowered by the parser boundary.",
+      "applies_to": {
+        "tools": [
+          "*"
+        ]
+      },
+      "source": {
+        "kind": "kernel_lowering",
+        "paths": [
+          "arguments"
+        ]
+      },
+      "normalization": "Walk argument values recursively and sum string lengths.",
+      "on_missing": "no_match",
+      "required_for_rules": [
+        "UG-010"
+      ]
+    },
+    {
+      "field": "target_basenames",
+      "type": "string_array",
+      "description": "Uppercase basenames for direct path-like target arguments.",
+      "applies_to": {
+        "tools": [
+          "write",
+          "edit"
+        ]
+      },
+      "source": {
+        "kind": "kernel_lowering",
+        "paths": [
+          "path",
+          "file_path",
+          "target_path",
+          "destination_path",
+          "output_path",
+          "dest_path",
+          "dst"
+        ]
+      },
+      "normalization": "Extract os.path.basename for path-like arguments and uppercase it.",
+      "on_missing": "no_match",
+      "required_for_rules": [
+        "UG-060"
+      ]
+    },
+    {
+      "field": "write_target_basenames",
+      "type": "string_array",
+      "description": "Uppercase basenames for command write targets inferred by shell/process parsing.",
+      "applies_to": {
+        "tools": [
+          "exec",
+          "process"
+        ]
+      },
+      "source": {
+        "kind": "kernel_lowering",
+        "paths": [
+          "security_type.custom.exec_parse.write_targets"
+        ]
+      },
+      "normalization": "Extract os.path.basename for inferred write targets and uppercase it.",
+      "on_missing": "no_match",
+      "required_for_rules": [
+        "UG-061"
+      ]
+    },
+    {
+      "field": "protected_identity_mutation_instruction",
+      "type": "boolean",
+      "description": "True when delegated or outbound content instructs mutation of protected identity/control files.",
+      "applies_to": {
+        "tools": [
+          "message",
+          "sessions_send",
+          "sessions_spawn"
+        ]
+      },
+      "source": {
+        "kind": "kernel_lowering",
+        "paths": [
+          "arguments"
+        ]
+      },
+      "normalization": "Detect protected identity/control filenames with mutation verbs in delegated/outbound content.",
+      "on_missing": "no_match",
+      "required_for_rules": [
+        "UG-062"
+      ]
+    },
+    {
+      "field": "gateway_external_redirection_patch",
+      "type": "boolean",
+      "description": "True when gateway config apply/patch introduces external proxy or upstream redirection.",
+      "applies_to": {
+        "tools": [
+          "gateway"
+        ]
+      },
+      "source": {
+        "kind": "kernel_lowering",
+        "paths": [
+          "action",
+          "arguments"
+        ]
+      },
+      "normalization": "Detect config.apply/config.patch containing an external URL and proxy/upstream/base_url semantics.",
+      "on_missing": "no_match",
+      "required_for_rules": [
+        "UG-070"
+      ]
+    },
+    {
+      "field": "protected_identity_review_text",
+      "type": "string",
+      "description": "Plain-text review payload for protected identity/control file LLM review.",
+      "applies_to": {
+        "tools": [
+          "write",
+          "edit",
+          "exec",
+          "process"
+        ]
+      },
+      "source": {
+        "kind": "kernel_lowering",
+        "paths": [
+          "arguments",
+          "security_type.custom.exec_parse.write_targets"
+        ]
+      },
+      "normalization": "Build a concise plain-text review payload from lowered target metadata and relevant command/content fields.",
+      "on_missing": "no_match",
+      "required_for_rules": [
+        "UG-060",
+        "UG-061"
+      ]
+    }
+  ],
   "rules": [
     {
       "id": "UG-001",
@@ -30,7 +176,7 @@
       "predicate": {
         "gt": [
           {
-            "var": "arg_total_str_len"
+            "var": "argument_total_string_length"
           },
           {
             "const": 4000
@@ -43,7 +189,7 @@
     {
       "id": "UG-020",
       "title": "exec confidence gate",
-      "description": "EXEC requires confidence >= MID",
+      "description": "EXEC requires confidence >= UNKNOWN",
       "scope": "tool",
       "selector": {
         "instruction_type": [
@@ -56,17 +202,17 @@
             "var": "confidence"
           },
           {
-            "const": "MID"
+            "const": "UNKNOWN"
           }
         ]
       },
       "effect": "BLOCK",
-      "message": "EXEC requires confidence >= MID."
+      "message": "EXEC requires confidence >= UNKNOWN."
     },
     {
       "id": "UG-021",
       "title": "exec trust gate",
-      "description": "EXEC requires trustworthiness >= MID",
+      "description": "EXEC requires trustworthiness >= UNKNOWN",
       "scope": "tool",
       "selector": {
         "instruction_type": [
@@ -79,12 +225,12 @@
             "var": "trustworthiness"
           },
           {
-            "const": "MID"
+            "const": "UNKNOWN"
           }
         ]
       },
       "effect": "BLOCK",
-      "message": "EXEC requires trustworthiness >= MID."
+      "message": "EXEC requires trustworthiness >= UNKNOWN."
     },
     {
       "id": "UG-030",
@@ -181,7 +327,6 @@
       "effect": "BLOCK",
       "message": "blocked tag hit."
     },
-
     {
       "id": "UG-060",
       "title": "protected identity or control file direct mutation",
@@ -196,7 +341,7 @@
       "predicate": {
         "intersects": [
           {
-            "var": "direct_target_basenames"
+            "var": "target_basenames"
           },
           {
             "const": [
@@ -224,7 +369,7 @@
       "predicate": {
         "intersects": [
           {
-            "var": "exec_write_target_basenames"
+            "var": "write_target_basenames"
           },
           {
             "const": [
@@ -251,136 +396,9 @@
         ]
       },
       "predicate": {
-        "all": [
-          {
-            "any": [
-              {
-                "contains": [
-                  {
-                    "var": "arg_text_upper"
-                  },
-                  {
-                    "const": "SOUL.MD"
-                  }
-                ]
-              },
-              {
-                "contains": [
-                  {
-                    "var": "arg_text_upper"
-                  },
-                  {
-                    "const": "AGENTS.MD"
-                  }
-                ]
-              },
-              {
-                "contains": [
-                  {
-                    "var": "arg_text_upper"
-                  },
-                  {
-                    "const": "IDENTITY.MD"
-                  }
-                ]
-              }
-            ]
-          },
-          {
-            "any": [
-              {
-                "contains": [
-                  {
-                    "var": "arg_text_upper"
-                  },
-                  {
-                    "const": "WRITE"
-                  }
-                ]
-              },
-              {
-                "contains": [
-                  {
-                    "var": "arg_text_upper"
-                  },
-                  {
-                    "const": "EDIT"
-                  }
-                ]
-              },
-              {
-                "contains": [
-                  {
-                    "var": "arg_text_upper"
-                  },
-                  {
-                    "const": "MODIFY"
-                  }
-                ]
-              },
-              {
-                "contains": [
-                  {
-                    "var": "arg_text_upper"
-                  },
-                  {
-                    "const": "PATCH"
-                  }
-                ]
-              },
-              {
-                "contains": [
-                  {
-                    "var": "arg_text_upper"
-                  },
-                  {
-                    "const": "REPLACE"
-                  }
-                ]
-              },
-              {
-                "contains": [
-                  {
-                    "var": "arg_text_upper"
-                  },
-                  {
-                    "const": "OVERRIDE"
-                  }
-                ]
-              },
-              {
-                "contains": [
-                  {
-                    "var": "arg_text_upper"
-                  },
-                  {
-                    "const": "INJECT"
-                  }
-                ]
-              },
-              {
-                "contains": [
-                  {
-                    "var": "arg_text_upper"
-                  },
-                  {
-                    "const": "APPEND"
-                  }
-                ]
-              },
-              {
-                "contains": [
-                  {
-                    "var": "arg_text_upper"
-                  },
-                  {
-                    "const": "DELETE"
-                  }
-                ]
-              }
-            ]
-          }
-        ]
+        "truthy": {
+          "var": "protected_identity_mutation_instruction"
+        }
       },
       "effect": "BLOCK",
       "message": "outbound or delegated content must not instruct mutation of protected identity/control files."
@@ -396,69 +414,17 @@
         ]
       },
       "predicate": {
-        "all": [
-          {
-            "in": [
-              {
-                "var": "action"
-              },
-              {
-                "const": [
-                  "CONFIG.PATCH",
-                  "CONFIG.APPLY"
-                ]
-              }
-            ]
-          },
-          {
-            "truthy": {
-              "var": "has_external_url"
-            }
-          },
-          {
-            "any": [
-              {
-                "contains": [
-                  {
-                    "var": "arg_text_upper"
-                  },
-                  {
-                    "const": "PROXY"
-                  }
-                ]
-              },
-              {
-                "contains": [
-                  {
-                    "var": "arg_text_upper"
-                  },
-                  {
-                    "const": "UPSTREAM"
-                  }
-                ]
-              },
-              {
-                "contains": [
-                  {
-                    "var": "arg_text_upper"
-                  },
-                  {
-                    "const": "BASE_URL"
-                  }
-                ]
-              }
-            ]
-          }
-        ]
+        "truthy": {
+          "var": "gateway_external_redirection_patch"
+        }
       },
       "effect": "BLOCK",
       "message": "gateway config patch or apply must not introduce external proxy or upstream redirection without stronger review."
     },
-
     {
       "id": "UG-050",
       "title": "respond prop confidentiality",
-      "description": "RESPOND must keep propagated confidentiality <= MID",
+      "description": "RESPOND must keep propagated confidentiality <= UNKNOWN",
       "scope": "respond",
       "selector": {
         "instruction_type": [
@@ -471,7 +437,7 @@
             "var": "prop_confidentiality"
           },
           {
-            "const": "MID"
+            "const": "UNKNOWN"
           }
         ]
       },

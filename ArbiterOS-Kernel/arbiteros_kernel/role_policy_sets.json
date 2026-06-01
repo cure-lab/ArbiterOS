@@ -3,6 +3,7 @@
     {
       "name": "semantic_protected",
       "enabled_policies": [
+        "RateLimitPolicy",
         "AlignmentSentinelPolicy"
       ]
     }

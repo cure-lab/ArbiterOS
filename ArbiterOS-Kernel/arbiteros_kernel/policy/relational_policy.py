@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import json
+import os
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from arbiteros_kernel.instruction_parsing.types import LEVEL_ORDER
 from arbiteros_kernel.policy_check import PolicyCheckResult
 from arbiteros_kernel.policy_runtime import RUNTIME, canonicalize_args
 
+from .direct_metadata import derive_policy_metadata_from_tool_args
 from .policy import Policy
+from .unary_gate_policy import _eval_predicate, _render_predicate
 
 
 RULE_DETAILS_URL = "http://43.161.233.143:5173/"
@@ -103,6 +106,11 @@ def _safe_level(v: Any, default: str = "UNKNOWN") -> str:
     return s if s in LEVEL_ORDER else default
 
 
+def _safe_lower(v: Any, default: str = "") -> str:
+    s = _safe_str(v, default)
+    return s.lower() if s else default
+
+
 def _level_rank(v: Any) -> float:
     return LEVEL_ORDER.get(_safe_level(v), 0.5)
 
@@ -158,6 +166,28 @@ def _extract_instruction_security(ins: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _safe_policy_metadata(custom: Dict[str, Any], reserved: Set[str]) -> Dict[str, Any]:
+    raw = custom.get("policy_metadata")
+    if not isinstance(raw, dict):
+        return {}
+
+    out: Dict[str, Any] = {}
+    for key, value in raw.items():
+        if not isinstance(key, str):
+            continue
+        name = key.strip()
+        if not name or name in reserved:
+            continue
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            out[name] = value
+        elif isinstance(value, list) and all(
+            isinstance(item, (str, int, float, bool)) or item is None
+            for item in value
+        ):
+            out[name] = value
+    return out
+
+
 def _source_levels(
     sec: Dict[str, Any],
     current_taint_status: Any = None,
@@ -182,6 +212,79 @@ def _source_levels(
         _safe_level(default_conf),
     )
     return sess_trust, sess_conf
+
+
+def _instruction_tool_name(ins: Optional[Dict[str, Any]]) -> str:
+    content = ins.get("content") if isinstance(ins, dict) else {}
+    content = content if isinstance(content, dict) else {}
+    return _safe_str(content.get("tool_name"))
+
+
+def _instruction_tool_call_id(ins: Optional[Dict[str, Any]]) -> str:
+    content = ins.get("content") if isinstance(ins, dict) else {}
+    content = content if isinstance(content, dict) else {}
+    return _safe_str(content.get("tool_call_id"))
+
+
+def _instruction_id(ins: Optional[Dict[str, Any]]) -> str:
+    return _safe_str(ins.get("id")) if isinstance(ins, dict) else ""
+
+
+def _history_without_latest(
+    instructions: List[Dict[str, Any]],
+    latest_instructions: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    if not instructions or not latest_instructions:
+        return list(instructions or [])
+
+    n_latest = len(latest_instructions)
+    if n_latest and len(instructions) >= n_latest:
+        if instructions[-n_latest:] == latest_instructions:
+            return list(instructions[:-n_latest])
+
+    latest_ids = {_instruction_id(ins) for ins in latest_instructions}
+    latest_ids.discard("")
+    latest_tool_call_ids = {
+        _instruction_tool_call_id(ins) for ins in latest_instructions
+    }
+    latest_tool_call_ids.discard("")
+
+    out: List[Dict[str, Any]] = []
+    for ins in instructions:
+        ins_id = _instruction_id(ins)
+        tcid = _instruction_tool_call_id(ins)
+        if ins_id and ins_id in latest_ids:
+            continue
+        if tcid and tcid in latest_tool_call_ids:
+            continue
+        out.append(ins)
+    return out
+
+
+def _latest_prior_source_instruction(
+    instructions: List[Dict[str, Any]],
+    latest_instructions: List[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    history = _history_without_latest(instructions or [], latest_instructions or [])
+    for ins in reversed(history):
+        if not isinstance(ins, dict):
+            continue
+        if not isinstance(ins.get("security_type"), dict):
+            continue
+        itype = _safe_upper(ins.get("instruction_type"))
+        if itype in {
+            "READ",
+            "RETRIEVE",
+            "RECEIVE",
+            "USER_MESSAGE",
+            "RESPOND",
+            "WRITE",
+            "STORE",
+            "EXEC",
+            "DELEGATE",
+        }:
+            return ins
+    return None
 
 
 def _get_primary_path_hint(args_dict: Dict[str, Any]) -> str:
@@ -517,6 +620,224 @@ def _get_taint_policy_cfg() -> Dict[str, Any]:
     return tp if isinstance(tp, dict) else {}
 
 
+def _get_relational_policy_cfg() -> Dict[str, Any]:
+    cfg = RUNTIME.cfg.get("relational_policy")
+    if isinstance(cfg, dict):
+        return cfg
+    tp_cfg = _get_taint_policy_cfg()
+    nested = tp_cfg.get("relational_policy")
+    return nested if isinstance(nested, dict) else {}
+
+
+def _resolve_rule_file_path(path: str) -> str:
+    p = os.path.expandvars(os.path.expanduser(path))
+    if os.path.isabs(p):
+        return p
+
+    candidates = [
+        p,
+        os.path.join(os.getcwd(), p),
+        os.path.join(os.path.dirname(__file__), p),
+        os.path.join(os.path.dirname(os.path.dirname(__file__)), p),
+    ]
+    for item in candidates:
+        if os.path.exists(item):
+            return item
+    return candidates[0]
+
+
+def _configured_rule_files(value: Any) -> List[str]:
+    if isinstance(value, str) and value.strip():
+        return [value.strip()]
+    if isinstance(value, list):
+        return [item.strip() for item in value if isinstance(item, str) and item.strip()]
+    return []
+
+
+def _read_relational_rule_bundle(path: str) -> Dict[str, Any]:
+    resolved = _resolve_rule_file_path(path)
+    with open(resolved, "r", encoding="utf-8") as f:
+        data = json.loads(f.read())
+    return data if isinstance(data, dict) else {}
+
+
+def _optional_relational_rule_bundle(path: str) -> Dict[str, Any]:
+    resolved = _resolve_rule_file_path(path)
+    if not os.path.exists(resolved):
+        return {}
+    return _read_relational_rule_bundle(path)
+
+
+def _rules_with_source(rules: Any, source: str) -> List[Dict[str, Any]]:
+    if not isinstance(rules, list):
+        return []
+    out: List[Dict[str, Any]] = []
+    for rule in rules:
+        if not isinstance(rule, dict):
+            continue
+        copied = dict(rule)
+        copied.setdefault("source", source)
+        out.append(copied)
+    return out
+
+
+def _load_custom_relational_bundle() -> Dict[str, Any]:
+    cfg = _get_relational_policy_cfg()
+    if not bool(cfg.get("user_rules_enabled", False)):
+        return {"rules": [], "required_metadata": []}
+
+    rule_files = _configured_rule_files(
+        cfg.get("user_rule_files") or cfg.get("user_rule_file")
+    )
+    out: List[Dict[str, Any]] = []
+    required_metadata: List[Any] = []
+    seen_ids: Set[str] = set()
+    for path in rule_files:
+        bundle = _optional_relational_rule_bundle(path)
+        source = _safe_str(bundle.get("source"), os.path.basename(path))
+        if isinstance(bundle.get("required_metadata"), list):
+            required_metadata.extend(bundle["required_metadata"])
+        for rule in _rules_with_source(bundle.get("rules"), source):
+            rule_id = _safe_str(rule.get("id"))
+            if rule_id and rule_id in seen_ids:
+                continue
+            if rule_id:
+                seen_ids.add(rule_id)
+            out.append(rule)
+    return {"rules": out, "required_metadata": required_metadata}
+
+
+def _load_custom_relational_rules() -> List[Dict[str, Any]]:
+    bundle = _load_custom_relational_bundle()
+    rules = bundle.get("rules")
+    return rules if isinstance(rules, list) else []
+
+
+def _selector_values(raw: Any) -> Optional[Set[str]]:
+    if raw is None:
+        return None
+    values = raw if isinstance(raw, list) else [raw]
+    out = {
+        _safe_upper(value)
+        for value in values
+        if isinstance(value, str) and value.strip()
+    }
+    return out or None
+
+
+def _selector_matches_context(
+    selector: Dict[str, Any],
+    ctx: Dict[str, Any],
+    *,
+    prefix: str,
+) -> bool:
+    if not isinstance(selector, dict):
+        return True
+
+    key_map = {
+        "tool": f"{prefix}_tool_name",
+        "instruction_type": f"{prefix}_instruction_type",
+        "category": f"{prefix}_instruction_category",
+    }
+    for selector_key, ctx_key in key_map.items():
+        allowed = _selector_values(selector.get(selector_key))
+        if allowed is None:
+            continue
+        actual = _safe_upper(ctx.get(ctx_key))
+        if actual not in allowed:
+            return False
+
+    allowed_flow = _selector_values(selector.get("flow_kind"))
+    if allowed_flow is not None and _safe_upper(ctx.get("flow_kind")) not in allowed_flow:
+        return False
+    return True
+
+
+def _extract_vars(value: Any) -> Set[str]:
+    out: Set[str] = set()
+    if isinstance(value, dict):
+        var = value.get("var")
+        if isinstance(var, str):
+            out.add(var)
+        for item in value.values():
+            out.update(_extract_vars(item))
+    elif isinstance(value, list):
+        for item in value:
+            out.update(_extract_vars(item))
+    return out
+
+
+def _actual_snapshot(ctx: Dict[str, Any], pred: Any) -> Dict[str, Any]:
+    return {
+        name: ctx.get(name)
+        for name in sorted(_extract_vars(pred))
+        if isinstance(name, str)
+    }
+
+
+def _custom_relational_rule_matches(
+    rule: Dict[str, Any],
+    ctx: Dict[str, Any],
+) -> bool:
+    if rule.get("enabled") is False:
+        return False
+    if _safe_lower(rule.get("scope"), "relational") != "relational":
+        return False
+    if not _selector_matches_context(
+        rule.get("source_selector") or {},
+        ctx,
+        prefix="source",
+    ):
+        return False
+    if not _selector_matches_context(rule.get("selector") or {}, ctx, prefix="sink"):
+        return False
+    pred = rule.get("predicate")
+    if pred is None:
+        return False
+    return bool(_eval_predicate(pred, ctx))
+
+
+def _evaluate_custom_relational_rules(
+    rules: List[Dict[str, Any]],
+    ctx: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    for rule in rules:
+        if _custom_relational_rule_matches(rule, ctx):
+            return rule
+    return None
+
+
+def _custom_relational_block_message(
+    rule: Dict[str, Any],
+    ctx: Dict[str, Any],
+    *,
+    args_dict: Optional[Dict[str, Any]] = None,
+) -> str:
+    title = _safe_str(rule.get("title"), "custom relational policy")
+    message = _safe_str(rule.get("message"), "当前关系型策略命中，已拦截。")
+    predicate = _render_predicate(rule.get("predicate"))
+    actual = _actual_snapshot(ctx, rule.get("predicate"))
+    actual_text = json.dumps(actual, ensure_ascii=False, sort_keys=True)
+    tool_name = _safe_str(ctx.get("sink_tool_name"), "@instruction")
+    return "\n".join(
+        [
+            "## 安全策略拦截确认",
+            "",
+            "### 1. 触发指令",
+            _render_tool_instruction_block(tool_name, args_dict or {}),
+            "",
+            "### 2. 拦截说明",
+            f"[{title}]：{message}",
+            "",
+            "### 3. 规则说明",
+            f"- 规则 ID：{_safe_str(rule.get('id'), '<unknown>')}",
+            f"- 信息流：{ctx.get('source_instruction_type')} -> {ctx.get('flow_kind')}",
+            f"- 判断条件：{predicate or '<custom predicate>'}",
+            f"- 实际值：{actual_text}",
+        ]
+    )
+
+
 def _evaluate_flow(
     flow_kind: str,
     sec: Dict[str, Any],
@@ -645,6 +966,99 @@ def _evaluate_flow(
     return True, source_trust, "LOW", extra
 
 
+def _build_relational_context(
+    *,
+    tool_name: str,
+    tool_call_id: str,
+    ins: Optional[Dict[str, Any]],
+    flow_kind: str,
+    sec: Dict[str, Any],
+    instructions: List[Dict[str, Any]],
+    latest_instructions: List[Dict[str, Any]],
+    current_taint_status: Any = None,
+    args_dict: Optional[Dict[str, Any]] = None,
+    respond_content_present: bool = False,
+    required_metadata: Optional[List[Any]] = None,
+) -> Dict[str, Any]:
+    args_dict = args_dict if isinstance(args_dict, dict) else {}
+    ok, actual, required, flow_extra = _evaluate_flow(
+        flow_kind,
+        sec,
+        args_dict,
+        current_taint_status=current_taint_status,
+    )
+    del ok
+
+    source_ins = _latest_prior_source_instruction(instructions, latest_instructions)
+    source_sec = _extract_instruction_security(source_ins or {})
+    source_trust = flow_extra.get("source_trustworthiness")
+    source_conf = flow_extra.get("source_confidentiality")
+    if current_taint_status is None and source_ins is not None:
+        source_trust = source_sec.get("prop_trustworthiness")
+        source_conf = source_sec.get("prop_confidentiality")
+
+    ctx: Dict[str, Any] = {
+        "scope": "relational",
+        "flow_kind": flow_kind,
+        "missing_instruction": ins is None,
+        "tool_name": tool_name,
+        "canonical_tool_name": tool_name,
+        "tool_call_id": tool_call_id,
+        "instruction_type": sec.get("instruction_type"),
+        "instruction_category": sec.get("instruction_category"),
+        "trustworthiness": sec.get("trustworthiness"),
+        "confidentiality": sec.get("confidentiality"),
+        "reversible": sec.get("reversible"),
+        "risk": sec.get("risk"),
+        "source_tool_name": _instruction_tool_name(source_ins),
+        "source_tool_call_id": _instruction_tool_call_id(source_ins),
+        "source_instruction_type": _safe_upper(
+            source_ins.get("instruction_type") if isinstance(source_ins, dict) else ""
+        ),
+        "source_instruction_category": _safe_str(
+            source_ins.get("instruction_category")
+            if isinstance(source_ins, dict)
+            else ""
+        ),
+        "source_trustworthiness": _safe_level(source_trust),
+        "source_confidentiality": _safe_level(source_conf),
+        "sink_tool_name": tool_name,
+        "sink_tool_call_id": tool_call_id,
+        "sink_instruction_type": sec.get("instruction_type"),
+        "sink_instruction_category": sec.get("instruction_category"),
+        "sink_trustworthiness": sec.get("trustworthiness"),
+        "sink_confidentiality": sec.get("confidentiality"),
+        "sink_prop_trustworthiness": sec.get("prop_trustworthiness"),
+        "sink_prop_confidentiality": sec.get("prop_confidentiality"),
+        "sink_risk": sec.get("risk"),
+        "sink_reversible": sec.get("reversible"),
+        "respond_content_present": respond_content_present,
+        "relational_actual_level": actual,
+        "relational_required_level": required,
+    }
+
+    sink_custom = sec.get("custom")
+    if isinstance(sink_custom, dict):
+        ctx.update(_safe_policy_metadata(sink_custom, set(ctx.keys())))
+    for key, value in derive_policy_metadata_from_tool_args(
+        args_dict,
+        required_metadata or [],
+        tool_name=tool_name,
+        instruction_type=ctx.get("sink_instruction_type"),
+        instruction_category=ctx.get("sink_instruction_category"),
+    ).items():
+        ctx.setdefault(key, value)
+
+    source_custom = source_sec.get("custom")
+    if isinstance(source_custom, dict):
+        for key, value in _safe_policy_metadata(source_custom, set()).items():
+            prefixed = f"source_{key}"
+            if prefixed not in ctx:
+                ctx[prefixed] = value
+
+    return ctx
+
+
 class RelationalPolicy(Policy):
     """
     Flow-aware relational policy.
@@ -669,6 +1083,15 @@ class RelationalPolicy(Policy):
         response = dict(current_response)
         tool_calls = RUNTIME.extract_tool_calls(response)
         tp_cfg = _get_taint_policy_cfg()
+        custom_bundle = _load_custom_relational_bundle()
+        custom_rules = custom_bundle.get("rules")
+        custom_rules = custom_rules if isinstance(custom_rules, list) else []
+        custom_required_metadata = custom_bundle.get("required_metadata")
+        custom_required_metadata = (
+            custom_required_metadata
+            if isinstance(custom_required_metadata, list)
+            else []
+        )
 
         instr_by_tool_call_id: Dict[str, Dict[str, Any]] = {}
         for ins in latest_instructions or []:
@@ -734,6 +1157,56 @@ class RelationalPolicy(Policy):
                         "reversible": sec["reversible"],
                         "risk": sec["risk"],
                         "custom": sec["custom"],
+                    },
+                )
+                _append_unique_error(errors, seen_errors, user_message)
+                continue
+
+            rel_ctx = _build_relational_context(
+                tool_name=tool_name,
+                tool_call_id=tool_call_id or "",
+                ins=ins,
+                flow_kind=flow_kind,
+                sec=sec,
+                instructions=instructions or [],
+                latest_instructions=latest_instructions or [],
+                current_taint_status=current_taint_status,
+                args_dict=args_dict,
+                required_metadata=custom_required_metadata,
+            )
+            custom_rule = _evaluate_custom_relational_rules(custom_rules, rel_ctx)
+            if custom_rule is not None:
+                user_message = _custom_relational_block_message(
+                    custom_rule,
+                    rel_ctx,
+                    args_dict=args_dict,
+                )
+                RUNTIME.audit(
+                    phase="policy.relational.custom",
+                    trace_id=trace_id,
+                    tool=tool_name,
+                    decision="BLOCK",
+                    reason=_safe_str(custom_rule.get("id"), "custom relational rule"),
+                    args=args_dict,
+                    extra={
+                        "rule_id": custom_rule.get("id"),
+                        "rule_source": custom_rule.get("source"),
+                        "rule_predicate": custom_rule.get("predicate"),
+                        "rule_actual": _actual_snapshot(
+                            rel_ctx,
+                            custom_rule.get("predicate"),
+                        ),
+                        "flow_kind": flow_kind,
+                        "source_confidentiality": rel_ctx.get(
+                            "source_confidentiality"
+                        ),
+                        "source_trustworthiness": rel_ctx.get(
+                            "source_trustworthiness"
+                        ),
+                        "sink_tool_name": rel_ctx.get("sink_tool_name"),
+                        "sink_instruction_type": rel_ctx.get(
+                            "sink_instruction_type"
+                        ),
                     },
                 )
                 _append_unique_error(errors, seen_errors, user_message)
@@ -861,6 +1334,58 @@ class RelationalPolicy(Policy):
                         "reversible": sec["reversible"],
                         "risk": sec["risk"],
                         "custom": sec["custom"],
+                    },
+                )
+                response["content"] = user_msg
+                return PolicyCheckResult(
+                    modified=True,
+                    response=response,
+                    error_type=user_msg,
+                    inactivate_error_type=None,
+                )
+
+            rel_ctx = _build_relational_context(
+                tool_name="@respond",
+                tool_call_id="",
+                ins=respond_ins,
+                flow_kind="respond_sink",
+                sec=sec,
+                instructions=instructions or [],
+                latest_instructions=latest_instructions or [],
+                current_taint_status=current_taint_status,
+                args_dict={},
+                respond_content_present=True,
+                required_metadata=custom_required_metadata,
+            )
+            custom_rule = _evaluate_custom_relational_rules(custom_rules, rel_ctx)
+            if custom_rule is not None:
+                user_msg = _custom_relational_block_message(
+                    custom_rule,
+                    rel_ctx,
+                    args_dict={},
+                )
+                RUNTIME.audit(
+                    phase="policy.relational.custom",
+                    trace_id=trace_id,
+                    tool="@instruction",
+                    decision="BLOCK",
+                    reason=_safe_str(custom_rule.get("id"), "custom relational rule"),
+                    args={},
+                    extra={
+                        "rule_id": custom_rule.get("id"),
+                        "rule_source": custom_rule.get("source"),
+                        "rule_predicate": custom_rule.get("predicate"),
+                        "rule_actual": _actual_snapshot(
+                            rel_ctx,
+                            custom_rule.get("predicate"),
+                        ),
+                        "flow_kind": "respond_sink",
+                        "source_confidentiality": rel_ctx.get(
+                            "source_confidentiality"
+                        ),
+                        "source_trustworthiness": rel_ctx.get(
+                            "source_trustworthiness"
+                        ),
                     },
                 )
                 response["content"] = user_msg
