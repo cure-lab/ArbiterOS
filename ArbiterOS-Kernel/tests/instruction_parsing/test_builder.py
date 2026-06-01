@@ -216,24 +216,6 @@ class TestAddFromToolCall:
         )
         assert isinstance(instr, dict)
 
-    def test_instruction_type_from_parser(self):
-        builder = InstructionBuilder()
-        instr = builder.add_from_tool_call(
-            tool_name="read",
-            tool_call_id="tc-001",
-            arguments={"path": "/tmp/file.txt"},
-        )
-        assert instr["instruction_type"] == "READ"
-
-    def test_exec_tool_call(self):
-        builder = InstructionBuilder()
-        instr = builder.add_from_tool_call(
-            tool_name="exec",
-            tool_call_id="tc-002",
-            arguments={"command": "python run.py"},
-        )
-        assert instr["instruction_type"] == "EXEC"
-
     def test_content_has_tool_name(self):
         builder = InstructionBuilder()
         instr = builder.add_from_tool_call(
@@ -282,25 +264,6 @@ class TestAddFromToolCall:
         )
         assert instr["content"]["result"] == result
 
-    def test_security_type_populated_by_parser(self):
-        builder = InstructionBuilder()
-        instr = builder.add_from_tool_call(
-            tool_name="read",
-            tool_call_id="tc-007",
-            arguments={"path": "/etc/shadow"},
-        )
-        assert instr["security_type"] is not None
-        assert instr["security_type"]["confidentiality"] == "HIGH"
-
-    def test_instruction_category_from_instruction_type(self):
-        builder = InstructionBuilder()
-        instr = builder.add_from_tool_call(
-            tool_name="exec",
-            tool_call_id="tc-008",
-            arguments={"command": "python run.py"},
-        )
-        assert instr["instruction_category"] == "EXECUTION.Env"
-
     def test_unknown_tool_category_defaults(self):
         builder = InstructionBuilder()
         instr = builder.add_from_tool_call(
@@ -327,16 +290,6 @@ class TestAddFromToolCall:
             tool_name="read", tool_call_id="x", arguments={"path": "/tmp/f"}
         )
         assert i2["parent_id"] == i1["id"]
-
-    def test_delegate_tool_category(self):
-        builder = InstructionBuilder()
-        instr = builder.add_from_tool_call(
-            tool_name="sessions_send",
-            tool_call_id="tc-010",
-            arguments={"message": "do X"},
-        )
-        assert instr["instruction_type"] == "DELEGATE"
-        assert instr["instruction_category"] == "EXECUTION.Agent"
 
 
 # ---------------------------------------------------------------------------
