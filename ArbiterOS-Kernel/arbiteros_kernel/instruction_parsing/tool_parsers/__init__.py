@@ -14,7 +14,7 @@ from typing import Any, Dict, Optional
 
 from ..tool_agent_config import get_tool_agent
 from ..types import TaintStatus, ToolParseResult, make_security_type
-from .dsl.engine import load_registry
+from .engine import load_registry
 
 logger = logging.getLogger(__name__)
 

@@ -11,7 +11,7 @@ from typing import Any
 
 from jsonschema import Draft202012Validator
 
-_DSL_DIR = Path(__file__).parent
+_DSL_DIR = Path(__file__).parent / "dsl"
 _SCHEMA_PATH = _DSL_DIR / "tool_parsers.schema.json"
 
 _validator: Draft202012Validator | None = None
