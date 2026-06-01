@@ -29,7 +29,7 @@ arguments they accept. The schema reveals:
 - Every tool name (maps to a DSL `tool:` entry)
 - Each tool's argument names and types (used to target `arg:` fields in passes)
 
-If the user doesn't have such a file, ask them to describe the tools manually (name + key args).
+If the user doesn't have such a file, ask them to connect the agent to ArbiterOS and run at least one step. Then the schema can be obtained from `log/precall.jsonl` once the agent has ran at least one step with arbiterOS. Search `"tools"` in that file to find the relevant entry. Copy the JSON array of tool definitions into a new file under `tool_schemas/` (e.g. `tool_schemas/<agent_name>.json`) and provide the path to that file.
 
 ## Phase 2 — Gather domain requirements
 
