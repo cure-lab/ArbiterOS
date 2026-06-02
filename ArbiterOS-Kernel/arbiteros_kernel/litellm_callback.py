@@ -4698,8 +4698,15 @@ def _append_pending_warnings_to_assistant_content_if_needed(
     if msg_dict.get("tool_calls") or msg_dict.get("function_call"):
         return
     raw = msg_dict.get("content")
-    if not _extract_text_from_message_content(raw).strip():
+    text_content = _extract_text_from_message_content(raw)
+    if not text_content.strip():
         return
+    # Codex may emit tool calls as JSON text (without explicit tool_calls field).
+    # Treat those as non-pure-text replies to avoid appending warnings into tool payloads.
+    if _is_codex_tool_agent():
+        _text_part, _tool_args_list = _extract_codex_suffix_json_objects(text_content)
+        if any(isinstance(item, dict) for item in (_tool_args_list or [])):
+            return
     with _trace_state_lock:
         if not state.pending_warning_texts:
             return
@@ -4710,7 +4717,7 @@ def _append_pending_warnings_to_assistant_content_if_needed(
     if isinstance(raw, str):
         msg_dict["content"] = raw.rstrip() + suffix
     else:
-        msg_dict["content"] = _extract_text_from_message_content(raw).rstrip() + suffix
+        msg_dict["content"] = text_content.rstrip() + suffix
 
 
 def _resolve_category_cache_trace_id(data: dict) -> Optional[str]:
