@@ -32,7 +32,7 @@ model_list:
           strict: true
 
 # ArbiterOS kernel: which agent tool names to parse (instruction_parsing). 
-# Now support : openclaw, nanobot, hermes
+# Now support : openclaw, nanobot, hermes, codex, claude_code
 arbiteros_config:
   tool_agent: codex
   upstream_compat:
