@@ -1,5 +1,5 @@
 """
-Resolve which tool parser set to use (openclaw | nanobot | hermes | codex)
+Resolve which tool parser set to use (openclaw | nanobot | hermes | codex | claude_code)
 from litellm_config.yaml.
 """
 
@@ -11,7 +11,7 @@ import yaml
 
 logger = logging.getLogger(__name__)
 
-_VALID = frozenset({"openclaw", "nanobot", "hermes", "codex"})
+_VALID = frozenset({"openclaw", "nanobot", "hermes", "codex", "claude_code"})
 _DEFAULT_AGENT = "openclaw"
 
 
