@@ -3,7 +3,7 @@
 
 # ─── Shell / Command execution ───────────────────────────────────────────────
 
-- tool: exec_command
+- tool: exec
   passes:
   - match_type: shell
     arg: cmd
