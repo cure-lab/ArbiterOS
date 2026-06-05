@@ -23,6 +23,7 @@ __all__ = [
     "PolicyCheckResult",
     "check_response_policy",
     "apply_policy_enforcement_mode",
+    "is_local_policy_confirm_enabled",
     "resolve_role_policy_enabled_override",
     "split_model_and_role",
 ]
@@ -38,6 +39,11 @@ _LOCAL_CONFIRM_CFG_LOCK = threading.Lock()
 _LOCAL_CONFIRM_CFG_MTIME_NS: Optional[int] = None
 _LOCAL_CONFIRM_CFG_ENABLED: bool = False
 _LOCAL_CONFIRM_INPUT_LOCK = threading.Lock()
+
+
+def is_local_policy_confirm_enabled() -> bool:
+    """Public wrapper for litellm streaming / post-call gating."""
+    return _is_local_policy_confirm_enabled()
 
 
 @dataclass
