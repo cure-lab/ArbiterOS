@@ -51,6 +51,7 @@ from arbiteros_kernel.policy.alignment_trigger import (
 from arbiteros_kernel.policy.defaults import get_policy_descriptions, get_policy_enabled
 from arbiteros_kernel.policy_check import (
     check_response_policy,
+    is_local_policy_confirm_enabled,
     resolve_role_policy_enabled_override,
     split_model_and_role,
 )
@@ -197,6 +198,9 @@ _MAX_RECENT_RESPONSE_KEYS = 512
 _recent_tool_result_keys: list[str] = []
 _recent_tool_result_key_set: set[str] = set()
 _MAX_RECENT_TOOL_RESULT_KEYS = 1024
+_claude_code_recent_request_lock = threading.Lock()
+_claude_code_recent_request_by_scope: dict[str, tuple[str, float]] = {}
+_MAX_CLAUDE_CODE_RECENT_REQUESTS = 1024
 # trace_id -> {tool_call_id: error_type}：policy 保护后待 tool result 时加 policy_protected
 _policy_protected_tool_call_ids: dict[str, dict[str, str]] = {}
 _policy_config_metadata_cache_lock = threading.Lock()
@@ -2065,6 +2069,128 @@ def _extract_prompt_cache_key(incoming: dict) -> Optional[str]:
     return normalized or None
 
 
+def _extract_claude_code_session_id(incoming: dict) -> Optional[str]:
+    """Best-effort extraction of Claude Code session id from LiteLLM payload."""
+    if not isinstance(incoming, dict):
+        return None
+
+    def _normalize(value: Any) -> Optional[str]:
+        if not isinstance(value, str):
+            return None
+        normalized = _normalize_device_fragment(value)
+        return normalized or None
+
+    litellm_metadata = incoming.get("litellm_metadata")
+    if isinstance(litellm_metadata, dict):
+        headers = litellm_metadata.get("headers")
+        if isinstance(headers, dict):
+            sid = _normalize(headers.get("x-claude-code-session-id"))
+            if sid:
+                return sid
+        requester_metadata = litellm_metadata.get("requester_metadata")
+        if isinstance(requester_metadata, dict):
+            raw_user_id = requester_metadata.get("user_id")
+            if isinstance(raw_user_id, str) and raw_user_id.strip():
+                try:
+                    parsed_user_id = json.loads(raw_user_id)
+                except Exception:
+                    parsed_user_id = None
+                if isinstance(parsed_user_id, dict):
+                    sid = _normalize(parsed_user_id.get("session_id"))
+                    if sid:
+                        return sid
+
+    proxy_server_request = incoming.get("proxy_server_request")
+    if isinstance(proxy_server_request, dict):
+        headers = proxy_server_request.get("headers")
+        if isinstance(headers, dict):
+            sid = _normalize(headers.get("x-claude-code-session-id"))
+            if sid:
+                return sid
+        body = proxy_server_request.get("body")
+        if isinstance(body, dict):
+            metadata = body.get("metadata")
+            if isinstance(metadata, dict):
+                sid = _normalize(metadata.get("session_id"))
+                if sid:
+                    return sid
+
+    return None
+
+
+def _extract_claude_code_scope_key(incoming: Any) -> Optional[str]:
+    """Build a stable dedupe scope key for Claude Code requests."""
+    if not isinstance(incoming, dict):
+        return None
+    sid = _extract_claude_code_session_id(incoming)
+    if isinstance(sid, str) and sid.strip():
+        return f"sid:{sid.strip()}"
+
+    metadata = incoming.get("metadata")
+    if isinstance(metadata, dict):
+        raw_device_key = metadata.get("arbiteros_device_key")
+        if isinstance(raw_device_key, str) and raw_device_key.strip():
+            normalized = _normalize_device_fragment(raw_device_key)
+            if normalized:
+                return f"device:{normalized}"
+        raw_trace_id = metadata.get("arbiteros_trace_id")
+        if isinstance(raw_trace_id, str) and raw_trace_id.strip():
+            normalized_trace = _normalize_device_fragment(raw_trace_id)
+            if normalized_trace:
+                return f"trace:{normalized_trace}"
+
+    try:
+        context = _build_device_context(incoming)
+    except Exception:
+        context = None
+    if context is not None and isinstance(context.device_key, str) and context.device_key:
+        return f"ctx:{context.device_key}"
+    return None
+
+
+def _is_claude_code_duplicate_request(incoming: Any) -> bool:
+    """Best-effort dedupe for Claude Code shadow retries of the same turn."""
+    if _read_tool_agent_from_litellm_config() != "claude_code":
+        return False
+    if not isinstance(incoming, dict):
+        return False
+    scope_key = _extract_claude_code_scope_key(incoming)
+    if not isinstance(scope_key, str) or not scope_key.strip():
+        return False
+
+    dedupe_payload = {
+        "model": incoming.get("model"),
+        "messages": incoming.get("messages"),
+        "system": incoming.get("system"),
+        "tools": incoming.get("tools"),
+        "tool_choice": incoming.get("tool_choice"),
+        "max_tokens": incoming.get("max_tokens"),
+        "thinking": incoming.get("thinking"),
+    }
+    request_digest = hashlib.sha256(
+        json.dumps(
+            dedupe_payload, ensure_ascii=False, sort_keys=True, default=str
+        ).encode("utf-8", errors="ignore")
+    ).hexdigest()
+    now = time.monotonic()
+    window_sec = float(
+        os.getenv("ARBITEROS_CLAUDE_CODE_DEDUPE_WINDOW_SEC", "45").strip() or "45"
+    )
+    with _claude_code_recent_request_lock:
+        previous = _claude_code_recent_request_by_scope.get(scope_key)
+        _claude_code_recent_request_by_scope[scope_key] = (request_digest, now)
+        if len(_claude_code_recent_request_by_scope) > _MAX_CLAUDE_CODE_RECENT_REQUESTS:
+            oldest_key = min(
+                _claude_code_recent_request_by_scope.items(),
+                key=lambda item: item[1][1],
+            )[0]
+            _claude_code_recent_request_by_scope.pop(oldest_key, None)
+    if not previous:
+        return False
+    prev_digest, prev_ts = previous
+    return prev_digest == request_digest and (now - prev_ts) <= max(window_sec, 1.0)
+
+
 def _build_codex_user_id_from_prompt_cache_key(prompt_cache_key: str) -> str:
     digest = hashlib.sha256(
         prompt_cache_key.encode("utf-8", errors="ignore")
@@ -2141,7 +2267,11 @@ def _build_device_context(incoming: dict) -> _DeviceContext:
         messages = []
     tool_agent = _read_tool_agent_from_litellm_config()
     is_codex_agent = tool_agent == "codex"
+    is_claude_code_agent = tool_agent == "claude_code"
     prompt_cache_key = _extract_prompt_cache_key(incoming) if is_codex_agent else None
+    claude_code_session_id = (
+        _extract_claude_code_session_id(incoming) if is_claude_code_agent else None
+    )
 
     latest_user_text = _extract_latest_message_text(messages, role="user")
     if not latest_user_text and _is_responses_api_request(incoming):
@@ -2193,6 +2323,11 @@ def _build_device_context(incoming: dict) -> _DeviceContext:
         has_explicit_user_id = True
         if channel == "unknown-channel":
             channel = "codex"
+    elif claude_code_session_id:
+        raw_user_id = f"claude-code-session-{claude_code_session_id}"
+        has_explicit_user_id = True
+        if channel == "unknown-channel":
+            channel = "claude_code"
 
     normalized_user_cmd = (latest_user_text or "").strip().lower()
     reset_requested = (
@@ -3024,16 +3159,62 @@ def _safe_json_loads(value: Any) -> Any:
         return None
 
 
+def _extract_anthropic_tool_calls_from_content(content: Any) -> list[dict[str, Any]]:
+    """Normalize Anthropic assistant ``tool_use`` blocks into OpenAI-like tool_calls."""
+    if not isinstance(content, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        if str(block.get("type") or "").strip() != "tool_use":
+            continue
+        tool_id = block.get("id")
+        tool_name = block.get("name")
+        if not isinstance(tool_id, str) or not tool_id.strip():
+            continue
+        if not isinstance(tool_name, str) or not tool_name.strip():
+            continue
+        tool_input = block.get("input")
+        normalized_input = tool_input if isinstance(tool_input, dict) else {}
+        out.append(
+            {
+                "id": tool_id.strip(),
+                "type": "function",
+                "function": {
+                    "name": tool_name.strip(),
+                    "arguments": json.dumps(
+                        normalized_input, ensure_ascii=False, default=str
+                    ),
+                },
+            }
+        )
+    return out
+
+
 def _extract_tool_calls(message_dict: Optional[dict]) -> list[dict]:
     if not isinstance(message_dict, dict):
         return []
-    raw_tool_calls = message_dict.get("tool_calls")
-    if not isinstance(raw_tool_calls, list):
-        return []
     out: list[dict] = []
-    for tool_call in raw_tool_calls:
-        if isinstance(tool_call, dict):
-            out.append(tool_call)
+    raw_tool_calls = message_dict.get("tool_calls")
+    if isinstance(raw_tool_calls, list):
+        for tool_call in raw_tool_calls:
+            if isinstance(tool_call, dict):
+                out.append(tool_call)
+    anthropic_tool_calls = _extract_anthropic_tool_calls_from_content(
+        message_dict.get("content")
+    )
+    if anthropic_tool_calls:
+        existing_ids = {
+            tc.get("id")
+            for tc in out
+            if isinstance(tc, dict) and isinstance(tc.get("id"), str)
+        }
+        for tc in anthropic_tool_calls:
+            tc_id = tc.get("id")
+            if isinstance(tc_id, str) and tc_id in existing_ids:
+                continue
+            out.append(tc)
     return out
 
 
@@ -5202,6 +5383,70 @@ def _detect_policy_confirmation_reply(messages: list) -> Optional[bool]:
     return True
 
 
+def _is_claude_code_aux_request(request_data: Any) -> bool:
+    """
+    Detect Claude Code internal helper turns (recap/suggestion/shadow duplicate).
+    These keep model IO intact but skip instruction accumulation; policy still runs.
+    """
+    if _read_tool_agent_from_litellm_config() != "claude_code":
+        return False
+    if not isinstance(request_data, dict):
+        return False
+    messages = request_data.get("messages")
+    if not isinstance(messages, list) or not messages:
+        return False
+    latest_user = _extract_latest_message_text(messages, role="user")
+    if not isinstance(latest_user, str):
+        return False
+    text = latest_user.strip().lower()
+    if not text:
+        return False
+
+    is_recap = (
+        "the user stepped away and is coming back" in text
+        and "recap in under 40 words" in text
+    )
+    is_suggestion = (
+        "[suggestion mode:" in text
+        and "suggest what the user might naturally type next" in text
+    )
+    proxy_server_request = request_data.get("proxy_server_request")
+    shadow_non_stream = False
+    if isinstance(proxy_server_request, dict):
+        body = proxy_server_request.get("body")
+        if isinstance(body, dict) and "stream" in body:
+            shadow_non_stream = body.get("stream") is not True
+
+    duplicate_request = _is_claude_code_duplicate_request(request_data)
+    is_aux = bool(is_recap or is_suggestion or shadow_non_stream or duplicate_request)
+    if os.getenv("ARBITEROS_CLAUDE_CODE_AUX_DEBUG", "").strip() == "1":
+        _save_json(
+            "claude_code_aux_decision",
+            {
+                "is_aux": is_aux,
+                "is_recap": is_recap,
+                "is_suggestion": is_suggestion,
+                "shadow_non_stream": shadow_non_stream,
+                "duplicate_request": duplicate_request,
+                "scope_key": _extract_claude_code_scope_key(request_data),
+                "session_id": _extract_claude_code_session_id(request_data),
+                "latest_user": text[:240],
+                "request_stream": request_data.get("stream")
+                if isinstance(request_data, dict)
+                else None,
+                "body_stream": (
+                    (request_data.get("proxy_server_request") or {})
+                    .get("body", {})
+                    .get("stream")
+                    if isinstance(request_data, dict)
+                    else None
+                ),
+            },
+        )
+
+    return is_aux
+
+
 def _msg_dict_to_model_response(
     msg_dict: dict, model: str = "arbiteros-policy"
 ) -> ModelResponse:
@@ -6413,6 +6658,9 @@ class MyCustomHandler(CustomLogger):
             if skip_policy_check:
                 _policy_confirmation_no_apply.discard(trace_id.strip())
 
+        # Aux/duplicate Claude Code turns skip instruction accumulation only — policy still runs.
+        skip_instruction_governance = _is_claude_code_aux_request(data)
+
         # 有 apply_info 时跳过 response_transform 的 instruction 添加（避免重复），但需补上 category/topic slot
         # （pre_call 仅在 had_content_before+has_content_after+use_popped 时追加，否则依赖 response_transform）
         # 仅当 mock 返回的 response 有 content 时才追加；tool_calls-only 不包、不消耗槽位，追加会导致多一个 policy protected 错位
@@ -6431,13 +6679,18 @@ class MyCustomHandler(CustomLogger):
             msg_dict = raw_msg_dict
             if msg_dict is not None:
                 data_for_transform = data
-                if apply_info is not None or skip_policy_check:
+                if (
+                    apply_info is not None
+                    or skip_policy_check
+                    or skip_instruction_governance
+                ):
                     data_for_transform = dict(data) if isinstance(data, dict) else {}
                     data_for_transform["_skip_category_topic_recording"] = True
                 # instruction 统一在 policy 决策后落库，避免出现“用户未确认先累计”。
                 if (
                     (apply_info is None and not skip_policy_check)
                     or apply_info is not None
+                    or skip_instruction_governance
                 ):
                     data_for_transform["_skip_instruction_adding"] = True
                 if asyncio.iscoroutinefunction(response_transform):
@@ -6448,7 +6701,7 @@ class MyCustomHandler(CustomLogger):
                     modified_dict = response_transform(data_for_transform, msg_dict)
                 if modified_dict is not None and isinstance(modified_dict, dict):
                     final_msg_dict = modified_dict
-                    _apply_canonical_message_to_response(
+                    response = _apply_canonical_message_to_response(
                         response,
                         modified_dict,
                         is_chat_completion=is_chat_completion,
@@ -6499,6 +6752,7 @@ class MyCustomHandler(CustomLogger):
                 and isinstance(trace_id, str)
                 and trace_id.strip()
                 and not apply_info.get("instruction_already_applied")
+                and not skip_instruction_governance
             ):
                 builder = _get_instruction_builder_for_trace(trace_id)
                 if builder is not None:
@@ -6511,7 +6765,10 @@ class MyCustomHandler(CustomLogger):
                                 policy_violation_reason_for_langfuse or ""
                             )
                         _save_instructions_to_trace_file(trace_id, builder)
-            elif apply_info.get("policy_confirmation_rejected"):
+            elif (
+                apply_info.get("policy_confirmation_rejected")
+                and not skip_instruction_governance
+            ):
                 # 用户选 No（放行）：在确认后再写回 original instructions，并标记 user_approved
                 builder = _get_instruction_builder_for_trace(trace_id)
                 if builder is not None:
@@ -6524,6 +6781,18 @@ class MyCustomHandler(CustomLogger):
                     for instr in instrs[count_before:]:
                         instr["user_approved"] = True
                     _save_instructions_to_trace_file(trace_id, builder)
+            client_msg = (
+                apply_info.get("raw_response")
+                if apply_info.get("policy_confirmation_rejected")
+                else apply_info.get("protected_response")
+            )
+            if isinstance(client_msg, dict):
+                final_msg_dict = dict(client_msg)
+                response = _apply_canonical_message_to_response(
+                    response,
+                    final_msg_dict,
+                    is_chat_completion=is_chat_completion,
+                )
         elif not skip_policy_check and isinstance(final_msg_dict, dict):
             if isinstance(trace_id, str) and trace_id.strip():
                 builder = _get_instruction_builder_for_trace(trace_id)
@@ -6576,6 +6845,29 @@ class MyCustomHandler(CustomLogger):
                     _ia_policy = policy_result.inactivate_error_type
                     if isinstance(_ia_policy, str) and _ia_policy.strip():
                         inactivate_error_type_for_langfuse = _ia_policy.strip()
+                    if bool(
+                        getattr(policy_result, "local_confirmation_resolved", False)
+                    ) and getattr(
+                        policy_result, "local_confirmation_decision", None
+                    ) == "allow_original":
+                        restored = (
+                            dict(policy_result.response)
+                            if isinstance(policy_result.response, dict)
+                            else final_msg_dict
+                        )
+                        final_msg_dict = restored
+                        policy_confirmation_state_for_langfuse = "rejected"
+                        policy_confirmation_accepted_for_langfuse = False
+                        policy_confirmation_rejected_for_langfuse = True
+                        response = _apply_canonical_message_to_response(
+                            response,
+                            (
+                                final_msg_dict
+                                if isinstance(final_msg_dict, dict)
+                                else {"content": "", "role": "assistant"}
+                            ),
+                            is_chat_completion=is_chat_completion,
+                        )
                     if builder is not None:
                         count_before = len(getattr(builder, "instructions", []) or [])
                         _add_instructions_from_modified_response(builder, final_msg_dict)
@@ -6625,7 +6917,7 @@ class MyCustomHandler(CustomLogger):
                                 )
                             if len(getattr(builder, "instructions", []) or []) > count_before:
                                 _save_instructions_to_trace_file(trace_id, builder)
-                        _apply_canonical_message_to_response(
+                        response = _apply_canonical_message_to_response(
                             response,
                             (
                                 final_msg_dict
@@ -6699,7 +6991,7 @@ class MyCustomHandler(CustomLogger):
                             except Exception:
                                 pass
                             _save_instructions_to_trace_file(trace_id, builder)
-                        _apply_canonical_message_to_response(
+                        response = _apply_canonical_message_to_response(
                             response,
                             final_msg_dict,
                             is_chat_completion=is_chat_completion,
@@ -6720,7 +7012,7 @@ class MyCustomHandler(CustomLogger):
                 final_msg_dict.get("tool_calls") or final_msg_dict.get("function_call")
             )
         ):
-            _apply_canonical_message_to_response(
+            response = _apply_canonical_message_to_response(
                 response,
                 final_msg_dict,
                 is_chat_completion=is_chat_completion,
@@ -6758,7 +7050,7 @@ class MyCustomHandler(CustomLogger):
                 final_msg_dict.get("tool_calls") or final_msg_dict.get("function_call")
             )
         ):
-            _apply_canonical_message_to_response(
+            response = _apply_canonical_message_to_response(
                 response,
                 final_msg_dict,
                 is_chat_completion=is_chat_completion,
@@ -6792,9 +7084,11 @@ class MyCustomHandler(CustomLogger):
         collected: list = []
         is_responses_input_request = _is_responses_api_request(request_data)
         # Transform logic is chat-completions oriented; Responses API streaming should pass through.
+        # Buffer chat-completions stream until post_call_success when transform or local
+        # confirm is enabled (Claude Code path). Codex Responses has its own buffer below.
         apply_transform = (
-            response_transform is not None and not is_responses_input_request
-        )
+            response_transform is not None or is_local_policy_confirm_enabled()
+        ) and (not is_responses_input_request)
         responses_tracker = _ResponsesStreamTracker()
         responses_stream_error: Optional[Exception] = None
 
@@ -7303,7 +7597,7 @@ class MyCustomHandler(CustomLogger):
                     )
             return
 
-        await self.async_post_call_success_hook(
+        complete = await self.async_post_call_success_hook(
             data=request_data,
             user_api_key_dict=user_api_key_dict,
             response=complete,
