@@ -1,0 +1,303 @@
+# Claude Code tool parsers — OpenClaw-aligned semantics with CC argument aliases.
+
+- tool: bash
+  passes:
+  - match_type: shell
+    arg: command
+  - match_type: shell
+    arg: cmd
+  - match_type: shell
+    arg: bash_command
+  - match_type: shell
+    arg: shell_command
+
+- tool: shell
+  passes:
+  - match_type: shell
+    arg: command
+  - match_type: shell
+    arg: cmd
+  - match_type: shell
+    arg: bash_command
+  - match_type: shell
+    arg: shell_command
+
+- tool: terminal
+  passes:
+  - match_type: shell
+    arg: command
+  - match_type: shell
+    arg: cmd
+  - match_type: shell
+    arg: bash_command
+  - match_type: shell
+    arg: shell_command
+
+- tool: run_command
+  passes:
+  - match_type: shell
+    arg: command
+  - match_type: shell
+    arg: cmd
+  - match_type: shell
+    arg: bash_command
+  - match_type: shell
+    arg: shell_command
+
+- tool: read
+  passes:
+  - match_type: default
+    result:
+      instruction_type: READ
+      metadata:
+        confidentiality: UNKNOWN
+        trustworthiness: UNKNOWN
+        reversible: true
+  - match_type: path
+    arg: path
+  - match_type: path
+    arg: file_path
+  - match_type: path
+    arg: filepath
+  - match_type: path
+    arg: target_path
+
+- tool: ls
+  passes:
+  - match_type: default
+    result:
+      instruction_type: READ
+      metadata:
+        confidentiality: UNKNOWN
+        trustworthiness: UNKNOWN
+        reversible: true
+  - match_type: path
+    arg: path
+  - match_type: path
+    arg: file_path
+
+- tool: glob
+  passes:
+  - match_type: default
+    result:
+      instruction_type: READ
+      metadata:
+        confidentiality: UNKNOWN
+        trustworthiness: UNKNOWN
+        reversible: true
+  - match_type: path
+    arg: path
+  - match_type: path
+    arg: pattern
+
+- tool: grep
+  passes:
+  - match_type: default
+    result:
+      instruction_type: READ
+      metadata:
+        confidentiality: UNKNOWN
+        trustworthiness: UNKNOWN
+        reversible: true
+  - match_type: path
+    arg: path
+  - match_type: path
+    arg: file_path
+
+- tool: write
+  passes:
+  - match_type: default
+    result:
+      instruction_type: WRITE
+      metadata:
+        confidentiality: UNKNOWN
+        trustworthiness: UNKNOWN
+        reversible: true
+  - match_type: path
+    arg: path
+  - match_type: path
+    arg: file_path
+  - match_type: path
+    arg: filepath
+  - match_type: path
+    arg: target_path
+
+- tool: edit
+  passes:
+  - match_type: default
+    result:
+      instruction_type: WRITE
+      metadata:
+        confidentiality: UNKNOWN
+        trustworthiness: UNKNOWN
+        reversible: true
+  - match_type: path
+    arg: path
+  - match_type: path
+    arg: file_path
+  - match_type: path
+    arg: filepath
+  - match_type: path
+    arg: target_path
+
+- tool: multiedit
+  passes:
+  - match_type: default
+    result:
+      instruction_type: WRITE
+      metadata:
+        confidentiality: UNKNOWN
+        trustworthiness: UNKNOWN
+        reversible: true
+  - match_type: path
+    arg: path
+  - match_type: path
+    arg: file_path
+
+- tool: process
+  passes:
+  - match_type: default
+    result:
+      instruction_type: EXEC
+      metadata:
+        confidentiality: LOW
+        trustworthiness: HIGH
+        reversible: false
+  - match_type: regex
+    cases:
+    - arg: action
+      pattern: "^(list|log)$"
+      result:
+        instruction_type: READ
+        metadata:
+          confidentiality: HIGH
+          trustworthiness: HIGH
+          reversible: true
+    - arg: action
+      pattern: "^poll$"
+      result:
+        instruction_type: WAIT
+        metadata:
+          confidentiality: LOW
+          trustworthiness: HIGH
+          reversible: true
+
+- tool: task
+  passes:
+  - match_type: default
+    result:
+      instruction_type: DELEGATE
+      metadata:
+        confidentiality: HIGH
+        trustworthiness: LOW
+        reversible: false
+
+- tool: subagent
+  passes:
+  - match_type: default
+    result:
+      instruction_type: DELEGATE
+      metadata:
+        confidentiality: HIGH
+        trustworthiness: LOW
+        reversible: false
+
+- tool: gateway
+  passes:
+  - match_type: default
+    result:
+      instruction_type: EXEC
+      metadata:
+        confidentiality: LOW
+        trustworthiness: HIGH
+        reversible: false
+
+- tool: call_mcp_tool
+  passes:
+  - match_type: default
+    result:
+      instruction_type: EXEC
+      metadata:
+        confidentiality: LOW
+        trustworthiness: HIGH
+        reversible: false
+
+- tool: fetch_mcp_resource
+  passes:
+  - match_type: default
+    result:
+      instruction_type: READ
+      metadata:
+        confidentiality: LOW
+        trustworthiness: HIGH
+        reversible: true
+
+- tool: websearch
+  passes:
+  - match_type: default
+    result:
+      instruction_type: READ
+      metadata:
+        confidentiality: LOW
+        trustworthiness: LOW
+        reversible: true
+
+- tool: web_search
+  passes:
+  - match_type: default
+    result:
+      instruction_type: READ
+      metadata:
+        confidentiality: LOW
+        trustworthiness: LOW
+        reversible: true
+
+- tool: webfetch
+  passes:
+  - match_type: default
+    result:
+      instruction_type: READ
+      metadata:
+        confidentiality: LOW
+        trustworthiness: LOW
+        reversible: true
+
+- tool: web_fetch
+  passes:
+  - match_type: default
+    result:
+      instruction_type: READ
+      metadata:
+        confidentiality: LOW
+        trustworthiness: LOW
+        reversible: true
+
+- tool: message
+  passes:
+  - match_type: default
+    result:
+      instruction_type: EXEC
+      metadata:
+        confidentiality: LOW
+        trustworthiness: HIGH
+        reversible: false
+  - match_type: regex
+    cases:
+    - arg: action
+      pattern: "^edit$"
+      result:
+        instruction_type: WRITE
+        metadata:
+          confidentiality: HIGH
+          trustworthiness: HIGH
+          reversible: true
+
+- tool: ask_question
+  passes:
+  - match_type: default
+    result:
+      instruction_type: ASK
+      metadata:
+        confidentiality: LOW
+        trustworthiness: HIGH
+        reversible: true
