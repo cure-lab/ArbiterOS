@@ -3426,6 +3426,62 @@ def _add_instructions_from_modified_response(
     return count_after - count_before
 
 
+def _reset_builder_instructions_to_index(
+    builder: Any, instruction_start_index: int
+) -> None:
+    """Truncate builder instructions from ``instruction_start_index`` and fix step pointers."""
+    if InstructionBuilder is None or builder is None:
+        return
+    instructions = getattr(builder, "instructions", None)
+    if not isinstance(instructions, list):
+        return
+    if instruction_start_index < len(instructions):
+        builder.instructions = list(instructions[:instruction_start_index])
+        builder._runtime_step = len(builder.instructions)
+        builder._last_instruction_id = (
+            builder.instructions[-1]["id"] if builder.instructions else None
+        )
+
+
+def _stage_response_instructions_for_policy(
+    builder: Any,
+    response_dict: dict,
+    *,
+    instruction_start_index: int,
+) -> int:
+    """
+    Parse the current assistant response into the builder for policy evaluation.
+
+    Does not write the trace file — caller commits or rolls back after policy.
+    """
+    _reset_builder_instructions_to_index(builder, instruction_start_index)
+    return _add_instructions_from_modified_response(builder, response_dict)
+
+
+def _commit_response_instructions_after_policy(
+    builder: Any,
+    trace_id: str,
+    response_dict: dict,
+    *,
+    instruction_start_index: int,
+    policy_protected: Optional[str] = None,
+    user_approved: bool = False,
+) -> None:
+    """Replace staged instructions with ``response_dict`` and persist to trace file."""
+    if InstructionBuilder is None or builder is None:
+        return
+    _reset_builder_instructions_to_index(builder, instruction_start_index)
+    count_before = len(getattr(builder, "instructions", []) or [])
+    _add_instructions_from_modified_response(builder, response_dict)
+    instrs = getattr(builder, "instructions", []) or []
+    for instr in instrs[count_before:]:
+        if isinstance(policy_protected, str) and policy_protected.strip():
+            instr["policy_protected"] = policy_protected.strip()
+        if user_approved:
+            instr["user_approved"] = True
+    _save_instructions_to_trace_file(trace_id, builder)
+
+
 def _replace_instructions_from_modified_response(
     builder: Any,
     modified_response: dict,
@@ -6796,6 +6852,17 @@ class MyCustomHandler(CustomLogger):
         elif not skip_policy_check and isinstance(final_msg_dict, dict):
             if isinstance(trace_id, str) and trace_id.strip():
                 builder = _get_instruction_builder_for_trace(trace_id)
+                if (
+                    builder is not None
+                    and not skip_instruction_governance
+                ):
+                    # Stage lowered instructions in memory so UnaryGatePolicy (UG-001)
+                    # can match tool_call_id metadata before policy decides commit/rollback.
+                    _stage_response_instructions_for_policy(
+                        builder,
+                        final_msg_dict,
+                        instruction_start_index=_policy_instruction_count_before,
+                    )
                 instructions = (
                     list(getattr(builder, "instructions", [])) if builder else []
                 )
@@ -6868,11 +6935,24 @@ class MyCustomHandler(CustomLogger):
                             ),
                             is_chat_completion=is_chat_completion,
                         )
-                    if builder is not None:
-                        count_before = len(getattr(builder, "instructions", []) or [])
-                        _add_instructions_from_modified_response(builder, final_msg_dict)
-                        if len(getattr(builder, "instructions", []) or []) > count_before:
-                            _save_instructions_to_trace_file(trace_id, builder)
+                    if builder is not None and not skip_instruction_governance:
+                        _commit_response_instructions_after_policy(
+                            builder,
+                            trace_id,
+                            final_msg_dict,
+                            instruction_start_index=_policy_instruction_count_before,
+                            user_approved=bool(
+                                getattr(
+                                    policy_result, "local_confirmation_resolved", False
+                                )
+                                and getattr(
+                                    policy_result,
+                                    "local_confirmation_decision",
+                                    None,
+                                )
+                                == "allow_original"
+                            ),
+                        )
                 if policy_result.modified:
                     error_type_str = (policy_result.error_type or "").strip()
                     if bool(
@@ -6905,18 +6985,17 @@ class MyCustomHandler(CustomLogger):
                             _record_stripped_category(
                                 data, "COGNITIVE_CORE__RESPOND", topic="policy protected"
                             )
-                        if builder is not None:
-                            count_before = len(getattr(builder, "instructions", []) or [])
-                            _add_instructions_from_modified_response(
+                        if (
+                            builder is not None
+                            and not skip_instruction_governance
+                        ):
+                            _commit_response_instructions_after_policy(
                                 builder,
+                                trace_id,
                                 final_msg_dict if isinstance(final_msg_dict, dict) else {},
+                                instruction_start_index=_policy_instruction_count_before,
+                                policy_protected=policy_violation_reason_for_langfuse,
                             )
-                            for instr in builder.instructions[count_before:]:
-                                instr["policy_protected"] = (
-                                    policy_violation_reason_for_langfuse or ""
-                                )
-                            if len(getattr(builder, "instructions", []) or []) > count_before:
-                                _save_instructions_to_trace_file(trace_id, builder)
                         response = _apply_canonical_message_to_response(
                             response,
                             (
@@ -6976,9 +7055,9 @@ class MyCustomHandler(CustomLogger):
                         policy_violation_reason_for_langfuse = None
                         policy_names_for_langfuse = list(policy_result.policy_names)
                         policy_sources_for_langfuse = dict(policy_result.policy_sources)
-                        if builder is not None:
-                            builder.instructions = list(
-                                builder.instructions[:_policy_instruction_count_before]
+                        if builder is not None and not skip_instruction_governance:
+                            _reset_builder_instructions_to_index(
+                                builder, _policy_instruction_count_before
                             )
                             try:
                                 instr = builder.add_from_structured_output(
