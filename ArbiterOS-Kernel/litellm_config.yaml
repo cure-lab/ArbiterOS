@@ -33,10 +33,13 @@ model_list:
 
 # ArbiterOS kernel: which agent tool names to parse (instruction_parsing). 
 # Now support : openclaw, nanobot, hermes, codex, claude_code
+# upstream_compat: 
+# enabled: true only for claude_code and codex
+# enabled: false for openclaw, nanobot, and hermes
 arbiteros_config:
-  tool_agent: codex
+  tool_agent: openclaw
   upstream_compat:
-    enabled: true
+    enabled: false
     rules:
       - match_model: "gpt-5.5"
         strip_metadata: true
@@ -45,8 +48,9 @@ arbiteros_config:
 # When true, enforced policy modifications are confirmed locally in the kernel terminal:
 #   Y => keep blocked response
 #   N => allow original response
-# Default false keeps current in-agent Yes/No confirmation flow unchanged.
-arbiteros_local_policy_confirm: false
+# false (in-agent Yes/No confirmation) is no longer maintained; we strongly recommend
+# true and deciding each block in the ArbiterOS terminal whether to apply it.
+arbiteros_local_policy_confirm: true
 
 litellm_settings:
   # Following settings for anthropics models
