@@ -38,6 +38,7 @@ _LITELLM_CFG_PATH = Path(__file__).resolve().parent.parent / "litellm_config.yam
 _LOCAL_CONFIRM_CFG_LOCK = threading.Lock()
 _LOCAL_CONFIRM_CFG_MTIME_NS: Optional[int] = None
 _LOCAL_CONFIRM_CFG_ENABLED: bool = False
+_LOCAL_CONFIRM_CFG_TEST_MODE: bool = False
 _LOCAL_CONFIRM_INPUT_LOCK = threading.Lock()
 
 
@@ -86,19 +87,31 @@ def _is_local_policy_confirm_enabled() -> bool:
     except Exception:
         return False
     with _LOCAL_CONFIRM_CFG_LOCK:
-        global _LOCAL_CONFIRM_CFG_MTIME_NS, _LOCAL_CONFIRM_CFG_ENABLED
+        global _LOCAL_CONFIRM_CFG_MTIME_NS, _LOCAL_CONFIRM_CFG_ENABLED, _LOCAL_CONFIRM_CFG_TEST_MODE
         if _LOCAL_CONFIRM_CFG_MTIME_NS == mtime_ns:
             return _LOCAL_CONFIRM_CFG_ENABLED
         enabled = False
+        test_mode = False
         try:
             parsed = yaml.safe_load(p.read_text(encoding="utf-8"))
             if isinstance(parsed, dict):
                 enabled = bool(parsed.get("arbiteros_local_policy_confirm", False))
+                test_mode = bool(
+                    parsed.get("arbiteros_local_policy_confirm_test_mode", False)
+                )
         except Exception:
             enabled = False
+            test_mode = False
         _LOCAL_CONFIRM_CFG_MTIME_NS = mtime_ns
         _LOCAL_CONFIRM_CFG_ENABLED = enabled
+        _LOCAL_CONFIRM_CFG_TEST_MODE = test_mode
         return enabled
+
+
+def _is_local_policy_confirm_test_mode() -> bool:
+    _is_local_policy_confirm_enabled()
+    with _LOCAL_CONFIRM_CFG_LOCK:
+        return _LOCAL_CONFIRM_CFG_TEST_MODE
 
 
 def _prompt_local_policy_confirmation(
@@ -111,6 +124,12 @@ def _prompt_local_policy_confirmation(
     Return True to keep block, False to allow original response.
     """
     with _LOCAL_CONFIRM_INPUT_LOCK:
+        if _is_local_policy_confirm_test_mode():
+            print(
+                "[ArbiterOS][LocalConfirm] test mode enabled; auto keep block (Y).",
+                file=sys.stderr,
+            )
+            return True
         if not sys.stdin or not hasattr(sys.stdin, "isatty") or not sys.stdin.isatty():
             print(
                 "[ArbiterOS][LocalConfirm] stdin is not interactive; default to keep block.",
