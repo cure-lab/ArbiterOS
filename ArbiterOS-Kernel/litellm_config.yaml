@@ -51,6 +51,9 @@ arbiteros_config:
 # false (in-agent Yes/No confirmation) is no longer maintained; we strongly recommend
 # true and deciding each block in the ArbiterOS terminal whether to apply it.
 arbiteros_local_policy_confirm: true
+# Test mode (default false): only applies when arbiteros_local_policy_confirm is true.
+# When true, every block is auto-kept (same as pressing Y) without waiting at the terminal.
+arbiteros_local_policy_confirm_test_mode: false
 
 litellm_settings:
   # Following settings for anthropics models
