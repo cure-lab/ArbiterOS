@@ -172,6 +172,7 @@ class _TraceState:
     # Step1 backup-only fields (trace-id bound). Do not change runtime reads yet.
     trace_started_at: Optional[str] = None
     trace_total_tokens: int = 0
+    token_usage_rounds: list[dict[str, Any]] = field(default_factory=list)
     backup_role_name_requested: Optional[str] = None
     backup_role_name_effective: Optional[str] = None
     backup_instruction_file: Optional[str] = None
@@ -292,6 +293,7 @@ def _trace_state_to_dict(state: _TraceState) -> dict[str, Any]:
         "bootstrap_scan_done": bool(state.bootstrap_scan_done),
         "trace_started_at": state.trace_started_at,
         "trace_total_tokens": state.trace_total_tokens,
+        "token_usage_rounds": state.token_usage_rounds,
         "backup_role_name_requested": state.backup_role_name_requested,
         "backup_role_name_effective": state.backup_role_name_effective,
         "backup_instruction_file": state.backup_instruction_file,
@@ -399,6 +401,12 @@ def _trace_state_from_dict(device_key: str, payload: Any) -> Optional[_TraceStat
     trace_total_tokens = payload.get("trace_total_tokens")
     if not isinstance(trace_total_tokens, int) or trace_total_tokens < 0:
         trace_total_tokens = 0
+    token_usage_rounds = payload.get("token_usage_rounds")
+    if not isinstance(token_usage_rounds, list):
+        token_usage_rounds = []
+    cleaned_token_usage_rounds: list[dict[str, Any]] = [
+        dict(x) for x in token_usage_rounds if isinstance(x, dict)
+    ]
     backup_role_name_requested = payload.get("backup_role_name_requested")
     if (
         not isinstance(backup_role_name_requested, str)
@@ -487,6 +495,7 @@ def _trace_state_from_dict(device_key: str, payload: Any) -> Optional[_TraceStat
         bootstrap_scan_done=bootstrap_scan_done,
         trace_started_at=trace_started_at,
         trace_total_tokens=trace_total_tokens,
+        token_usage_rounds=cleaned_token_usage_rounds,
         backup_role_name_requested=backup_role_name_requested,
         backup_role_name_effective=backup_role_name_effective,
         backup_instruction_file=backup_instruction_file,
@@ -1519,25 +1528,92 @@ def _to_json(obj: Any) -> Any:
     return str(obj)
 
 
-def _extract_total_tokens_from_response_obj(response_obj: Any) -> int:
+def _extract_usage_dict_from_response_obj(response_obj: Any) -> Optional[dict[str, Any]]:
     payload = _to_json(response_obj)
     if not isinstance(payload, dict):
-        return 0
+        return None
     usage = payload.get("usage")
-    if isinstance(usage, dict):
-        total_tokens = usage.get("total_tokens")
-        if isinstance(total_tokens, int) and total_tokens > 0:
-            return total_tokens
-        prompt_tokens = usage.get("prompt_tokens")
-        completion_tokens = usage.get("completion_tokens")
-        if (
-            isinstance(prompt_tokens, int)
-            and prompt_tokens >= 0
-            and isinstance(completion_tokens, int)
-            and completion_tokens >= 0
-        ):
-            return prompt_tokens + completion_tokens
+    return dict(usage) if isinstance(usage, dict) else None
+
+
+def _extract_total_tokens_from_usage_dict(usage: dict[str, Any]) -> int:
+    total_tokens = usage.get("total_tokens")
+    if isinstance(total_tokens, int) and total_tokens > 0:
+        return total_tokens
+    prompt_tokens = usage.get("prompt_tokens")
+    completion_tokens = usage.get("completion_tokens")
+    if (
+        isinstance(prompt_tokens, int)
+        and prompt_tokens >= 0
+        and isinstance(completion_tokens, int)
+        and completion_tokens >= 0
+    ):
+        return prompt_tokens + completion_tokens
+    input_tokens = usage.get("input_tokens")
+    output_tokens = usage.get("output_tokens")
+    if (
+        isinstance(input_tokens, int)
+        and input_tokens >= 0
+        and isinstance(output_tokens, int)
+        and output_tokens >= 0
+    ):
+        return input_tokens + output_tokens
     return 0
+
+
+def _normalize_usage_dict_for_storage(usage: dict[str, Any]) -> dict[str, Any]:
+    """Keep a JSON-serializable usage snapshot for per-round trace records."""
+    out: dict[str, Any] = {}
+    for key in (
+        "total_tokens",
+        "prompt_tokens",
+        "completion_tokens",
+        "input_tokens",
+        "output_tokens",
+        "cost",
+    ):
+        value = usage.get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            out[key] = value
+    for details_key in ("input_tokens_details", "output_tokens_details"):
+        details = usage.get(details_key)
+        if isinstance(details, dict):
+            cleaned_details: dict[str, Any] = {}
+            for dk, dv in details.items():
+                if isinstance(dv, (int, float)) and not isinstance(dv, bool):
+                    cleaned_details[str(dk)] = dv
+            if cleaned_details:
+                out[details_key] = cleaned_details
+    return out
+
+
+def _extract_total_tokens_from_response_obj(response_obj: Any) -> int:
+    usage = _extract_usage_dict_from_response_obj(response_obj)
+    if usage is None:
+        return 0
+    return _extract_total_tokens_from_usage_dict(usage)
+
+
+def _attach_usage_to_model_response(
+    response: ModelResponse, usage: Any
+) -> ModelResponse:
+    usage_dict = _extract_usage_dict_from_response_obj({"usage": usage})
+    if not usage_dict:
+        return response
+    model_usage = dict(usage_dict)
+    if "prompt_tokens" not in model_usage and isinstance(
+        model_usage.get("input_tokens"), int
+    ):
+        model_usage["prompt_tokens"] = model_usage["input_tokens"]
+    if "completion_tokens" not in model_usage and isinstance(
+        model_usage.get("output_tokens"), int
+    ):
+        model_usage["completion_tokens"] = model_usage["output_tokens"]
+    try:
+        setattr(response, "usage", model_usage)
+    except Exception:
+        pass
+    return response
 
 
 def _snapshot_trace_backup_state(
@@ -1614,13 +1690,26 @@ def _snapshot_trace_backup_state(
         state.backup_updated_at = datetime.now().isoformat()
 
 
-def _accumulate_trace_total_tokens(trace_id: Optional[str], response_obj: Any) -> None:
+def _record_trace_token_usage(
+    trace_id: Optional[str],
+    response_obj: Any,
+    *,
+    model: Optional[str] = None,
+    source: str = "post_call_success",
+) -> None:
     if not isinstance(trace_id, str) or not trace_id.strip():
         return
-    delta = _extract_total_tokens_from_response_obj(response_obj)
+    usage_dict = _extract_usage_dict_from_response_obj(response_obj)
+    delta = (
+        _extract_total_tokens_from_usage_dict(usage_dict)
+        if isinstance(usage_dict, dict)
+        else 0
+    )
     if delta <= 0:
         return
+
     tid = trace_id.strip()
+    round_record: Optional[dict[str, Any]] = None
     with _trace_state_lock:
         for state in _trace_state_by_device.values():
             if state.trace_id != tid:
@@ -1628,8 +1717,49 @@ def _accumulate_trace_total_tokens(trace_id: Optional[str], response_obj: Any) -
             if not isinstance(state.trace_started_at, str) or not state.trace_started_at:
                 state.trace_started_at = datetime.now().isoformat()
             state.trace_total_tokens = max(0, int(state.trace_total_tokens)) + delta
+            round_record = {
+                "recorded_at": datetime.now().isoformat(),
+                "turn_index": int(state.turn_index),
+                "model": model,
+                "source": source,
+                "usage": (
+                    _normalize_usage_dict_for_storage(usage_dict)
+                    if isinstance(usage_dict, dict)
+                    else {}
+                ),
+                "round_total_tokens": delta,
+                "trace_total_tokens_after": int(state.trace_total_tokens),
+            }
+            state.token_usage_rounds.append(round_record)
             state.backup_updated_at = datetime.now().isoformat()
             break
+
+    if round_record is None:
+        return
+    _persist_trace_state_to_disk()
+    _save_json(
+        "token_usage_round",
+        {"trace_id": tid, **round_record},
+    )
+
+
+def _accumulate_trace_total_tokens(trace_id: Optional[str], response_obj: Any) -> None:
+    model_name: Optional[str] = None
+    payload = _to_json(response_obj)
+    if isinstance(payload, dict):
+        raw_model = payload.get("model")
+        if isinstance(raw_model, str) and raw_model.strip():
+            model_name = raw_model.strip()
+    if model_name is None and hasattr(response_obj, "model"):
+        raw_model = getattr(response_obj, "model", None)
+        if isinstance(raw_model, str) and raw_model.strip():
+            model_name = raw_model.strip()
+    _record_trace_token_usage(
+        trace_id,
+        response_obj,
+        model=model_name,
+        source="post_call_success",
+    )
 
 
 def _persist_trace_backup_state(
@@ -7259,6 +7389,13 @@ class MyCustomHandler(CustomLogger):
                     else "arbiteros-responses-stream"
                 ),
             )
+            if isinstance(completed_response_obj, dict):
+                completed_usage = completed_response_obj.get("usage")
+                if isinstance(completed_usage, dict):
+                    synthesized_model_response = _attach_usage_to_model_response(
+                        synthesized_model_response,
+                        completed_usage,
+                    )
             # For responses/codex, policy + local confirm must run before any client-visible
             # completion event is emitted. This keeps governance semantics identical to
             # chat-completions agents (pre-return policy gate).
