@@ -1,8 +1,8 @@
 model_list:
-  - model_name: gpt-4o-mini
+  - model_name: gpt-5.5
     litellm_params:
-      model: openai/gpt-4o-mini
-      api_key:
+      model: openai/gpt-5.5
+      api_key: 
       api_base:
       response_format:
         type: json_schema
@@ -26,8 +26,11 @@ model_list:
                 description: "The instruction category type. Use the most Accurate category possible, rather than only choose 'COGNITIVE_CORE__RESPOND'. "
               content:
                 type: string
-                description: "The actual content of the instruction"
-            required: [topic, category, content]
+                description: "The actual content of the instruction. It can be anything and in any format you need to generate."
+            required:
+              - topic
+              - category
+              - content
             additionalProperties: false
           strict: true
 
@@ -37,13 +40,21 @@ model_list:
 # enabled: true only for claude_code and codex
 # enabled: false for openclaw, nanobot, and hermes
 arbiteros_config:
-  tool_agent: openclaw
+  tool_agent: codex
+  # Turn-boundary checkpoint co-launch (independent from kernel trace).
+  # Recording is ON while ArbiterOS runs and OFF after shutdown.
+  # Recover with: checkpoint list / checkpoint resume <session> <turn>
   upstream_compat:
-    enabled: false
+    enabled: true
     rules:
       - match_model: "gpt-5.5"
         strip_metadata: true
         force_non_stream: true
+  checkpoint:
+    enabled: false
+    auto_install_hooks: true
+    # home: ~/.checkpoint-plugin
+    providers: auto
 
 # When true, enforced policy modifications are confirmed locally in the kernel terminal:
 #   Y => keep blocked response

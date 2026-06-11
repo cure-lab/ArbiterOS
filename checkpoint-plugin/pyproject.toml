@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "checkpoint-plugin"
+version = "0.1.0"
+description = "Turn-boundary checkpointing for agent CLI sessions."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "prompt-toolkit>=3.0.52",
+]
+
+[project.scripts]
+checkpoint = "checkpoint_plugin.cli:main"
+checkpoint-claude-hook = "checkpoint_plugin.integrations.claude_code_hook:main"
+checkpoint-codex-hook = "checkpoint_plugin.integrations.codex_hook:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

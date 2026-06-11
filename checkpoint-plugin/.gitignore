@@ -1,0 +1,19 @@
+# Python build / install artifacts
+*.egg-info/
+__pycache__/
+*.py[cod]
+*$py.class
+build/
+dist/
+
+# Virtual environments
+.venv/
+venv/
+
+# Test / tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# OS
+.DS_Store

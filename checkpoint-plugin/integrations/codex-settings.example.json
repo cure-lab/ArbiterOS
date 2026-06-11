@@ -1,0 +1,38 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -m checkpoint_plugin.integrations.codex_hook session_start",
+            "statusMessage": "Creating checkpoint session metadata"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -m checkpoint_plugin.integrations.codex_hook turn_end",
+            "statusMessage": "Saving checkpoint"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -m checkpoint_plugin.integrations.codex_hook subagent_end",
+            "statusMessage": "Saving subagent checkpoint"
+          }
+        ]
+      }
+    ]
+  }
+}

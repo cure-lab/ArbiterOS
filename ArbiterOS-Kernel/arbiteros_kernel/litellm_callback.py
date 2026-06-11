@@ -7860,3 +7860,7 @@ class MyCustomHandler(CustomLogger):
 
 
 proxy_handler_instance = MyCustomHandler()
+
+from arbiteros_kernel.checkpoint_lifecycle import start_checkpoint_lifecycle
+
+start_checkpoint_lifecycle()

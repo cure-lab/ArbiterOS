@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "cisco-ai-skill-scanner==1.0.2",
+    "checkpoint-plugin",
     "hypercorn>=0.18.0",
     "jsonschema>=4.26.0",
     "langfuse>=3.14.1",
@@ -44,8 +45,16 @@ args = [{ name = "replay_args", positional = true, multiple = true }]
 cmd = "uv run python -m arbiteros_kernel.policy_test_harness ${spec_file}"
 args = [{ name = "spec_file", positional = true }]
 
+# checkpoint-plugin CLI (installed in this project's venv, not on global PATH)
+[tool.poe.tasks.checkpoint]
+cmd = "uv run checkpoint ${checkpoint_args}"
+args = [{ name = "checkpoint_args", positional = true, multiple = true, default = "list" }]
+
 [tool.ty]
 environment = { python = ".venv" }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.uv.sources]
+checkpoint-plugin = { path = "../checkpoint-plugin", editable = true }
