@@ -76,7 +76,12 @@
         "source": {},
         "sink": {
           "tools": [
-            "message"
+            "message",
+            "gmail__send_email",
+            "gmail__send_reply",
+            "gmail__forward_message",
+            "slack__post_message",
+            "telegram__send_message"
           ],
           "flow_kinds": [
             "comm_sink"
@@ -145,14 +150,27 @@
       "description": "External message recipient domains lowered on the sink instruction.",
       "applies_to": {
         "tools": [
-          "message"
+          "message",
+          "gmail__send_email",
+          "gmail__send_reply",
+          "gmail__forward_message",
+          "slack__post_message",
+          "telegram__send_message"
         ]
       },
       "source": {
         "kind": "tool_arguments",
         "paths": [
           "arguments.to",
-          "arguments.recipients"
+          "arguments.cc",
+          "arguments.bcc",
+          "arguments.email",
+          "arguments.address",
+          "arguments.recipient",
+          "arguments.recipients",
+          "arguments.receiver_email",
+          "arguments.channel",
+          "arguments.channel_name"
         ],
         "transform": "external_domains"
       },

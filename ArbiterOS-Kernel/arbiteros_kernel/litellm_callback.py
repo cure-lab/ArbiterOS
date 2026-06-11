@@ -44,6 +44,8 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.pretty import Pretty
 
+from arbiteros_kernel.cost import down as cost_down
+from arbiteros_kernel.cost import telemetry as cost_telemetry
 from arbiteros_kernel.langfuse_env import ensure_langfuse_env_compat
 from arbiteros_kernel.policy.alignment_trigger import (
     should_trigger_postexec_sentinel,
@@ -1516,24 +1518,9 @@ def _to_json(obj: Any) -> Any:
 
 
 def _extract_total_tokens_from_response_obj(response_obj: Any) -> int:
-    payload = _to_json(response_obj)
-    if not isinstance(payload, dict):
-        return 0
-    usage = payload.get("usage")
-    if isinstance(usage, dict):
-        total_tokens = usage.get("total_tokens")
-        if isinstance(total_tokens, int) and total_tokens > 0:
-            return total_tokens
-        prompt_tokens = usage.get("prompt_tokens")
-        completion_tokens = usage.get("completion_tokens")
-        if (
-            isinstance(prompt_tokens, int)
-            and prompt_tokens >= 0
-            and isinstance(completion_tokens, int)
-            and completion_tokens >= 0
-        ):
-            return prompt_tokens + completion_tokens
-    return 0
+    return cost_telemetry.extract_token_usage_from_response_obj(response_obj).get(
+        "total_tokens", 0
+    )
 
 
 def _snapshot_trace_backup_state(
@@ -1610,12 +1597,24 @@ def _snapshot_trace_backup_state(
         state.backup_updated_at = datetime.now().isoformat()
 
 
-def _accumulate_trace_total_tokens(trace_id: Optional[str], response_obj: Any) -> None:
+def _accumulate_trace_total_tokens(
+    trace_id: Optional[str],
+    response_obj: Any,
+    *,
+    usage: Optional[dict[str, int]] = None,
+) -> dict[str, Any]:
+    empty = {"trace_total_tokens": 0}
     if not isinstance(trace_id, str) or not trace_id.strip():
-        return
-    delta = _extract_total_tokens_from_response_obj(response_obj)
-    if delta <= 0:
-        return
+        return empty
+    if not isinstance(usage, dict):
+        usage = cost_telemetry.extract_token_usage_from_response_obj(response_obj)
+    total_delta = max(0, int(usage.get("total_tokens", 0) or 0))
+    prompt_delta = max(0, int(usage.get("prompt_tokens", 0) or 0))
+    completion_delta = max(0, int(usage.get("completion_tokens", 0) or 0))
+    if total_delta <= 0 and (prompt_delta > 0 or completion_delta > 0):
+        total_delta = prompt_delta + completion_delta
+    if total_delta <= 0:
+        return empty
     tid = trace_id.strip()
     with _trace_state_lock:
         for state in _trace_state_by_device.values():
@@ -1623,9 +1622,10 @@ def _accumulate_trace_total_tokens(trace_id: Optional[str], response_obj: Any) -
                 continue
             if not isinstance(state.trace_started_at, str) or not state.trace_started_at:
                 state.trace_started_at = datetime.now().isoformat()
-            state.trace_total_tokens = max(0, int(state.trace_total_tokens)) + delta
+            state.trace_total_tokens = max(0, int(state.trace_total_tokens)) + total_delta
             state.backup_updated_at = datetime.now().isoformat()
-            break
+            return {"trace_total_tokens": state.trace_total_tokens}
+    return empty
 
 
 def _persist_trace_backup_state(
@@ -1648,14 +1648,37 @@ def _build_policy_runtime_context(
         instruction_bytes = 0
 
     total_tokens = 0
+    prompt_tokens = 0
+    completion_tokens = 0
+    reasoning_tokens = 0
+    cached_tokens = 0
+    total_cost_usd = 0.0
     elapsed_seconds = 0.0
     if isinstance(trace_id, str) and trace_id.strip():
         tid = trace_id.strip()
+        cost_totals = cost_telemetry.get_trace_totals(tid)
+        total_tokens = max(
+            total_tokens, int(cost_totals.get("trace_total_tokens", 0) or 0)
+        )
+        prompt_tokens = max(0, int(cost_totals.get("trace_prompt_tokens", 0) or 0))
+        completion_tokens = max(
+            0, int(cost_totals.get("trace_completion_tokens", 0) or 0)
+        )
+        reasoning_tokens = max(
+            0, int(cost_totals.get("trace_reasoning_tokens", 0) or 0)
+        )
+        cached_tokens = max(0, int(cost_totals.get("trace_cached_tokens", 0) or 0))
+        total_cost_usd = max(
+            0.0, float(cost_totals.get("trace_cost_usd", 0.0) or 0.0)
+        )
         with _trace_state_lock:
             for state in _trace_state_by_device.values():
                 if state.trace_id != tid:
                     continue
-                total_tokens = max(0, int(getattr(state, "trace_total_tokens", 0) or 0))
+                total_tokens = max(
+                    total_tokens,
+                    max(0, int(getattr(state, "trace_total_tokens", 0) or 0)),
+                )
                 started_at = getattr(state, "trace_started_at", None)
                 if isinstance(started_at, str) and started_at:
                     try:
@@ -1670,6 +1693,11 @@ def _build_policy_runtime_context(
     return {
         "resource_guard": {
             "total_tokens": total_tokens,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "reasoning_tokens": reasoning_tokens,
+            "cached_tokens": cached_tokens,
+            "total_cost_usd": total_cost_usd,
             "elapsed_seconds": elapsed_seconds,
             "instruction_bytes": instruction_bytes,
             "instruction_count": instruction_count,
@@ -5678,6 +5706,19 @@ def _inject_topic_summary_hint(
     )
 
 
+def _should_inject_topic_summary_hint(data: dict) -> bool:
+    """Topic summarization is observability-only; keep it opt-in."""
+    enabled = os.getenv("ARBITEROS_ENABLE_TOPIC_HINT", "").strip().lower()
+    if enabled not in {"1", "true", "yes", "on"}:
+        return False
+    # Tool-using agents are sensitive to extra system instructions: a topic-only
+    # hint can suppress the intended tool call or change the response shape.
+    tools = data.get("tools") if isinstance(data, dict) else None
+    if isinstance(tools, list) and tools:
+        return False
+    return True
+
+
 def _wrap_reference_tool_ids_into_messages(
     data: dict, *, trace_id: Optional[str] = None
 ) -> dict:
@@ -6088,7 +6129,8 @@ class MyCustomHandler(CustomLogger):
             with _trace_state_lock:
                 state.latest_topic_summary = cleaned_previous_topic
             _persist_trace_state_to_disk()
-        data = _inject_topic_summary_hint(data, state=state, context=context)
+        if _should_inject_topic_summary_hint(data):
+            data = _inject_topic_summary_hint(data, state=state, context=context)
 
         if created_new_trace:
             root_observation_id = _emit_langfuse_node(
@@ -6120,6 +6162,41 @@ class MyCustomHandler(CustomLogger):
         _ensure_turn_node_if_needed(context, state)
         _emit_tool_result_nodes_if_needed(data, state)
         data = _inject_trace_metadata(data, state)
+
+        if state is not None and isinstance(state.trace_id, str) and state.trace_id:
+            builder_for_cost_down = _peek_instruction_builder_for_trace(state.trace_id)
+            instructions_for_cost_down = (
+                list(getattr(builder_for_cost_down, "instructions", []) or [])
+                if builder_for_cost_down is not None
+                else []
+            )
+            cost_runtime_context = _build_policy_runtime_context(
+                state.trace_id,
+                instructions_for_cost_down,
+            )
+            data, cost_down_decision = cost_down.apply_cost_down_to_request(
+                data,
+                trace_id=state.trace_id,
+                policy_runtime_context=cost_runtime_context,
+                inject_system_hint=lambda req, hint, marker: _pa_inject_system_hint_into_request(
+                    req,
+                    hint_content=hint,
+                    marker=marker,
+                ),
+            )
+            if cost_down_decision.applied:
+                _save_json(
+                    "cost_down",
+                    {
+                        "trace_id": state.trace_id,
+                        "level": cost_down_decision.level,
+                        "reason": cost_down_decision.reason,
+                        "metrics": cost_down_decision.metrics,
+                        "max_completion_tokens_applied": (
+                            cost_down_decision.max_completion_tokens_applied
+                        ),
+                    },
+                )
 
         # Policy confirmation: if detected, set mock_response (after category/topic etc. so trace_id is ready)
         if _policy_confirm_apply is not None:
@@ -6337,7 +6414,16 @@ class MyCustomHandler(CustomLogger):
             _context = _build_device_context(data)
             _state, _ = _ensure_trace_state(_context)
             _trace_id = _state.trace_id if _state is not None else None
-        _accumulate_trace_total_tokens(_trace_id, response)
+        _cost_record = cost_telemetry.record_llm_call(
+            trace_id=_trace_id,
+            request_data=data,
+            response_obj=response,
+        )
+        _accumulate_trace_total_tokens(
+            trace_id=_trace_id,
+            response_obj=response,
+            usage=_cost_record.get("usage") if isinstance(_cost_record, dict) else None,
+        )
         _is_mock_response_path = False
         if isinstance(_trace_id, str) and _trace_id.strip():
             with _policy_confirmation_lock:

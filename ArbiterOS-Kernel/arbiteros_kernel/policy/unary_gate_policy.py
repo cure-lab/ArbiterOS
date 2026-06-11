@@ -1738,6 +1738,31 @@ def _synthetic_protected_identity_llm_unavailable_decision(
     )
 
 
+def _synthetic_unknown_mcp_tool_decision(ctx: Dict[str, Any]) -> RuleDecision:
+    tool_name = _safe_str(ctx.get("tool_name"), "unknown")
+    return RuleDecision(
+        index=0,
+        rule_id="UG-080",
+        title="unknown MCP tool",
+        description="MCP tool has no parser or flow metadata",
+        effect="BLOCK",
+        scope="tool",
+        message=(
+            f"MCP tool `{tool_name}` is not recognized by ArbiterOS parser/flow "
+            "lowering"
+        ),
+        predicate={"truthy": {"var": "unknown_mcp_tool"}},
+        selector={"tool": ["*"]},
+        actual={
+            "tool_name": tool_name,
+            "unknown_mcp_tool": True,
+            "mcp_flow_kind": ctx.get("mcp_flow_kind"),
+            "unknown_mcp_allowlist_file": ctx.get("unknown_mcp_allowlist_file"),
+        },
+        source="unknown_mcp_tool_gate",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Context building + user-facing messages
 # ---------------------------------------------------------------------------
@@ -1848,6 +1873,12 @@ def _format_actual(actual: Dict[str, Any]) -> str:
         "protected_identity_mutation_instruction": "受保护文件修改指令",
         "gateway_external_redirection_patch": "外部重定向配置修改",
         "missing_instruction": "缺少元数据",
+        "mcp_flow_kind": "MCP 流程类型",
+        "mcp_tool_supported": "MCP 工具已支持",
+        "unknown_mcp_tool": "未知 MCP 工具",
+        "unknown_mcp_tool_name": "未知 MCP 工具名",
+        "unknown_mcp_allowlisted": "未知 MCP 已放行",
+        "unknown_mcp_allowlist_file": "MCP 放行列表",
     }
     scope_map = {"tool": "工具调用", "respond": "直接回复"}
     bool_map = {True: "是", False: "否"}
@@ -1885,6 +1916,7 @@ def _localized_rule_meaning(decision: RuleDecision) -> str:
         "UG-061": "这一步会通过命令修改受保护文件。",
         "UG-062": "这一步会把受保护文件的修改指令发给其他对象。",
         "UG-070": "这一步会修改网关或代理的外部转发配置。",
+        "UG-080": "这个 MCP 工具没有 parser 或流程元数据，系统无法确定它是读取、对外发送还是持久化副作用。",
     }
     return mapping.get(rule_id, "当前操作存在系统不能直接放行的安全风险。")
 
@@ -1906,6 +1938,7 @@ def _localized_predicate_text(decision: RuleDecision) -> str:
         "UG-061": "write_target_basenames 与 {SOUL.MD, AGENTS.MD, IDENTITY.MD} 存在交集。",
         "UG-062": "protected_identity_mutation_instruction = true。",
         "UG-070": "gateway_external_redirection_patch = true。",
+        "UG-080": "unknown_mcp_tool = true。",
     }
     if rule_id in mapping:
         return mapping[rule_id]
@@ -2013,6 +2046,22 @@ def _tool_block_reason(decision: RuleDecision, ctx: Dict[str, Any]) -> str:
     if rule_id == "UG-070":
         return "这一步会修改网关或代理配置，并把后续请求转向外部地址，已暂停执行。"
 
+    if rule_id == "UG-080":
+        tool_name = _safe_str(ctx.get("unknown_mcp_tool_name")) or _safe_str(
+            ctx.get("tool_name"), "unknown"
+        )
+        allowlist_file = _safe_str(ctx.get("unknown_mcp_allowlist_file"))
+        allowlist_hint = (
+            f"如果确认该工具长期可信，可以把 `{tool_name}` 加入 `{allowlist_file}`；"
+            if allowlist_file
+            else f"如果确认该工具长期可信，可以把 `{tool_name}` 加入 MCP allowlist；"
+        )
+        return (
+            f"`{tool_name}` 是未识别的 MCP 工具，当前缺少 parser/flow lowering，"
+            "ArbiterOS 无法确定它会读取敏感数据、对外发送，还是产生持久化副作用，已暂停执行。"
+            f"{allowlist_hint}如果只是本轮确认，可以在终端确认流程里选择放行原始调用。"
+        )
+
     return "当前操作触发了系统安全保护，已暂停执行。"
 
 
@@ -2053,6 +2102,7 @@ def _unary_policy_title(decision: RuleDecision) -> str:
         "UG-061": "间接修改受保护文件",
         "UG-062": "传播受保护文件修改指令",
         "UG-070": "外部重定向或代理变更",
+        "UG-080": "未识别 MCP 工具",
     }
     return mapping.get(rule_id, "安全保护已触发")
 
@@ -2218,6 +2268,9 @@ class UnaryGatePolicy(Policy):
                     harmful_61 = False
                 if decision is None and harmful_61:
                     decision = _synthetic_ug061_llm_decision(reason_zh_61)
+
+            if decision is None and bool(ctx.get("unknown_mcp_tool")):
+                decision = _synthetic_unknown_mcp_tool_decision(ctx)
 
             if decision is None:
                 decision = _evaluate_rules(rules=rules_for_eval, ctx=ctx)

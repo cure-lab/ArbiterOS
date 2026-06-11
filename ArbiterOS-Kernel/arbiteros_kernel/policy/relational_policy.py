@@ -6,6 +6,7 @@ import os
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from arbiteros_kernel.instruction_parsing.types import LEVEL_ORDER
+from arbiteros_kernel.mcp_tool_classification import classify_mcp_tool_flow
 from arbiteros_kernel.policy_check import PolicyCheckResult
 from arbiteros_kernel.policy_runtime import RUNTIME, canonicalize_args
 
@@ -385,6 +386,10 @@ def _flow_kind(
         return "comm_sink"
     if name == "tts":
         return "voice_sink"
+
+    mcp_flow_kind = classify_mcp_tool_flow(name)
+    if mcp_flow_kind != "none":
+        return mcp_flow_kind
 
     # Scheduler persistence
     if name == "cron" and action in _CRON_PERSIST_ACTIONS:

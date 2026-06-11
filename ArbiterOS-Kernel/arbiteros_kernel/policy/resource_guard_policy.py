@@ -97,11 +97,13 @@ class ResourceGuardPolicy(Policy):
             )
 
         total_tokens = _to_float(rg.get("total_tokens"), 0.0)
+        total_cost_usd = _to_float(rg.get("total_cost_usd"), 0.0)
         elapsed_seconds = _to_float(rg.get("elapsed_seconds"), 0.0)
         instruction_bytes = _to_float(rg.get("instruction_bytes"), 0.0)
         instruction_count = int(_to_float(rg.get("instruction_count"), 0.0))
 
         max_total_tokens = _to_float(cfg.get("max_total_tokens"), 0.0)
+        max_total_cost_usd = _to_float(cfg.get("max_total_cost_usd"), 0.0)
         max_trace_seconds = _to_float(cfg.get("max_trace_seconds"), 0.0)
         max_instruction_bytes = _to_float(cfg.get("max_instruction_bytes"), 0.0)
 
@@ -114,6 +116,16 @@ class ResourceGuardPolicy(Policy):
                     observed=total_tokens,
                     threshold=max_total_tokens,
                     detail="累计 token 预算",
+                )
+            )
+        if max_total_cost_usd > 0 and total_cost_usd > max_total_cost_usd:
+            violations.append(
+                ResourceViolation(
+                    rule_id="RG-004",
+                    metric="trace_total_cost_usd",
+                    observed=total_cost_usd,
+                    threshold=max_total_cost_usd,
+                    detail="累计模型调用成本预算（USD）",
                 )
             )
         if max_trace_seconds > 0 and elapsed_seconds > max_trace_seconds:
@@ -181,6 +193,7 @@ class ResourceGuardPolicy(Policy):
                     ],
                     "instruction_count": instruction_count,
                     "instruction_bytes": int(instruction_bytes),
+                    "total_cost_usd": total_cost_usd,
                     "latest_instruction_count": len(latest_instructions or []),
                 },
             )

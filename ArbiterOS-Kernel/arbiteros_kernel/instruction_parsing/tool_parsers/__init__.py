@@ -15,6 +15,12 @@ from typing import Any, Dict, Optional
 from ..tool_agent_config import get_tool_agent
 from ..types import TaintStatus, ToolParseResult, make_security_type
 from .engine import load_registry
+from arbiteros_kernel.mcp_tool_classification import (
+    classify_mcp_tool_flow,
+    is_mcp_tool_name,
+    is_unknown_mcp_tool_allowlisted,
+    unknown_mcp_allowlist_path,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +50,86 @@ _REGISTRIES = {
 }
 
 
+def _parse_mcp_tool_fallback(tool_name: str) -> Optional[ToolParseResult]:
+    flow = classify_mcp_tool_flow(tool_name)
+    if flow == "read_sensitive":
+        lower_name = (tool_name or "").strip().lower()
+        source_trust = (
+            "LOW"
+            if lower_name.startswith(
+                ("gmail__", "email__", "mail__", "slack__", "telegram__")
+            )
+            else "UNKNOWN"
+        )
+        return ToolParseResult(
+            "READ",
+            make_security_type(
+                confidentiality="HIGH",
+                trustworthiness=source_trust,
+                confidence="UNKNOWN",
+                reversible=True,
+                authority="UNKNOWN",
+                custom={
+                    "policy_metadata": {
+                        "data_labels": ["CUSTOMER_DATA"],
+                        "mcp_flow_kind": flow,
+                    }
+                },
+            ),
+        )
+    if flow == "comm_sink":
+        return ToolParseResult(
+            "EXEC",
+            make_security_type(
+                confidentiality="LOW",
+                trustworthiness="HIGH",
+                confidence="UNKNOWN",
+                reversible=False,
+                authority="UNKNOWN",
+                risk="HIGH",
+                custom={"policy_metadata": {"mcp_flow_kind": flow}},
+            ),
+        )
+    if flow == "persist_side_effect":
+        return ToolParseResult(
+            "WRITE",
+            make_security_type(
+                confidentiality="LOW",
+                trustworthiness="HIGH",
+                confidence="UNKNOWN",
+                reversible=False,
+                authority="UNKNOWN",
+                risk="HIGH",
+                custom={"policy_metadata": {"mcp_flow_kind": flow}},
+            ),
+        )
+    if is_mcp_tool_name(tool_name):
+        allowlisted = is_unknown_mcp_tool_allowlisted(tool_name)
+        return ToolParseResult(
+            "EXEC",
+            make_security_type(
+                confidentiality="UNKNOWN",
+                trustworthiness="UNKNOWN",
+                confidence="UNKNOWN",
+                reversible=False,
+                authority="UNKNOWN",
+                risk="UNKNOWN",
+                custom={
+                    "review_required": not allowlisted,
+                    "policy_metadata": {
+                        "mcp_flow_kind": "unknown_allowed" if allowlisted else "unknown",
+                        "mcp_tool_supported": False,
+                        "unknown_mcp_tool": not allowlisted,
+                        "unknown_mcp_tool_name": tool_name,
+                        "unknown_mcp_allowlisted": allowlisted,
+                        "unknown_mcp_allowlist_file": str(unknown_mcp_allowlist_path()),
+                    },
+                },
+            ),
+        )
+    return None
+
+
 def parse_tool_instruction(
     tool_name: str,
     arguments: Optional[Dict[str, Any]] = None,
@@ -64,6 +150,9 @@ def parse_tool_instruction(
     args = arguments or {}
     parser = registry.get(tool_name)
     if not parser:
+        mcp_result = _parse_mcp_tool_fallback(tool_name)
+        if mcp_result is not None:
+            return mcp_result
         logger.warning(
             "No %s parser for tool %r; falling back to EXEC", agent, tool_name
         )

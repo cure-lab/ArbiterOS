@@ -24,7 +24,24 @@
         "process",
         "browser",
         "write",
-        "edit"
+        "edit",
+        "gmail__send_email",
+        "gmail__send_reply",
+        "gmail__forward_message",
+        "slack__post_message",
+        "telegram__send_message",
+        "salesforce__create_record",
+        "salesforce__update_record",
+        "salesforce__delete_record",
+        "salesforce__create_contact",
+        "salesforce__create_lead",
+        "salesforce__update_contact",
+        "salesforce__update_lead_status",
+        "salesforce__create_case",
+        "salesforce__update_case",
+        "salesforce__create_opportunity",
+        "salesforce__update_opportunity",
+        "salesforce__convert_lead"
       ],
       "high_side_effect_browser_actions": ["act", "upload", "dialog", "navigate"],
       "high_side_effect_process_actions": ["submit", "send-keys", "paste", "kill", "write"],
@@ -65,7 +82,25 @@
     },
     "postexec": {
       "enabled": true,
-      "ingress_tools": ["web_fetch", "web_search", "image", "browser"],
+      "ingress_tools": [
+        "web_fetch",
+        "web_search",
+        "image",
+        "browser",
+        "gmail__search_messages",
+        "gmail__find_message",
+        "gmail__get_message",
+        "gmail__get_message_body",
+        "gmail__list_messages",
+        "slack__channels_history",
+        "salesforce__search_accounts",
+        "salesforce__search_cases",
+        "salesforce__search_contacts",
+        "salesforce__search_leads",
+        "salesforce__search_opportunities",
+        "salesforce__get_record",
+        "salesforce__list_records"
+      ],
       "browser_ingress_actions": ["snapshot", "console", "pdf", "screenshot"],
       "prompt_injection_markers": [
         "ignore previous instructions",
@@ -212,8 +247,58 @@
     "enabled": true,
 
     "taint_policy": {
-      "input_tools": ["read", "web_fetch", "web_search", "session_status", "sessions_list", "sessions_history", "memory_search", "memory_get", "agents_list", "image"],
-      "output_tools": ["edit", "write", "exec", "message", "sessions_send", "sessions_spawn", "tts", "gateway"],
+      "input_tools": [
+        "read",
+        "web_fetch",
+        "web_search",
+        "session_status",
+        "sessions_list",
+        "sessions_history",
+        "memory_search",
+        "memory_get",
+        "agents_list",
+        "image",
+        "gmail__search_messages",
+        "gmail__find_message",
+        "gmail__get_message",
+        "gmail__get_message_body",
+        "gmail__list_messages",
+        "slack__channels_history",
+        "salesforce__search_accounts",
+        "salesforce__search_cases",
+        "salesforce__search_contacts",
+        "salesforce__search_leads",
+        "salesforce__search_opportunities",
+        "salesforce__get_record",
+        "salesforce__list_records"
+      ],
+      "output_tools": [
+        "edit",
+        "write",
+        "exec",
+        "message",
+        "sessions_send",
+        "sessions_spawn",
+        "tts",
+        "gateway",
+        "gmail__send_email",
+        "gmail__send_reply",
+        "gmail__forward_message",
+        "slack__post_message",
+        "telegram__send_message",
+        "salesforce__create_record",
+        "salesforce__update_record",
+        "salesforce__delete_record",
+        "salesforce__create_contact",
+        "salesforce__create_lead",
+        "salesforce__update_contact",
+        "salesforce__update_lead_status",
+        "salesforce__create_case",
+        "salesforce__update_case",
+        "salesforce__create_opportunity",
+        "salesforce__update_opportunity",
+        "salesforce__convert_lead"
+      ],
       "tools_by_action": {
         "browser": {
           "input_actions": ["status", "start", "stop", "profiles", "tabs", "snapshot", "screenshot", "console", "pdf", "open"],
@@ -239,7 +324,7 @@
     }
   },
   "relational_policy": {
-    "user_rules_enabled": false,
+    "user_rules_enabled": true,
     "user_rule_file": "arbiteros_kernel/policy/user_relational_flow_rules.json"
   },
   "exec_composite_policy": {
@@ -254,8 +339,29 @@
   },
   "resource_guard": {
     "max_total_tokens": 12000000,
+    "max_total_cost_usd": 0,
     "max_trace_seconds": 6000,
     "max_instruction_bytes": 1200000
+  },
+  "cost_telemetry": {
+    "enabled": true,
+    "currency": "USD",
+    "log_path": "log/cost_telemetry.jsonl",
+    "model_prices_usd_per_million_tokens": {},
+    "default_input_usd_per_million_tokens": 0,
+    "default_output_usd_per_million_tokens": 0
+  },
+  "cost_down": {
+    "enabled": true,
+    "warn_ratio": 0.8,
+    "critical_ratio": 0.95,
+    "warn_cost_ratio": 0.8,
+    "critical_cost_ratio": 0.95,
+    "warn_instruction_bytes_ratio": 0.8,
+    "critical_instruction_bytes_ratio": 0.95,
+    "max_request_input_tokens": 0,
+    "critical_max_completion_tokens": 512,
+    "hint_max_chars": 900
   },
   "nanobot_policy": {
     "enabled": true,
