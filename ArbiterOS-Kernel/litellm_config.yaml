@@ -31,12 +31,15 @@ model_list:
             additionalProperties: false
           strict: true
 
-# ArbiterOS kernel: which agent tool names to parse (instruction_parsing). 
-# Now support : openclaw, nanobot, hermes
+# ArbiterOS kernel: which agent tool names to parse (instruction_parsing).
+# Now support : openclaw, nanobot, hermes, codex, claude_code
+# upstream_compat:
+# enabled: true only for claude_code and codex
+# enabled: false for openclaw, nanobot, and hermes
 arbiteros_config:
-  tool_agent: codex
+  tool_agent: openclaw
   upstream_compat:
-    enabled: true
+    enabled: false
     rules:
       - match_model: "gpt-5.5"
         strip_metadata: true
@@ -45,8 +48,12 @@ arbiteros_config:
 # When true, enforced policy modifications are confirmed locally in the kernel terminal:
 #   Y => keep blocked response
 #   N => allow original response
-# Default false keeps current in-agent Yes/No confirmation flow unchanged.
-arbiteros_local_policy_confirm: false
+# false (in-agent Yes/No confirmation) is no longer maintained; we strongly recommend
+# true and deciding each block in the ArbiterOS terminal whether to apply it.
+arbiteros_local_policy_confirm: true
+# Test mode (default false): only applies when arbiteros_local_policy_confirm is true.
+# When true, every block is auto-kept (same as pressing Y) without waiting at the terminal.
+arbiteros_local_policy_confirm_test_mode: false
 
 litellm_settings:
   # Following settings for anthropics models
@@ -61,13 +68,13 @@ litellm_settings:
 # Skill trust (arbiteros_kernel.skill_trust): path to ``.../skills`` (OpenClaw
 # skill packages). Non-empty ARBITEROS_SKILLS_ROOT overrides ``skills_root`` here.
 arbiteros_skill_trust:
-  skills_root: 
+  skills_root:
 
 # Used when running ``skill-scanner`` from the kernel. All three keys must be
 # non-empty for ``--use-llm``; otherwise scans use static + behavioral only.
 skill_scanner_llm:
   model: openai/gpt-4o
-  api_base: 
+  api_base:
   api_key:
 
 
@@ -81,7 +88,7 @@ session_bootstrap_scan:
     - "PATH/TO/YOUR/AGENTS.MD"
     - "PATH/TO/YOUR/IDENTITY.MD"
   max_content_chars_per_file: 12000
-  
+
 # Taint ablation: when true, policy evaluation sees prop_* equal to base
 # trustworthiness/confidentiality (no inheritance). Implemented in policy_check only.
 taint_ablation:
