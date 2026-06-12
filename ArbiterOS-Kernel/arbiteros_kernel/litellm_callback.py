@@ -1570,6 +1570,8 @@ def _normalize_usage_dict_for_storage(usage: dict[str, Any]) -> dict[str, Any]:
         "completion_tokens",
         "input_tokens",
         "output_tokens",
+        "cache_read_input_tokens",
+        "cache_creation_input_tokens",
         "cost",
     ):
         value = usage.get(key)
@@ -1585,6 +1587,67 @@ def _normalize_usage_dict_for_storage(usage: dict[str, Any]) -> dict[str, Any]:
             if cleaned_details:
                 out[details_key] = cleaned_details
     return out
+
+
+def _extract_cache_token_counts(usage: dict[str, Any]) -> dict[str, int]:
+    """Extract cache hit and cache miss (creation) token counts from a usage dict.
+
+    Supports three API protocols:
+      - Anthropic:             cache_read_input_tokens (hit), cache_creation_input_tokens (miss/write)
+      - OpenAI Responses API:  input_tokens_details.cached_tokens (hit), no cache_miss field
+      - OpenAI Completions:    prompt_tokens_details.cached_tokens (hit), no cache_miss field
+
+    Returns a dict with:
+      - "cache_hit_tokens":      tokens served from prompt cache
+      - "cache_miss_tokens":     tokens written to prompt cache (Anthropic only; 0 for OpenAI)
+      - "uncached_input_tokens": regular input tokens that were neither a cache hit nor a
+                                 cache write (best-effort; may be 0 when not computable)
+    """
+    # --- Anthropic: top-level fields ---
+    cache_hit = usage.get("cache_read_input_tokens")
+    cache_miss = usage.get("cache_creation_input_tokens")
+
+    # --- OpenAI Responses API: input_tokens_details.cached_tokens (hit only) ---
+    input_details = usage.get("input_tokens_details")
+    if isinstance(input_details, dict):
+        if not isinstance(cache_hit, int):
+            raw = input_details.get("cached_tokens")
+            if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+                cache_hit = int(raw)
+        # Also check Anthropic-style sub-keys in case litellm normalises them here.
+        if not isinstance(cache_hit, int):
+            raw = input_details.get("cache_read")
+            if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+                cache_hit = int(raw)
+        if not isinstance(cache_miss, int):
+            raw = input_details.get("cache_creation")
+            if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+                cache_miss = int(raw)
+
+    # --- OpenAI Completions: prompt_tokens_details.cached_tokens (hit only) ---
+    prompt_details = usage.get("prompt_tokens_details")
+    if isinstance(prompt_details, dict) and not isinstance(cache_hit, int):
+        raw = prompt_details.get("cached_tokens")
+        if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+            cache_hit = int(raw)
+
+    cache_hit = int(cache_hit) if isinstance(cache_hit, (int, float)) and not isinstance(cache_hit, bool) else 0
+    cache_miss = int(cache_miss) if isinstance(cache_miss, (int, float)) and not isinstance(cache_miss, bool) else 0
+
+    # Best-effort: compute uncached input tokens.
+    total_input: Optional[int] = None
+    for key in ("prompt_tokens", "input_tokens"):
+        v = usage.get(key)
+        if isinstance(v, int) and v >= 0:
+            total_input = v
+            break
+    uncached = max(0, total_input - cache_hit - cache_miss) if total_input is not None else 0
+
+    return {
+        "cache_hit_tokens": cache_hit,
+        "cache_miss_tokens": cache_miss,
+        "uncached_input_tokens": uncached,
+    }
 
 
 def _extract_total_tokens_from_response_obj(response_obj: Any) -> int:
@@ -1717,6 +1780,11 @@ def _record_trace_token_usage(
             if not isinstance(state.trace_started_at, str) or not state.trace_started_at:
                 state.trace_started_at = datetime.now().isoformat()
             state.trace_total_tokens = max(0, int(state.trace_total_tokens)) + delta
+            cache_counts = (
+                _extract_cache_token_counts(usage_dict)
+                if isinstance(usage_dict, dict)
+                else {"cache_hit_tokens": 0, "cache_miss_tokens": 0, "uncached_input_tokens": 0}
+            )
             round_record = {
                 "recorded_at": datetime.now().isoformat(),
                 "turn_index": int(state.turn_index),
@@ -1729,6 +1797,9 @@ def _record_trace_token_usage(
                 ),
                 "round_total_tokens": delta,
                 "trace_total_tokens_after": int(state.trace_total_tokens),
+                "cache_hit_tokens": cache_counts["cache_hit_tokens"],
+                "cache_miss_tokens": cache_counts["cache_miss_tokens"],
+                "uncached_input_tokens": cache_counts["uncached_input_tokens"],
             }
             state.token_usage_rounds.append(round_record)
             state.backup_updated_at = datetime.now().isoformat()
