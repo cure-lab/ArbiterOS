@@ -13,10 +13,16 @@ from urllib.parse import urlparse
 
 
 _EMAIL_RE = re.compile(r"@([A-Za-z0-9][A-Za-z0-9.-]*\.[A-Za-z]{2,63})")
+_EMAIL_ADDR_RE = re.compile(
+    r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9][A-Za-z0-9.-]*\.[A-Za-z]{2,63}\b"
+)
 _HOST_RE = re.compile(
     r"(?<![@A-Za-z0-9_-])"
     r"([A-Za-z0-9][A-Za-z0-9-]{0,62}(?:\.[A-Za-z0-9][A-Za-z0-9-]{0,62})+)"
     r"(?::\d+)?"
+)
+_PHONE_RE = re.compile(
+    r"(?<!\d)(?:\+?\d[\d .()/-]{6,}\d)(?!\d)"
 )
 
 _INTERNAL_DOMAIN_SUFFIXES = (
@@ -366,6 +372,20 @@ def _transform_contains_any(values: List[Any], spec: Mapping[str, Any]) -> Optio
     )
 
 
+def _transform_contains_pii_like(values: List[Any]) -> Optional[bool]:
+    if not values:
+        return None
+    for value in values:
+        if not isinstance(value, str):
+            continue
+        text = value.strip()
+        if not text:
+            continue
+        if _EMAIL_ADDR_RE.search(text) or _PHONE_RE.search(text):
+            return True
+    return False
+
+
 def _transform_abs_number(
     args: Mapping[str, Any],
     spec: Mapping[str, Any],
@@ -432,6 +452,8 @@ def _apply_transform(
         return _transform_in_set(values, spec)
     if transform == "contains_any":
         return _transform_contains_any(values, spec)
+    if transform == "contains_pii_like":
+        return _transform_contains_pii_like(values)
     if transform == "abs_number":
         return _transform_abs_number(args, spec, values)
     if transform == "product_abs":

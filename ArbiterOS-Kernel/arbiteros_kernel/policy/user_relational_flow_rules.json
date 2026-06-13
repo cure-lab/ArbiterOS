@@ -130,6 +130,52 @@
       "message": "包含 PII 标签的上下文不能发送到外部消息域。",
       "source": "policy_rule_ir",
       "severity": "CRITICAL"
+    },
+    {
+      "id": "USER-FLOW-DIRECT-PII-EXTERNAL-MESSAGE-001",
+      "enabled": true,
+      "title": "block direct PII in outbound message arguments",
+      "description": "block outbound messages when the current message arguments directly contain PII-like content and the recipient is external",
+      "scope": "relational",
+      "source_selector": {},
+      "selector": {
+        "tool": [
+          "message",
+          "gmail__send_email",
+          "gmail__send_reply",
+          "gmail__forward_message",
+          "slack__post_message",
+          "telegram__send_message"
+        ],
+        "flow_kind": [
+          "comm_sink"
+        ]
+      },
+      "predicate": {
+        "all": [
+          {
+            "gt": [
+              {
+                "len": {
+                  "var": "external_recipient_domains"
+                }
+              },
+              {
+                "const": 0
+              }
+            ]
+          },
+          {
+            "truthy": {
+              "var": "outbound_message_contains_pii"
+            }
+          }
+        ]
+      },
+      "effect": "BLOCK",
+      "message": "当前外发消息正文直接包含邮箱、电话等疑似 PII，且接收方属于外部域，已暂停发送。",
+      "source": "policy_rule_ir",
+      "severity": "CRITICAL"
     }
   ],
   "required_metadata": [
@@ -189,7 +235,39 @@
       "normalization": "Policy runtime extracts non-local recipient domains from message recipients.",
       "on_missing": "no_match",
       "required_for_rules": [
-        "USER-FLOW-PII-EXTERNAL-MESSAGE-001"
+        "USER-FLOW-PII-EXTERNAL-MESSAGE-001",
+        "USER-FLOW-DIRECT-PII-EXTERNAL-MESSAGE-001"
+      ]
+    },
+    {
+      "field": "outbound_message_contains_pii",
+      "type": "boolean",
+      "description": "Whether current outbound message arguments directly contain PII-like values such as email addresses or phone numbers.",
+      "applies_to": {
+        "tools": [
+          "message",
+          "gmail__send_email",
+          "gmail__send_reply",
+          "gmail__forward_message",
+          "slack__post_message",
+          "telegram__send_message"
+        ]
+      },
+      "source": {
+        "kind": "tool_arguments",
+        "paths": [
+          "arguments.body",
+          "arguments.text",
+          "arguments.message",
+          "arguments.content",
+          "arguments.subject"
+        ],
+        "transform": "contains_pii_like"
+      },
+      "normalization": "Policy runtime scans outbound message text arguments for deterministic PII-like patterns.",
+      "on_missing": "no_match",
+      "required_for_rules": [
+        "USER-FLOW-DIRECT-PII-EXTERNAL-MESSAGE-001"
       ]
     }
   ]

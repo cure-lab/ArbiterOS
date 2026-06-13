@@ -888,6 +888,9 @@ def _evaluate_flow(
     if flow_kind == "read_sensitive":
         actual = sink_trust
         required = conf
+        if bool(_get_relational_policy_cfg().get("allow_sensitive_reads", False)):
+            extra["read_sensitive_allowed_by_config"] = True
+            return True, actual, required, extra
         return _level_at_least(actual, required), actual, required, extra
 
     # 3) Pure state/status reads: always allow.

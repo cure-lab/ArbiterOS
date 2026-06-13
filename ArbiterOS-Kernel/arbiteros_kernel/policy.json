@@ -324,6 +324,7 @@
     }
   },
   "relational_policy": {
+    "allow_sensitive_reads": true,
     "user_rules_enabled": true,
     "user_rule_file": "arbiteros_kernel/policy/user_relational_flow_rules.json"
   },
