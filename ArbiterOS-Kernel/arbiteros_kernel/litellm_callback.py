@@ -2054,56 +2054,217 @@ def _collect_prior_tool_call_ids_from_messages(messages: Any) -> list[tuple[str,
     return out
 
 
-def _inject_reference_tool_id_into_tools(data: dict) -> None:
-    """为 tools 中每个 function tool 的 parameters 添加 required 的 reference_tool_id。"""
-    tools = data.get("tools")
-    if not isinstance(tools, list):
-        return
-    prior_items = _collect_prior_tool_call_ids_from_messages(data.get("messages"))
-    base_desc = (
-        "List the 'tool_call_id' values (NOT tool names) from prior role='tool' messages whose "
-        "results you used for this call's arguments. Consider ALL tool calls in the conversation history, not just "
-        "the most recent one; include any prior call's 'tool_call_id' whose output fed into your current arguments. "
-        "(Examples: edit/write path/content from prior read/listdir/grep; oldText/newText from read; "
-        "exec command derived from prior tool call's output; process sessionId from process list.) "
-        "Each tool message has a 'tool_call_id' property—copy that exact string. "
-        "Wrong: ['read']. Right: ['call_xxx']. Use [] when no prior tool output."
-    )
+def _collect_prior_tool_call_ids_from_responses_input(
+    input_payload: Any,
+) -> list[tuple[str, str]]:
+    """Collect (call_id, tool_name) from Codex/OpenAI Responses API ``input`` history."""
+    out: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    if not isinstance(input_payload, list):
+        return out
+    for item in input_payload:
+        if not isinstance(item, dict):
+            continue
+        item_type = str(item.get("type") or "").strip()
+        if item_type == "function_call":
+            call_id = item.get("call_id")
+            name = item.get("name")
+            name_str = str(name).strip() if isinstance(name, str) else ""
+            if isinstance(call_id, str) and call_id.strip():
+                s = call_id.strip()
+                if s not in seen:
+                    seen.add(s)
+                    out.append((s, name_str))
+        elif item_type == "function_call_output":
+            call_id = item.get("call_id")
+            if isinstance(call_id, str) and call_id.strip() and call_id.strip() not in seen:
+                s = call_id.strip()
+                seen.add(s)
+                out.append((s, ""))
+    return out
+
+
+def _collect_prior_tool_call_ids_from_request(data: dict[str, Any]) -> list[tuple[str, str]]:
+    """Merge prior tool ids from chat ``messages`` and Responses API ``input``."""
+    merged: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for source in (
+        _collect_prior_tool_call_ids_from_messages(data.get("messages")),
+        _collect_prior_tool_call_ids_from_responses_input(data.get("input")),
+    ):
+        for tc_id, name in source:
+            if tc_id in seen:
+                continue
+            seen.add(tc_id)
+            merged.append((tc_id, name))
+    return merged
+
+
+def _build_reference_tool_id_description(
+    prior_items: list[tuple[str, str]],
+    *,
+    use_codex_responses_wording: bool = False,
+) -> str:
+    if use_codex_responses_wording:
+        base_desc = (
+            "List prior tool call_id values (NOT tool names) whose function_call_output "
+            "you used for this call's arguments. In Responses API history, each prior tool "
+            "invocation appears as a function_call item with call_id, followed by a "
+            "function_call_output item with the same call_id. Consider ALL prior tool calls "
+            "in the conversation, not just the most recent one; include every call_id whose "
+            "output fed into your current arguments. "
+            "(Examples: edit/write path/content from a prior read/listdir/grep; command text "
+            "derived from a prior exec_command output; process sessionId from a prior process list.) "
+            "Copy the exact call_id string from the matching function_call item. "
+            "Wrong: ['read']. Right: ['call_xxx']. Use [] when no prior tool output."
+        )
+    else:
+        base_desc = (
+            "List the 'tool_call_id' values (NOT tool names) from prior role='tool' messages whose "
+            "results you used for this call's arguments. Consider ALL tool calls in the conversation history, not just "
+            "the most recent one; include any prior call's 'tool_call_id' whose output fed into your current arguments. "
+            "(Examples: edit/write path/content from prior read/listdir/grep; oldText/newText from read; "
+            "exec command derived from prior tool call's output; process sessionId from process list.) "
+            "Each tool message has a 'tool_call_id' property—copy that exact string. "
+            "Wrong: ['read']. Right: ['call_xxx']. Use [] when no prior tool output."
+        )
     if prior_items:
         parts = [f"{i[0]} ({i[1]})" if i[1] else i[0] for i in prior_items]
         ids_str = ", ".join(parts)
         base_desc += f" Valid IDs in this conversation (copy exactly): {ids_str}."
-    _REFERENCE_TOOL_ID_SCHEMA = {
+    return base_desc
+
+
+def _build_reference_tool_id_schema(
+    prior_items: list[tuple[str, str]],
+    *,
+    use_codex_responses_wording: bool = False,
+) -> dict[str, Any]:
+    return {
         "type": "array",
         "items": {"type": "string"},
-        "description": base_desc,
+        "description": _build_reference_tool_id_description(
+            prior_items,
+            use_codex_responses_wording=use_codex_responses_wording,
+        ),
     }
-    for tool in tools:
-        if not isinstance(tool, dict) or tool.get("type") != "function":
-            continue
-        fn = tool.get("function")
-        if not isinstance(fn, dict):
-            continue
+
+
+def _inject_reference_tool_id_into_params(
+    params: dict[str, Any], schema: dict[str, Any]
+) -> None:
+    if params.get("type") != "object":
+        params["type"] = "object"
+    props = params.get("properties")
+    if not isinstance(props, dict):
+        params["properties"] = {"reference_tool_id": schema}
+    else:
+        props["reference_tool_id"] = schema
+    required = params.get("required")
+    if not isinstance(required, list):
+        params["required"] = ["reference_tool_id"]
+    elif "reference_tool_id" not in required:
+        params["required"] = [*required, "reference_tool_id"]
+
+
+def _resolve_tool_parameters_container(tool: dict[str, Any]) -> Optional[dict[str, Any]]:
+    """Return an existing parameters dict to mutate; never synthesize unsupported fields."""
+    if not isinstance(tool, dict):
+        return None
+
+    fn = tool.get("function")
+    if isinstance(fn, dict):
         params = fn.get("parameters")
-        if not isinstance(params, dict):
+        if isinstance(params, dict):
+            return params
+        if tool.get("type") == "function":
             fn["parameters"] = {
                 "type": "object",
                 "required": ["reference_tool_id"],
-                "properties": {"reference_tool_id": _REFERENCE_TOOL_ID_SCHEMA},
+                "properties": {},
             }
+            return fn["parameters"]
+        return None
+
+    params = tool.get("parameters")
+    if isinstance(params, dict):
+        return params
+
+    return None
+
+
+_REFERENCE_TOOL_ID_DESC_MARKER = "[arbiteros_reference_tool_id]"
+
+
+def _append_reference_tool_id_hint_to_tool_description(
+    tool: dict[str, Any],
+    description_text: str,
+) -> bool:
+    """Append hint only when the tool already has a description field."""
+    if not description_text.strip():
+        return False
+    existing = tool.get("description")
+    if not isinstance(existing, str) or not existing.strip():
+        return False
+    if _REFERENCE_TOOL_ID_DESC_MARKER in existing:
+        return True
+    hint_block = (
+        f"{_REFERENCE_TOOL_ID_DESC_MARKER}\n"
+        "When calling this tool, include reference_tool_id in the tool arguments JSON "
+        f"(string array of upstream call_id values; use [] when none). {description_text}"
+    )
+    tool["description"] = f"{existing.rstrip()}\n\n{hint_block}"
+    return True
+
+
+def _inject_reference_tool_id_global_hint(
+    data: dict[str, Any], description_text: str
+) -> None:
+    """Fallback for built-in Codex tools that cannot accept parameters or description."""
+    if not description_text.strip():
+        return
+    hint_content = (
+        f"{_REFERENCE_TOOL_ID_DESC_MARKER}\n"
+        "For every tool call in this turn, include reference_tool_id in the tool arguments "
+        f"(string array of upstream call_id values; use [] when none). {description_text}"
+    )
+    data.update(
+        _pa_inject_system_hint_into_request(
+            data,
+            hint_content=hint_content,
+            marker=_REFERENCE_TOOL_ID_DESC_MARKER,
+        )
+    )
+
+
+def _inject_reference_tool_id_into_tools(data: dict) -> None:
+    """为 tools 添加 required 的 reference_tool_id（parameters 或 description/instructions fallback）。"""
+    tools = data.get("tools")
+    if not isinstance(tools, list):
+        return
+    prior_items = _collect_prior_tool_call_ids_from_request(data)
+    use_codex_wording = _is_responses_api_request(data)
+    schema = _build_reference_tool_id_schema(
+        prior_items,
+        use_codex_responses_wording=use_codex_wording,
+    )
+    description_hint = _build_reference_tool_id_description(
+        prior_items,
+        use_codex_responses_wording=use_codex_wording,
+    )
+    needs_global_hint = False
+    for tool in tools:
+        if not isinstance(tool, dict):
             continue
-        if params.get("type") != "object":
-            params["type"] = "object"
-        props = params.get("properties")
-        if not isinstance(props, dict):
-            params["properties"] = {"reference_tool_id": _REFERENCE_TOOL_ID_SCHEMA}
-        else:
-            props["reference_tool_id"] = _REFERENCE_TOOL_ID_SCHEMA
-        required = params.get("required")
-        if not isinstance(required, list):
-            params["required"] = ["reference_tool_id"]
-        elif "reference_tool_id" not in required:
-            params["required"] = [*required, "reference_tool_id"]
+        params = _resolve_tool_parameters_container(tool)
+        if params is not None:
+            _inject_reference_tool_id_into_params(params, schema)
+            continue
+        if _append_reference_tool_id_hint_to_tool_description(tool, description_hint):
+            continue
+        needs_global_hint = True
+    if needs_global_hint:
+        _inject_reference_tool_id_global_hint(data, description_hint)
 
 
 def _save_precall_to_log(data: dict) -> None:
@@ -6113,20 +6274,39 @@ def _strip_and_record_reference_tool_ids_from_message(
             args = {}
         if not isinstance(args, dict):
             continue
-        ref_list = args.pop("reference_tool_id", _NO_WRAP_SENTINEL)
-        if ref_list is _NO_WRAP_SENTINEL:
-            continue
-        if not isinstance(ref_list, list):
-            ref_list = []
-        with _stripped_categories_lock:
-            by_trace = _stripped_reference_tool_ids_by_trace.setdefault(tid, {})
-            by_trace[tc_id.strip()] = [str(x) for x in ref_list if x is not None]
+        cleaned = _strip_and_record_reference_tool_id_in_arguments(
+            args,
+            tool_call_id=tc_id.strip(),
+            trace_id=tid,
+        )
         modified = True
         fn_copy = dict(fn)
-        fn_copy["arguments"] = json.dumps(args, ensure_ascii=False) if args else "{}"
+        fn_copy["arguments"] = json.dumps(cleaned, ensure_ascii=False) if cleaned else "{}"
         tc["function"] = fn_copy
     if modified:
         message_dict["tool_calls"] = tool_calls
+
+
+def _strip_and_record_reference_tool_id_in_arguments(
+    arguments: dict[str, Any],
+    *,
+    tool_call_id: str,
+    trace_id: Optional[str],
+) -> dict[str, Any]:
+    """Pop reference_tool_id from a tool arguments dict and record it for the trace."""
+    if "reference_tool_id" not in arguments:
+        return arguments
+    if not isinstance(trace_id, str) or not trace_id.strip():
+        return arguments
+    ref_list = arguments.get("reference_tool_id")
+    if not isinstance(ref_list, list):
+        ref_list = []
+    with _stripped_categories_lock:
+        by_trace = _stripped_reference_tool_ids_by_trace.setdefault(trace_id.strip(), {})
+        by_trace[tool_call_id.strip()] = [str(x) for x in ref_list if x is not None]
+    cleaned = dict(arguments)
+    cleaned.pop("reference_tool_id", None)
+    return cleaned
 
 
 def _response_transform_content_only(data: dict, message_dict: dict) -> Optional[dict]:
@@ -6347,6 +6527,64 @@ def _wrap_reference_tool_ids_into_messages(
             tc["function"] = fn_copy
             modified = True
     return {**data, "messages": messages} if modified else data
+
+
+def _wrap_reference_tool_ids_into_responses_input(
+    data: dict, *, trace_id: Optional[str] = None
+) -> dict:
+    """把 Responses API ``input`` 里 function_call 的 arguments 按 trace 记录包回 reference_tool_id。"""
+    if not isinstance(trace_id, str) or not trace_id.strip():
+        return data
+    tid = trace_id.strip()
+    with _stripped_categories_lock:
+        by_trace = _stripped_reference_tool_ids_by_trace.get(tid)
+    if not by_trace:
+        return data
+    input_items = data.get("input")
+    if not isinstance(input_items, list):
+        return data
+    new_input: list[Any] = []
+    modified = False
+    for item in input_items:
+        if not isinstance(item, dict):
+            new_input.append(item)
+            continue
+        if str(item.get("type") or "").strip() != "function_call":
+            new_input.append(item)
+            continue
+        call_id = item.get("call_id")
+        if not isinstance(call_id, str) or not call_id.strip():
+            new_input.append(item)
+            continue
+        ref_list = by_trace.get(call_id.strip())
+        if ref_list is None:
+            new_input.append(item)
+            continue
+        raw_args = item.get("arguments")
+        if isinstance(raw_args, str):
+            args = _safe_json_loads(raw_args) or {}
+        elif isinstance(raw_args, dict):
+            args = dict(raw_args)
+        else:
+            args = {}
+        if not isinstance(args, dict):
+            new_input.append(item)
+            continue
+        args["reference_tool_id"] = ref_list
+        item_copy = dict(item)
+        item_copy["arguments"] = json.dumps(args, ensure_ascii=False)
+        new_input.append(item_copy)
+        modified = True
+    return {**data, "input": new_input} if modified else data
+
+
+def _wrap_reference_tool_ids_into_request(
+    data: dict, *, trace_id: Optional[str] = None
+) -> dict:
+    """Re-wrap stripped reference_tool_id into chat messages or Responses input history."""
+    data = _wrap_reference_tool_ids_into_messages(data, trace_id=trace_id)
+    data = _wrap_reference_tool_ids_into_responses_input(data, trace_id=trace_id)
+    return data
 
 
 # 与 litellm_config.yaml 中 instruction_output 一致的 base schema，content 将被 agent 的 schema 替换
@@ -6672,7 +6910,7 @@ class MyCustomHandler(CustomLogger):
             _clear_stripped_categories_for_trace(trace_id_for_cache)
         # 把 history 里 assistant 的 content 按当前 trace 记录的 category 从后往前包回结构，再请求
         data = _wrap_messages_with_categories(data, trace_id=trace_id_for_cache)
-        data = _wrap_reference_tool_ids_into_messages(data, trace_id=trace_id_for_cache)
+        data = _wrap_reference_tool_ids_into_request(data, trace_id=trace_id_for_cache)
         runtime_override_ctx = (
             policy_runtime_override(role_policy_config_override)
             if isinstance(role_policy_config_override, dict)
@@ -7712,7 +7950,14 @@ class MyCustomHandler(CustomLogger):
                             ordinal=idx,
                             arguments=tool_args,
                         )
-                        inferred_name = _infer_codex_tool_name_from_arguments(tool_args)
+                        cleaned_args = _strip_and_record_reference_tool_id_in_arguments(
+                            dict(tool_args),
+                            tool_call_id=tc_id,
+                            trace_id=trace_id_for_synth
+                            if isinstance(trace_id_for_synth, str)
+                            else None,
+                        )
+                        inferred_name = _infer_codex_tool_name_from_arguments(cleaned_args)
                         tc_name = _resolve_codex_tool_name_for_request(
                             inferred_name, request_tool_names
                         )
@@ -7723,7 +7968,7 @@ class MyCustomHandler(CustomLogger):
                                 "function": {
                                     "name": tc_name,
                                     "arguments": json.dumps(
-                                        tool_args, ensure_ascii=False, default=str
+                                        cleaned_args, ensure_ascii=False, default=str
                                     ),
                                 },
                             }
