@@ -172,6 +172,7 @@ class _TraceState:
     # Step1 backup-only fields (trace-id bound). Do not change runtime reads yet.
     trace_started_at: Optional[str] = None
     trace_total_tokens: int = 0
+    trace_total_cost_usd: float = 0.0
     token_usage_rounds: list[dict[str, Any]] = field(default_factory=list)
     backup_role_name_requested: Optional[str] = None
     backup_role_name_effective: Optional[str] = None
@@ -293,6 +294,7 @@ def _trace_state_to_dict(state: _TraceState) -> dict[str, Any]:
         "bootstrap_scan_done": bool(state.bootstrap_scan_done),
         "trace_started_at": state.trace_started_at,
         "trace_total_tokens": state.trace_total_tokens,
+        "trace_total_cost_usd": state.trace_total_cost_usd,
         "token_usage_rounds": state.token_usage_rounds,
         "backup_role_name_requested": state.backup_role_name_requested,
         "backup_role_name_effective": state.backup_role_name_effective,
@@ -401,6 +403,9 @@ def _trace_state_from_dict(device_key: str, payload: Any) -> Optional[_TraceStat
     trace_total_tokens = payload.get("trace_total_tokens")
     if not isinstance(trace_total_tokens, int) or trace_total_tokens < 0:
         trace_total_tokens = 0
+    trace_total_cost_usd = payload.get("trace_total_cost_usd")
+    if not isinstance(trace_total_cost_usd, (int, float)) or trace_total_cost_usd < 0:
+        trace_total_cost_usd = 0.0
     token_usage_rounds = payload.get("token_usage_rounds")
     if not isinstance(token_usage_rounds, list):
         token_usage_rounds = []
@@ -495,6 +500,7 @@ def _trace_state_from_dict(device_key: str, payload: Any) -> Optional[_TraceStat
         bootstrap_scan_done=bootstrap_scan_done,
         trace_started_at=trace_started_at,
         trace_total_tokens=trace_total_tokens,
+        trace_total_cost_usd=float(trace_total_cost_usd),
         token_usage_rounds=cleaned_token_usage_rounds,
         backup_role_name_requested=backup_role_name_requested,
         backup_role_name_effective=backup_role_name_effective,
@@ -1657,6 +1663,93 @@ def _extract_total_tokens_from_response_obj(response_obj: Any) -> int:
     return _extract_total_tokens_from_usage_dict(usage)
 
 
+# ---------------------------------------------------------------------------
+# Model price table (loaded once from model_prices_and_context_window.json)
+# ---------------------------------------------------------------------------
+_MODEL_PRICES: dict[str, Any] = {}
+_MODEL_PRICES_LOCK = threading.Lock()
+_MODEL_PRICES_LOADED = False
+
+
+def _load_model_prices() -> dict[str, Any]:
+    global _MODEL_PRICES, _MODEL_PRICES_LOADED
+    with _MODEL_PRICES_LOCK:
+        if _MODEL_PRICES_LOADED:
+            return _MODEL_PRICES
+        candidates = [
+            Path(__file__).parent.parent / "model_prices_and_context_window.json",
+            Path(__file__).parent / "model_prices_and_context_window.json",
+        ]
+        for path in candidates:
+            if path.exists():
+                try:
+                    data = json.loads(path.read_text(encoding="utf-8"))
+                    if isinstance(data, dict):
+                        _MODEL_PRICES = data
+                        _MODEL_PRICES_LOADED = True
+                        return _MODEL_PRICES
+                except Exception:
+                    pass
+        _MODEL_PRICES_LOADED = True  # don't retry on every call
+        return _MODEL_PRICES
+
+
+def _get_model_price_spec(model: Optional[str]) -> Optional[dict[str, Any]]:
+    """Return the price spec dict for a model name, or None if not found."""
+    if not isinstance(model, str) or not model.strip():
+        return None
+    prices = _load_model_prices()
+    name = model.strip()
+    # Exact match first
+    spec = prices.get(name)
+    if isinstance(spec, dict):
+        return spec
+    # Try stripping provider prefix (e.g. "openai/gpt-4o" -> "gpt-4o")
+    if "/" in name:
+        short = name.split("/", 1)[1]
+        spec = prices.get(short)
+        if isinstance(spec, dict):
+            return spec
+    return None
+
+
+def _compute_round_cost_usd(
+    model: Optional[str],
+    cache_hit_tokens: int,
+    cache_miss_tokens: int,
+    uncached_input_tokens: int,
+    output_tokens: int,
+) -> float:
+    """Calculate the USD cost for one round using the price spec file.
+
+    Cost breakdown:
+      - uncached_input_tokens × input_cost_per_token
+      - cache_hit_tokens      × cache_read_input_token_cost
+      - cache_miss_tokens     × cache_creation_input_token_cost  (Anthropic only)
+      - output_tokens         × output_cost_per_token
+    """
+    spec = _get_model_price_spec(model)
+    if spec is None:
+        return 0.0
+
+    def _rate(key: str) -> float:
+        v = spec.get(key)
+        return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else 0.0
+
+    input_rate = _rate("input_cost_per_token")
+    cache_read_rate = _rate("cache_read_input_token_cost") or input_rate
+    cache_creation_rate = _rate("cache_creation_input_token_cost") or input_rate
+    output_rate = _rate("output_cost_per_token")
+
+    cost = (
+        uncached_input_tokens * input_rate
+        + cache_hit_tokens * cache_read_rate
+        + cache_miss_tokens * cache_creation_rate
+        + output_tokens * output_rate
+    )
+    return round(cost, 10)
+
+
 def _attach_usage_to_model_response(
     response: ModelResponse, usage: Any
 ) -> ModelResponse:
@@ -1785,21 +1878,39 @@ def _record_trace_token_usage(
                 if isinstance(usage_dict, dict)
                 else {"cache_hit_tokens": 0, "cache_miss_tokens": 0, "uncached_input_tokens": 0}
             )
+            _normalized_usage = (
+                _normalize_usage_dict_for_storage(usage_dict)
+                if isinstance(usage_dict, dict)
+                else {}
+            )
+            _output_tokens = int(
+                _normalized_usage.get("completion_tokens")
+                or _normalized_usage.get("output_tokens")
+                or 0
+            )
+            round_cost = _compute_round_cost_usd(
+                model=model,
+                cache_hit_tokens=cache_counts["cache_hit_tokens"],
+                cache_miss_tokens=cache_counts["cache_miss_tokens"],
+                uncached_input_tokens=cache_counts["uncached_input_tokens"],
+                output_tokens=_output_tokens,
+            )
+            state.trace_total_cost_usd = round(
+                max(0.0, float(state.trace_total_cost_usd)) + round_cost, 10
+            )
             round_record = {
                 "recorded_at": datetime.now().isoformat(),
                 "turn_index": int(state.turn_index),
                 "model": model,
                 "source": source,
-                "usage": (
-                    _normalize_usage_dict_for_storage(usage_dict)
-                    if isinstance(usage_dict, dict)
-                    else {}
-                ),
+                "usage": _normalized_usage,
                 "round_total_tokens": delta,
                 "trace_total_tokens_after": int(state.trace_total_tokens),
                 "cache_hit_tokens": cache_counts["cache_hit_tokens"],
                 "cache_miss_tokens": cache_counts["cache_miss_tokens"],
                 "uncached_input_tokens": cache_counts["uncached_input_tokens"],
+                "round_cost_usd": round_cost,
+                "trace_total_cost_usd_after": state.trace_total_cost_usd,
             }
             state.token_usage_rounds.append(round_record)
             state.backup_updated_at = datetime.now().isoformat()
