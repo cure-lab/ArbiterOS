@@ -1,0 +1,221 @@
+# ============================================================
+# OpenClaw Router Configuration Example
+# ============================================================
+# Start: llmrouter serve --config configs/openclaw_example.yaml
+# ============================================================
+
+# Server settings
+serve:
+  host: "0.0.0.0"
+  port: 8000
+  show_model_prefix: true  # Add [model_name] prefix to responses
+
+# ============================================================
+# Router Strategy Configuration
+# ============================================================
+# Available strategies:
+#   - random: Random model selection (with optional weights)
+#   - round_robin: Rotate through models
+#   - rules: Keyword-based routing
+#   - llm: Use an LLM to decide
+#   - llmrouter: Use LLMRouter ML-based routers
+#
+# For llmrouter strategy, supported routers include:
+#   - randomrouter, thresholdrouter (custom_routers/)
+#   - knnrouter, mlprouter, svmrouter, mfrouter, elorouter
+#   - dcrouter, graphrouter, causallmrouter, gmtrouter
+#   - and more...
+# ============================================================
+
+router:
+  # ========== Random Strategy ==========
+  strategy: random
+  weights:
+    llama-3.1-8b: 3
+    llama3-70b: 1
+
+  # ========== Rules Strategy ==========
+  # strategy: rules
+  # rules:
+  #   - keywords: ["code", "python", "javascript", "function"]
+  #     model: llama-3.3-nemotron-super-49b-v1
+  #   - keywords: ["analyze", "reasoning", "complex"]
+  #     model: llama3-70b
+  #   - keywords: ["hello", "hi", "thanks"]
+  #     model: llama-3.1-8b
+  #   - default: llama-3.1-8b
+
+  # ========== LLM Strategy ==========
+  # strategy: llm
+  # provider: nvidia
+  # model: meta/llama-3.1-8b-instruct
+  # base_url: https://integrate.api.nvidia.com/v1
+  # provider_type: openai_compatible
+  # auth_mode: bearer        # auto | bearer | none
+  # chat_path: /chat/completions
+  # local: false             # optional: force local behavior
+
+  # ========== LLMRouter Strategy (ML-based) ==========
+  # strategy: llmrouter
+  # llmrouter:
+  #   name: knnrouter  # or: thresholdrouter, mlprouter, etc.
+  #   config_path: configs/model_config_train/knnrouter.yaml
+  #   model_path: saved_models/knnrouter.pt  # optional
+
+# ============================================================
+# API Keys
+# ============================================================
+api_keys:
+  nvidia:
+    - nvapi-xxx...  # Replace with your NVIDIA API key(s)
+  openai: ${OPENAI_API_KEY}  # Supports environment variables
+  anthropic: ${ANTHROPIC_API_KEY}
+  # sglang: ""      # local providers can run without key when auth_mode=none/auto-local
+  # vllm: ""
+  # llama_cpp: ""
+  # lmstudio: ""
+  # huggingface_cli: ""
+  # huggingface: ${HF_TOKEN}  # if using Hugging Face cloud endpoints with bearer auth
+
+# ============================================================
+# Optional: Routing Memory (Retrieval-Augmented Routing)
+# ============================================================
+# When enabled, OpenClaw Router persists (query -> selected model) pairs to disk
+# and retrieves top-k similar past queries to help the `llm` routing strategy.
+memory:
+  enabled: false
+  # If omitted/empty, defaults to: ~/.llmrouter/openclaw_memory.jsonl
+  # path: "${HOME}/.llmrouter/openclaw_memory.jsonl"
+  top_k: 10
+  retriever_model: "facebook/contriever-msmarco"
+  device: "cpu"
+  max_length: 256
+  max_query_chars: 500
+  max_prompt_chars: 200
+  per_user: false
+
+# ============================================================
+# LLM Backend Configuration
+# ============================================================
+llms:
+  # Fast models
+  llama-3.1-8b:
+    provider: nvidia
+    model: meta/llama-3.1-8b-instruct
+    base_url: https://integrate.api.nvidia.com/v1
+    description: "Fast responses, daily chat"
+    max_tokens: 1024
+    context_limit: 128000
+    input_price: 0.2
+    output_price: 0.2
+
+  # Strong models
+  llama3-70b:
+    provider: nvidia
+    model: meta/llama3-70b-instruct
+    base_url: https://integrate.api.nvidia.com/v1
+    description: "Complex reasoning, deep analysis"
+    max_tokens: 1024
+    context_limit: 8192
+    input_price: 0.9
+    output_price: 0.9
+
+  llama-3.3-nemotron-super-49b-v1:
+    provider: nvidia
+    model: nvidia/llama-3.3-nemotron-super-49b-v1
+    base_url: https://integrate.api.nvidia.com/v1
+    description: "Code generation, technical Q&A"
+    max_tokens: 1024
+    context_limit: 32768
+    input_price: 0.9
+    output_price: 0.9
+
+  # Instruction models
+  mistral-7b:
+    provider: nvidia
+    model: mistralai/mistral-7b-instruct-v0.3
+    base_url: https://integrate.api.nvidia.com/v1
+    description: "Instruction following, structured output"
+    max_tokens: 1024
+    context_limit: 32768
+    input_price: 0.2
+    output_price: 0.2
+
+  # ================= Local OpenAI-Compatible Frameworks =================
+  # sglang_qwen:
+  #   provider: sglang
+  #   provider_type: openai_compatible
+  #   model: Qwen/Qwen2.5-7B-Instruct
+  #   base_url: http://127.0.0.1:30000/v1
+  #   auth_mode: none
+  #   chat_path: /chat/completions
+  #   description: "Local SGLang backend"
+
+  # vllm_llama:
+  #   provider: vllm
+  #   provider_type: openai_compatible
+  #   model: meta-llama/Llama-3.1-8B-Instruct
+  #   base_url: http://127.0.0.1:8001/v1
+  #   auth_mode: none
+  #   chat_path: /chat/completions
+  #   description: "Local vLLM backend"
+
+  # llamacpp_local:
+  #   provider: llama_cpp
+  #   provider_type: openai_compatible
+  #   model: local-model
+  #   base_url: http://127.0.0.1:8080/v1
+  #   auth_mode: none
+  #   chat_path: /chat/completions
+  #   description: "Local llama.cpp backend"
+
+  # lmstudio_local:
+  #   provider: lmstudio
+  #   provider_type: openai_compatible
+  #   model: local-model
+  #   base_url: http://127.0.0.1:1234/v1
+  #   auth_mode: none
+  #   chat_path: /chat/completions
+  #   description: "Local LM Studio backend"
+
+  # huggingface_cli_local:
+  #   provider: huggingface_cli
+  #   provider_type: openai_compatible
+  #   model: local-model
+  #   base_url: http://127.0.0.1:8082/v1
+  #   auth_mode: none
+  #   chat_path: /chat/completions
+  #   description: "Local Hugging Face CLI/endpoint backend"
+  #
+  # huggingface_cloud:
+  #   provider: huggingface
+  #   provider_type: openai_compatible
+  #   model: Qwen/Qwen2.5-7B-Instruct
+  #   base_url: https://router.huggingface.co/v1
+  #   auth_mode: bearer
+  #   chat_path: /chat/completions
+  #   description: "Hugging Face cloud endpoint"
+
+
+# ============================================================
+# OpenClaw Integration
+# ============================================================
+# Add to ~/.openclaw/openclaw.json:
+#
+# {
+#   "models": {
+#     "providers": {
+#       "openclaw": {
+#         "api": "openai-completions",
+#         "baseUrl": "http://localhost:8000/v1",
+#         "apiKey": "not-needed",
+#         "models": [{"id": "auto", "name": "OpenClaw Router"}]
+#       }
+#     }
+#   },
+#   "agents": {
+#     "defaults": {
+#       "model": {"primary": "openclaw/auto"}
+#     }
+#   }
+# }

@@ -1,0 +1,35 @@
+# Config parameters for llmmultiroundrouter testing:
+
+# Note: LLM-based routing does not require training data, model files, or embeddings
+# The router uses prompt-based reasoning at inference time
+# Only llm_data is essential; other data paths are optional (for route_batch compatibility)
+
+data_path:
+  # Essential: Model descriptions for routing prompts
+  llm_data: 'data/example_data/llm_candidates/default_llm.json'
+  
+  # Optional: Only needed if using route_batch() without providing a batch
+  query_data_test: 'data/example_data/query_data/default_query_test.jsonl'
+  
+  # Not used by LLM router (kept for interface compatibility):
+  query_data_train: 'data/example_data/query_data/default_query_train.jsonl'
+  query_embedding_data: 'data/example_data/routing_data/query_embeddings_longformer.pt'
+  routing_data_train: 'data/example_data/routing_data/default_routing_train_data.jsonl'
+  routing_data_test: 'data/example_data/routing_data/default_routing_test_data.jsonl'
+  llm_embedding_data: 'data/example_data/llm_candidates/default_llm_embeddings.json'
+
+# No model_path needed for LLM-based routing (no trained model)
+
+# Configuration for full pipeline processing
+base_model: 'meta/llama-3.1-8b-instruct'  # Model for decomposition+routing and aggregation
+use_local_llm: false  # Set to true to use vLLM for local inference (requires vLLM installed)
+api_endpoint: 'https://integrate.api.nvidia.com/v1'  # API endpoint for execution
+
+metric:
+  weights:
+    performance: 1
+    cost: 0
+    llm_judge: 0
+
+# No hparam section needed (no KNN parameters)
+

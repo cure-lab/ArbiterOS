@@ -77,6 +77,29 @@ from arbiteros_kernel.policy_runtime import get_runtime, policy_runtime_override
 from arbiteros_kernel.role_policy_cfg_loader import load_role_policy_config
 
 try:
+    from arbiteros_kernel.llm_router.router import ArbiterOSRouter as _ArbiterOSRouter
+
+    _ROUTER_CONFIG_PATH = (
+        Path(__file__).resolve().parent.parent / "litellm_config.yaml"
+    )
+    _llm_router: Optional[_ArbiterOSRouter] = (
+        _ArbiterOSRouter.from_yaml(_ROUTER_CONFIG_PATH)
+        if _ROUTER_CONFIG_PATH.exists()
+        else None
+    )
+    if _llm_router is not None and _llm_router.config:
+        import logging as _logging
+        _logging.getLogger(__name__).info(
+            f"[LLMRouter] 已加载路由配置: strategy={_llm_router.strategy}"
+        )
+except Exception as _llm_router_load_err:
+    _llm_router = None  # type: ignore[assignment]
+    import logging as _logging
+    _logging.getLogger(__name__).warning(
+        f"[LLMRouter] 路由器加载失败，将跳过路由: {_llm_router_load_err}"
+    )
+
+try:
     import yaml  # type: ignore
 except Exception:
     yaml = None
@@ -7144,6 +7167,30 @@ class MyCustomHandler(CustomLogger):
             state.trace_id if state is not None else None,
             metadata=(metadata_for_backup if isinstance(metadata_for_backup, dict) else None),
         )
+        # === LLM Router: 动态选择模型 ===
+        if _llm_router is not None and isinstance(data.get("model"), str):
+            messages = data.get("messages", [])
+            query_parts = []
+            for m in messages if isinstance(messages, list) else []:
+                content = m.get("content") if isinstance(m, dict) else None
+                if isinstance(content, str):
+                    query_parts.append(content)
+                elif isinstance(content, list):
+                    for block in content:
+                        if isinstance(block, dict) and block.get("type") == "text":
+                            query_parts.append(block.get("text", ""))
+            query_text = " ".join(query_parts)
+            original_model = data["model"]
+            routed_model, route_info = _llm_router.route_with_info(query_text, original_model)
+            _console.print(
+                f"[bold cyan][LLMRouter][/bold cyan] "
+                f"strategy=[yellow]{_llm_router.strategy}[/yellow] | "
+                f"{route_info} | "
+                f"[dim]{original_model}[/dim] → [bold green]{routed_model}[/bold green]"
+            )
+            if routed_model != original_model:
+                data = {**data, "model": routed_model}
+
         _save_precall_to_log(data)
         return data
 

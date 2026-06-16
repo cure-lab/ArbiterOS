@@ -1,0 +1,123 @@
+# GMTRouter Training Configuration
+# Based on: https://github.com/ulab-uiuc/GMTRouter
+#
+# Training is now FULLY INTEGRATED into LLMRouter
+# Use: llmrouter train --router gmtrouter --config configs/model_config_train/gmtrouter.yaml
+
+# Dataset configuration
+dataset:
+  name: mt_bench                    # Dataset: chatbot_arena, gsm8k, mmlu, mt_bench
+  path: ./data                      # Path to data root (download from Google Drive)
+
+# Data preprocessing
+config:
+  preprocess: true                  # Whether to preprocess JSONL to .pt format
+
+# Training configuration
+train:
+  id: llmrouter_gmt                 # Experiment identifier
+  epochs: 350                       # Number of training epochs
+  lr: 5e-4                          # Learning rate (5e-4 recommended)
+  prediction_count: 256             # Number of predictions per batch
+  objective: auc                    # Objective: auc or accuracy
+  binary: true                      # Binary classification (pairwise comparison)
+  eval_every: 5                     # Evaluate every N epochs
+  seed: 136                         # Random seed for reproducibility
+
+# Checkpoint configuration
+checkpoint:
+  root: ./models                    # Checkpoint save directory
+  save_every: 25                    # Save checkpoint every N epochs
+
+# GMTRouter-specific model configuration
+gmt_config:
+  # Graph neural network architecture
+  num_gnn_layers: 2                 # Number of HGT (Heterogeneous Graph Transformer) layers
+                                    # 2 for single-turn, 3 for multi-turn
+  hidden_dim: 128                   # Hidden dimension for GNN embeddings
+  dropout: 0.1                      # Dropout rate for regularization
+
+  # Personalization
+  personalization: true             # Enable user preference learning
+
+  # Note: GMTRouter architecture is fixed with:
+  # - 5 Node types: User, Session, Query, LLM, Response
+  # - 21 Edge types: Including own, owned_by, answered_by, answered_to, next, prev, etc.
+  # See llmrouter/models/gmtrouter/data_loader.py for details
+
+# Data paths (for LLMRouter integration)
+data_path:
+  data_root: ./data                 # Root directory for GMTRouter data
+  training_set: ./data/mt_bench/training_set.jsonl
+  valid_set: ./data/mt_bench/valid_set.jsonl
+  test_set: ./data/mt_bench/test_set.jsonl
+
+# Model paths
+model_path:
+  checkpoint_root: ./saved_models/gmtrouter
+  save_model_path: ./saved_models/gmtrouter/gmtrouter.pt
+  load_model_path: ./saved_models/gmtrouter/gmtrouter.pt
+
+# Data Download Instructions:
+# ===========================
+# 1. Download GMTRouter dataset from Google Drive
+#    Link: https://drive.google.com/file/d/[GMTRouter_dataset_id]
+#
+# 2. Extract the archive:
+#    tar -xzvf GMTRouter_dataset.tar.gz
+#
+# 3. Move data folder to repository root:
+#    mv data ./
+#
+# 4. Data structure:
+#    ./data/
+#      ├── chatbot_arena/
+#      │   ├── training_set.jsonl
+#      │   ├── valid_set.jsonl
+#      │   └── test_set.jsonl
+#      ├── gsm8k/
+#      │   ├── training_set.jsonl
+#      │   ├── valid_set.jsonl
+#      │   └── test_set.jsonl
+#      ├── mmlu/
+#      │   └── ...
+#      └── mt_bench/
+#          └── ...
+#
+# Data Format (JSONL):
+# ====================
+# Each line is a JSON object with:
+# {
+#   "judge": "user_id",                           # User identifier
+#   "model": "gpt-4",                             # LLM model name
+#   "question_id": "12345",                       # Question identifier
+#   "turn": 1,                                    # Turn number
+#   "conversation": [
+#     {
+#       "query": "What is machine learning?",     # Query text
+#       "query_emb": [0.1, 0.2, ...],            # Query embedding vector
+#       "response": "Machine learning is...",     # Response text (optional)
+#       "rating": 4.5                             # Quality rating
+#     }
+#   ],
+#   "model_emb": [0.3, 0.4, ...],                # LLM embedding vector
+#   "encoder": "sentence-transformers/all-mpnet-base-v2"  # PLM model name
+# }
+
+# Training Instructions:
+# ======================
+# Training is fully integrated into LLMRouter. Just run:
+#
+#   llmrouter train --router gmtrouter --config configs/model_config_train/gmtrouter.yaml
+#
+# Requirements:
+#   - PyTorch 2.6+ with CUDA 12.4+ (recommended for GPU training)
+#   - PyTorch Geometric 2.6.1 (optional, falls back to simplified mode if not available)
+#   - GMTRouter dataset downloaded and extracted to ./data/ (see above)
+#
+# The trainer will:
+#   1. Automatically detect and validate GMTRouter JSONL format
+#   2. Build heterogeneous graph with 5 node types and 21 edge types
+#   3. Train HeteroGNN + PreferencePredictor with pairwise learning
+#   4. Save checkpoints to ./saved_models/gmtrouter/
+#   5. Evaluate on AUC or accuracy metrics

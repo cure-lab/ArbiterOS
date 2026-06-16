@@ -1,0 +1,2 @@
+# llm_data is injected at runtime by ArbiterOSRouter._build_llm_data()
+{}

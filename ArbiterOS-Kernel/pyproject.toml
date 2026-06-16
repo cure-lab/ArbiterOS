@@ -13,9 +13,11 @@ dependencies = [
     "mlflow[genai]>=3.9.0",
     "pyyaml>=6.0.3",
     "rich>=13.0.0",
+    "torch>=2.12.0",
     "tree-sitter>=0.25.2",
     "tree-sitter-bash>=0.25.1",
     "tree-sitter-powershell>=0.26.3",
+    "llmrouter-lib",
 ]
 
 [dependency-groups]
@@ -49,3 +51,22 @@ environment = { python = ".venv" }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[[tool.uv.index]]
+name = "tsinghua"
+url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+default = true
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = [
+  { index = "pytorch-cpu" },
+]
+torchvision = [
+  { index = "pytorch-cpu" },
+]
+llmrouter-lib = { path = "third_party/LLMRouter", editable = true }

@@ -1,0 +1,72 @@
+# GMTRouter Testing/Inference Configuration
+# Based on: https://github.com/ulab-uiuc/GMTRouter
+#
+# Use this config for inference with pre-trained GMTRouter model
+
+# Dataset configuration
+dataset:
+  name: mt_bench                    # Dataset: chatbot_arena, gsm8k, mmlu, mt_bench
+  path: ./data                      # Path to data root
+
+# GMTRouter model configuration (must match training config)
+gmt_config:
+  # Graph neural network architecture (must match training)
+  num_gnn_layers: 2                 # Number of HGT layers
+  hidden_dim: 128                   # Hidden dimension
+  dropout: 0.1                      # Dropout rate
+
+  # Personalization settings
+  personalization: true             # Enable user preference learning
+  record_per_user: 10               # Minimum records per user
+
+  # Multi-turn settings
+  multi_turn: false                 # Multi-turn conversation mode
+  aggregation_type: mean            # Aggregation type: mean, max, attention
+
+# Data paths
+data_path:
+  data_root: ./data                 # Root directory for GMTRouter data
+  test_set: ./data/mt_bench/test_set.jsonl
+
+# Model paths
+model_path:
+  checkpoint_root: ./models
+  load_model_path: ./models/gmtrouter_checkpoint.pt  # Pre-trained model checkpoint
+
+# Inference settings
+inference:
+  batch_size: 32                    # Batch size for inference
+  device: cuda                      # Device: cuda or cpu
+  eval_metric: auc                  # Evaluation metric: auc or accuracy
+
+# Usage for Inference in LLMRouter:
+# ==================================
+# from llmrouter.models.gmtrouter import GMTRouter
+#
+# # Initialize router
+# router = GMTRouter(yaml_path='configs/model_config_test/gmtrouter.yaml')
+#
+# # Route single query with user context
+# query = {
+#     "query_text": "Explain quantum computing",
+#     "user_id": "user_123",
+#     "session_id": "session_456",
+#     "turn": 1,
+#     "conversation_history": [...]
+# }
+# result = router.route_single(query)
+#
+# # Result contains:
+# # {
+# #   "model_name": "gpt-4",
+# #   "confidence": 0.87,
+# #   "user_preference": 0.92,
+# #   "reasoning": "Selected based on user preferences..."
+# # }
+
+# Note on Pre-trained Model:
+# ==========================
+# You need a trained GMTRouter checkpoint from the original repository.
+# Place it at: ./models/gmtrouter_checkpoint.pt
+#
+# To train a model, see configs/model_config_train/gmtrouter.yaml

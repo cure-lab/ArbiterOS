@@ -1,9 +1,14 @@
 model_list:
-  - model_name: gpt-4o-mini
+  - model_name: gpt-5.5
     litellm_params:
-      model: openai/gpt-4o-mini
-      api_key:
-      api_base:
+      model: openai/gpt-5.5
+      api_key: 
+      api_base: https://poloapi.top/v1
+  - model_name: claude-sonnet-4-6
+    litellm_params:
+      model: openai/claude-sonnet-4-6
+      api_key: 
+      api_base: https://poloapi.top/v1
       response_format:
         type: json_schema
         json_schema:
@@ -31,11 +36,15 @@ model_list:
             additionalProperties: false
           strict: true
 
-# ArbiterOS kernel: which agent tool names to parse (instruction_parsing). 
+# ArbiterOS kernel: which agent tool names to parse (instruction_parsing).
 # Now support : openclaw, nanobot, hermes, codex, claude_code
-# upstream_compat: 
+# upstream_compat:
 # enabled: true only for claude_code and codex
 # enabled: false for openclaw, nanobot, and hermes
+llm_routing:
+  enabled: true
+  strategy: smallest_llm
+
 arbiteros_config:
   tool_agent: openclaw
   upstream_compat:
@@ -68,15 +77,14 @@ litellm_settings:
 # Skill trust (arbiteros_kernel.skill_trust): path to ``.../skills`` (OpenClaw
 # skill packages). Non-empty ARBITEROS_SKILLS_ROOT overrides ``skills_root`` here.
 arbiteros_skill_trust:
-  skills_root: 
+  skills_root:
 
 # Used when running ``skill-scanner`` from the kernel. All three keys must be
 # non-empty for ``--use-llm``; otherwise scans use static + behavioral only.
 skill_scanner_llm:
   model: openai/gpt-4o
-  api_base: 
+  api_base:
   api_key:
-
 
 # Run once per session: before the first pure-text assistant reply, scan these files.
 # If any file is judged BLOCK, append a notice at the end of that reply.
@@ -88,7 +96,7 @@ session_bootstrap_scan:
     - "PATH/TO/YOUR/AGENTS.MD"
     - "PATH/TO/YOUR/IDENTITY.MD"
   max_content_chars_per_file: 12000
-  
+
 # Taint ablation: when true, policy evaluation sees prop_* equal to base
 # trustworthiness/confidentiality (no inheritance). Implemented in policy_check only.
 taint_ablation:

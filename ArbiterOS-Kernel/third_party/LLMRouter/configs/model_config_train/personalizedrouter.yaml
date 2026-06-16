@@ -1,0 +1,52 @@
+# Config parameters for PersonalizedRouter (Personalized GNN-based) training:
+
+
+data_path:
+  routing_data_path: 'data/personaroute_bench/router_user_data_v1.csv'
+  routing_data_train: 'data/personaroute_bench/router_user_train_data_v1.csv'
+  routing_data_val: 'data/personaroute_bench/router_user_val_data_v1.csv'
+  routing_data_test: 'data/personaroute_bench/router_user_test_data_v1.csv'
+  llm_data: 'data/personaroute_bench/LLM_Descriptions_large.json'
+  llm_embedding_data: 'data/personaroute_bench/llm_description_embedding_large.pkl'
+
+
+
+model_path:
+  ini_model_path: ''
+  save_model_path: 'saved_models/personalizedrouter/personalizedrouter.pt'
+  load_model_path: 'saved_models/personalizedrouter/personalizedrouter.pt'
+
+metric:
+  weights:
+    performance: 1
+    cost: 0
+    llm_judge: 0
+
+hparam: 
+  # GNN architecture
+  embedding_dim: 64                  # Hidden layer dimension for GNN
+  edge_dim: 1                        # Edge feature dimension
+
+  # Personalized routing parameters
+  user_num: 2                       # Number of users for personalized routing
+  num_task: 4                        # Number of tasks
+
+  # Training parameters
+  learning_rate: 0.001               # Learning rate for AdamW optimizer
+  weight_decay: 0.0001               # L2 regularization weight decay
+  train_epoch: 100                   # Number of training epochs
+  batch_size: 4                      # Number of masked samples per gradient step
+  train_mask_rate: 0.3               # Rate of edges to mask during training
+
+  # Data split [train, val, test]
+  split_ratio: [0.6, 0.2, 0.2]
+
+  # LLM family for additional edges (optional)
+  llm_family: []                     # e.g., ["gpt-4", "claude-3", "llama-3"]
+
+  # Reproducibility
+  random_state: 42                   # Random seed for reproducibility
+
+
+
+

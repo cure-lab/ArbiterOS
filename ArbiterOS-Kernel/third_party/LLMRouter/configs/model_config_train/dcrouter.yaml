@@ -1,0 +1,69 @@
+# Config parameters for dcrouter training:
+
+
+data_path:
+  query_data_train: 'data/example_data/query_data/default_query_train.jsonl'
+  query_data_test: 'data/example_data/query_data/default_query_test.jsonl'
+  routing_data_train: 'data/example_data/routing_data/default_routing_train_data.jsonl'
+  routing_data_test: 'data/example_data/routing_data/default_routing_test_data.jsonl'
+  llm_data: 'data/example_data/llm_candidates/default_llm.json'
+  llm_embedding_data: 'data/example_data/llm_candidates/default_llm_embeddings.json'
+  preprocessed_dir: 'data/dcrouter_preprocessed'
+
+
+model_path:
+  ini_model_path: ''
+  save_model_path: 'saved_models/dcrouter/dcrouter_model.pth'
+  backbone_model: 'microsoft/mdeberta-v3-base'
+
+
+metric:
+  weights:
+    performance: 1
+    cost: 0
+    llm_judge: 0
+
+hparam:
+  # Model configuration
+  hidden_state_dim: 768              # Hidden state dimension of the backbone model
+  similarity_function: "cos"          # Similarity function: "cos" or "inner"
+
+  # Training hyperparameters
+  batch_size: 32                      # Training batch size
+  training_steps: 500                 # Total number of training steps
+  learning_rate: 5.0e-5               # Learning rate for optimizer
+
+  # Loss configuration
+  top_k: 3                            # Top-k LLMs for positive samples
+  last_k: 3                           # Last-k LLMs for negative samples
+  temperature: 1.0                    # Temperature for softmax
+
+  # Loss weights
+  sample_loss_weight: 0.0             # Weight for sample-sample contrastive loss
+  cluster_loss_weight: 1.0            # Weight for cluster contrastive loss
+  H: 3                                # Number of negative samples
+
+  # Optimization
+  gradient_accumulation: 1            # Gradient accumulation steps
+
+  # Device and seed
+  device: "cpu"                       # Device for training: "cpu" or "cuda"
+  seed: 1                             # Random seed for reproducibility
+
+  # Evaluation
+  eval_steps: 50                      # Evaluate every N steps
+
+  # Inference
+  inference_batch_size: 64            # Batch size for inference
+  inference_temperature: 1.0          # Temperature for inference
+
+  # Data preprocessing
+  n_clusters: 3                       # Number of clusters for training data
+  max_test_samples: 500               # Max samples for test set (null for all)
+  source_max_token_len: 512           # Maximum token length for source
+  target_max_token_len: 512           # Maximum token length for target
+
+
+
+
+

@@ -1,0 +1,37 @@
+# Config parameters for knnmultiroundrouter training:
+
+
+data_path:
+  query_data_train: 'data/example_data/query_data/default_query_train.jsonl'
+  query_data_test: 'data/example_data/query_data/default_query_test.jsonl'
+  query_embedding_data: 'data/example_data/routing_data/query_embeddings_longformer.pt'
+  routing_data_train: 'data/example_data/routing_data/default_routing_train_data.jsonl'
+  routing_data_test: 'data/example_data/routing_data/default_routing_test_data.jsonl'
+  llm_data: 'data/example_data/llm_candidates/default_llm.json'
+  llm_embedding_data: 'data/example_data/llm_candidates/default_llm_embeddings.json'
+
+model_path:
+  ini_model_path: ''
+  save_model_path: 'saved_models/knnmultiroundrouter/knnmultiroundrouter.pkl'
+
+# Configuration for full pipeline processing
+base_model: 'Qwen/Qwen2.5-3B-Instruct'  # Model for decomposition and aggregation
+use_local_llm: false  # Set to true to use vLLM for local inference (requires vLLM installed)
+api_endpoint: 'https://integrate.api.nvidia.com/v1'  # API endpoint for execution
+api_key: null  # API key (can also be set via environment variable API_KEYS)
+
+metric:
+  weights:
+    performance: 1
+    cost: 0
+    llm_judge: 0
+
+hparam:
+    n_neighbors: 5        # Number of neighbors (K value) — the most important parameter
+    weights: "uniform"    # Weight function used in prediction: "uniform" or "distance"
+    algorithm: "auto"     # Algorithm used to compute nearest neighbors: "auto", "ball_tree", "kd_tree", or "brute"
+    leaf_size: 30         # Leaf size passed to BallTree or KDTree
+    p: 2                  # Power parameter for the Minkowski metric (p=1: Manhattan, p=2: Euclidean)
+    metric: "minkowski"   # Distance metric to use, e.g., "minkowski" or "cosine"
+    n_jobs: -1            # Number of parallel jobs (-1 uses all available CPU cores)
+

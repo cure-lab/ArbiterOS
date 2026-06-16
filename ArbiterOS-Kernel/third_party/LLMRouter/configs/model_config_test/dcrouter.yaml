@@ -1,0 +1,44 @@
+# Config parameters for dcrouter testing:
+
+
+data_path:
+  query_data_train: 'data/example_data/query_data/default_query_train.jsonl'
+  query_data_test: 'data/example_data/query_data/default_query_test.jsonl'
+  routing_data_train: 'data/example_data/routing_data/default_routing_train_data.jsonl'
+  routing_data_test: 'data/example_data/routing_data/default_routing_test_data.jsonl'
+  llm_data: 'data/example_data/llm_candidates/default_llm.json'
+  llm_embedding_data: 'data/example_data/llm_candidates/default_llm_embeddings.json'
+  preprocessed_dir: 'data/dcrouter_preprocessed'
+
+model_path:
+  ini_model_path: ''
+  save_model_path: 'saved_models/dcrouter/dcrouter_model.pth'
+  backbone_model: 'microsoft/mdeberta-v3-base'
+
+
+metric:
+  weights:
+    performance: 1
+    cost: 0
+    llm_judge: 0
+
+hparam:
+  # Model configuration
+  hidden_state_dim: 768              # Hidden state dimension of the backbone model
+  similarity_function: "cos"          # Similarity function: "cos" or "inner"
+
+  # Device
+  device: "cpu"                       # Device for inference: "cpu" or "cuda"
+
+  # Inference
+  inference_batch_size: 64            # Batch size for inference
+  inference_temperature: 1.0          # Temperature for inference
+
+  # Data preprocessing
+  source_max_token_len: 512           # Maximum token length for source
+  target_max_token_len: 512           # Maximum token length for target
+
+
+
+
+
