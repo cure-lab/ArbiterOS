@@ -1,0 +1,10 @@
+template: |
+  You are given a question along with auxiliary information, which consists of several sub-questions derived from the original question and their respective answers. Use this information to answer the original question if relevant, but make your own reasoning step by step before arriving at the final answer. 
+
+  Important: Your final answer MUST be clearly marked and enclosed within <answer> and </answer> tags at the end of your response. No other part of the output should be inside these tags.
+
+  Auxiliary Information: {info}
+
+  Question: {query}
+  Let's think step by step.
+

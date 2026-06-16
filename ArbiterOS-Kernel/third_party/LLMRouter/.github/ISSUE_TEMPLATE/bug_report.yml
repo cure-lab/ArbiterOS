@@ -1,0 +1,129 @@
+name: Bug Report
+description: Report a bug or unexpected behavior in LLMRouter
+title: "[Bug]: "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this bug! Please fill out the form below to help us understand and fix the issue.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Initial Checks
+      description: Please confirm you have completed the following steps
+      options:
+        - label: I have searched the existing issues and this bug has not been reported yet
+          required: true
+        - label: I believe this is a bug, not a question or feature request
+          required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Describe the Bug
+      description: A clear and concise description of what the bug is
+      placeholder: Tell us what happened...
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce
+      description: Steps to reproduce the behavior
+      placeholder: |
+        1. Run command '...'
+        2. Configure '...'
+        3. See error
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: A clear and concise description of what you expected to happen
+    validations:
+      required: true
+
+  - type: dropdown
+    id: router
+    attributes:
+      label: Router Used
+      description: Which router were you using when the bug occurred?
+      options:
+        - knnrouter
+        - svmrouter
+        - mlprouter
+        - mfrouter
+        - elorouter
+        - routerdc
+        - automix
+        - hybrid_llm
+        - graphrouter
+        - causallm_router
+        - router_r1
+        - gmtrouter
+        - knnmultiroundrouter
+        - llmmultiroundrouter
+        - smallest_llm
+        - largest_llm
+        - Other / Not applicable
+    validations:
+      required: true
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Configuration Used
+      description: Please provide your YAML configuration (remove any sensitive API keys)
+      render: yaml
+      placeholder: |
+        data_path:
+          llm_data: 'data/example_data/llm_candidates/default_llm.json'
+          ...
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs and Error Messages
+      description: Please provide any relevant logs or error messages
+      render: shell
+
+  - type: input
+    id: version
+    attributes:
+      label: LLMRouter Version
+      description: What version of LLMRouter are you using?
+      placeholder: e.g., 0.1.0 or commit hash
+    validations:
+      required: true
+
+  - type: input
+    id: python
+    attributes:
+      label: Python Version
+      description: What Python version are you using?
+      placeholder: e.g., 3.10.12
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating System
+      options:
+        - Linux
+        - macOS
+        - Windows
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional Context
+      description: Add any other context about the problem here (screenshots, related issues, etc.)

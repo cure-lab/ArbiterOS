@@ -1,0 +1,25 @@
+# Example Configuration for RandomRouter
+# ========================================
+
+data_path:
+  # Path to LLM candidates data (JSON file)
+  llm_data: 'data/example_data/llm_candidates/default_llm.json'
+
+  # Optional: paths for other data (not used by RandomRouter but may be required by MetaRouter)
+  query_data_test: 'data/example_data/query_data/default_query_test.jsonl'
+  routing_data_test: 'data/example_data/routing_data/default_routing_test_data.jsonl'
+
+# Metric weights (optional, for evaluation)
+metric:
+  weights:
+    performance: 1
+    cost: 0
+    llm_judge: 0
+
+# Hyperparameters
+hparam:
+  # Random seed for reproducibility (optional)
+  seed: null  # null = 真正随机
+
+# API endpoint for calling routed models
+api_endpoint: 'https://integrate.api.nvidia.com/v1'

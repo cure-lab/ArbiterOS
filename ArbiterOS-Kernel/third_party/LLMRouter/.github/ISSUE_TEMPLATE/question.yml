@@ -1,0 +1,81 @@
+name: Question
+description: Ask a general question about LLMRouter
+title: "[Question]: "
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for your interest in LLMRouter! Please fill out the form below to ask your question.
+
+        **Before asking**, please check:
+        - [Documentation](https://ulab-uiuc.github.io/LLMRouter/)
+        - [README](https://github.com/ulab-uiuc/LLMRouter/blob/main/README.md)
+        - [Existing Issues](https://github.com/ulab-uiuc/LLMRouter/issues)
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Initial Checks
+      description: Please confirm you have completed the following steps
+      options:
+        - label: I have searched the existing issues and discussions and my question is not already answered
+          required: true
+        - label: I have checked the documentation and README
+          required: true
+        - label: I believe this is a question, not a bug report or feature request
+          required: true
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: Question Category
+      description: What area does your question relate to?
+      options:
+        - Installation / Setup
+        - Router Usage
+        - Training
+        - Inference
+        - Data Generation
+        - Configuration
+        - Custom Router Development
+        - API Integration
+        - Performance
+        - General Usage
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: question
+    attributes:
+      label: Your Question
+      description: A clear and concise description of your question
+      placeholder: |
+        What I'm trying to do:
+        ...
+
+        What I'm confused about:
+        ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: tried
+    attributes:
+      label: What I've Tried
+      description: Describe what you've already tried or researched
+      placeholder: |
+        - I tried reading the docs for X...
+        - I attempted to run Y...
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional Context
+      description: Add any other context that might help answer your question
+      placeholder: |
+        - Code snippets
+        - Configuration files
+        - Error messages
+        - Screenshots

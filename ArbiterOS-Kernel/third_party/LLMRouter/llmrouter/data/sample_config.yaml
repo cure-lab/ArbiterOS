@@ -1,0 +1,32 @@
+# Sample Configuration File for LLMRouter Data Generation Pipeline
+#
+# This is a sample configuration file that uses the example_data directory.
+# Copy this file and modify paths as needed for your own data generation.
+#
+# Usage:
+#   python llmrouter/data/data_generation.py --config llmrouter/data/sample_config.yaml
+#   python llmrouter/data/generate_llm_embeddings.py --config llmrouter/data/sample_config.yaml
+#   python llmrouter/data/api_calling_evaluation.py --config llmrouter/data/sample_config.yaml
+
+data_path:
+  # Query data paths (output from Step 2a, input for Step 3)
+  query_data_train: 'data/example_data/query_data/default_query_train.jsonl'
+  query_data_test: 'data/example_data/query_data/default_query_test.jsonl'
+  
+  # Query embeddings (output from Step 3)
+  query_embedding_data: 'data/example_data/routing_data/query_embeddings_longformer.pt'
+  
+  # Routing data (output from Step 3)
+  routing_data_train: 'data/example_data/routing_data/default_routing_train_data.jsonl'
+  routing_data_test: 'data/example_data/routing_data/default_routing_test_data.jsonl'
+  
+  # LLM candidate data (input for Step 2b and Step 3)
+  llm_data: 'data/example_data/llm_candidates/default_llm.json'
+  llm_embedding_data: 'data/example_data/llm_candidates/default_llm_embeddings.json'
+
+# Data generation parameters (used by data_generation.py)
+data_generation:
+  sample_size: 500      # Number of samples per task (default: 500)
+  train_ratio: 0.8      # Train/test split ratio (default: 0.8)
+  random_seed: 42       # Random seed for reproducibility
+

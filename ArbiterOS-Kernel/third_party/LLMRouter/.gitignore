@@ -1,0 +1,64 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Model files
+*.pt
+*.pth
+*.ckpt
+saved_models/
+
+# Data
+*.csv
+*.jsonl
+data/chatbot_arena/*.jsonl
+
+# Logs
+*.log
+routing_log.jsonl
+
+# Local config with real API keys
+config.local.yaml
+*.local.yaml
+.env
+.env.*
+
+# Temporary files
+*.tmp
+.cache/
+
+# MkDocs build output
+site/

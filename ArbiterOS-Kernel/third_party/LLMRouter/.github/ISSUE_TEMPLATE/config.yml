@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Slack Community
+    url: https://join.slack.com/t/llmrouteropen-ri04588/shared_invite/zt-3jz3cc6d1-ncwKEHvvWe0OczHx7K5c0g
+    about: Join our Slack community for discussions and support
+  - name: Documentation
+    url: https://ulab-uiuc.github.io/LLMRouter/
+    about: Check the documentation for guides and API reference

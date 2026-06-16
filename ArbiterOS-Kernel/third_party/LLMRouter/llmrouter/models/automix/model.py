@@ -1,0 +1,409 @@
+"""
+Automix Model
+-------------
+PyTorch model wrapper for Automix routing methods.
+
+This module provides a nn.Module interface for Automix routing,
+making it compatible with the LLMRouter framework.
+
+Original source: automix/colabs/automix.py
+Adapted for LLMRouter framework with PyTorch nn.Module interface.
+"""
+
+from typing import List, Union
+
+import numpy as np
+import pandas as pd
+import torch
+import torch.nn as nn
+
+
+class AutomixModel(nn.Module):
+    """
+    PyTorch model wrapper for Automix routing.
+
+    This class wraps an Automix routing method (e.g., Threshold, POMDP)
+    and provides a PyTorch nn.Module interface for training and inference.
+    """
+
+    def __init__(
+        self,
+        method,
+        slm_column: str = "slm_f1",
+        llm_column: str = "llm_f1",
+        verifier_column: str = "p_ver_slm",
+        costs: List[int] = [1, 50],
+        verifier_cost: int = 1,
+        verbose: bool = False,
+    ):
+        """
+        Initialize Automix model.
+
+        Args:
+            method: Automix routing method (e.g., Threshold, POMDP instance)
+            slm_column: Column name for small model scores
+            llm_column: Column name for large model scores
+            verifier_column: Column name for verifier confidence scores
+            costs: List of [small_model_cost, large_model_cost]
+            verifier_cost: Cost of running verifier
+            verbose: Print debug information
+        """
+        super().__init__()
+        self.method = method
+        self.slm_column = slm_column
+        self.llm_column = llm_column
+        self.verifier_column = verifier_column
+        self.costs = costs
+        self.verifier_cost = verifier_cost
+        self.verbose = verbose
+
+        # Best parameter found during training
+        self.best_param = None
+
+    def _fill_variables(self, **kwargs):
+        """
+        Helper to fill in default values for kwargs if they are None.
+
+        Args:
+            **kwargs: Keyword arguments with potential None values
+
+        Returns:
+            List of resolved argument values
+
+        Raises:
+            ValueError: If both arg and default are None
+        """
+        return_args = []
+        for arg_name, arg_val in kwargs.items():
+            if arg_val is None:
+                try:
+                    return_args.append(getattr(self, arg_name))
+                except AttributeError:
+                    raise ValueError(
+                        f"Argument {arg_name} is None in both the function call "
+                        f"and the class initialization. Please fill it in one of them"
+                    )
+            else:
+                return_args.append(arg_val)
+        return return_args
+
+    def compute_performance_cost(
+        self,
+        data: pd.DataFrame,
+        to_retry: pd.Series,
+        costs=None,
+        verifier_cost=None,
+    ):
+        """
+        Compute overall cost and performance given routing decisions.
+
+        Args:
+            data: Dataset with model scores
+            to_retry: Boolean series indicating routing decisions
+            costs: [small_model_cost, large_model_cost]
+            verifier_cost: Cost of running verifier
+
+        Returns:
+            Tuple of (average_performance, average_cost)
+        """
+        costs, verifier_cost = self._fill_variables(
+            costs=costs, verifier_cost=verifier_cost
+        )
+        slm_cost, llm_cost = costs
+
+        total_cost = (~to_retry).sum() * (slm_cost) + to_retry.sum() * (
+            llm_cost + slm_cost
+        )
+        performances = np.where(to_retry, data[self.llm_column], data[self.slm_column])
+        avg_performance = performances.mean()
+        avg_cost = total_cost / len(data)
+        avg_cost += verifier_cost
+        return avg_performance, avg_cost
+
+    def get_slm_llm_slope_perf(self, data: pd.DataFrame, costs=None, verifier_cost=None):
+        """
+        Compute slope of LLM vs SLM performance.
+
+        Args:
+            data: Dataset with model scores
+            costs: [small_model_cost, large_model_cost]
+            verifier_cost: Cost of running verifier
+
+        Returns:
+            Tuple of (slope, slm_performance, llm_performance)
+        """
+        costs, verifier_cost = self._fill_variables(
+            costs=costs, verifier_cost=verifier_cost
+        )
+        slm_cost, llm_cost = costs
+
+        slm_perf, llm_perf = data[self.slm_column].mean(), data[self.llm_column].mean()
+        # Avoid division by zero
+        if abs(llm_cost - slm_cost) < 1e-10:
+            # If costs are equal, slope is undefined
+            slm_llm_slope = 0.0
+        else:
+            slm_llm_slope = (llm_perf - slm_perf) / (llm_cost - slm_cost)
+        return slm_llm_slope, slm_perf, llm_perf
+
+    def train_routing(
+        self, data: pd.DataFrame, costs=None, verifier_cost=None, cost_constraint=None
+    ):
+        """
+        Train automix by trying different parameters and picking best.
+
+        This method searches over candidate parameters generated by the
+        routing method and selects the one with highest IBC lift.
+
+        Args:
+            data: Training dataset
+            costs: [small_model_cost, large_model_cost]
+            verifier_cost: Cost of running verifier
+            cost_constraint: Optional tuple of (min_cost, max_cost)
+
+        Returns:
+            Best parameter found
+        """
+        costs, verifier_cost = self._fill_variables(
+            costs=costs, verifier_cost=verifier_cost
+        )
+        slm_cost, llm_cost = costs
+
+        thresh_dic = dict()
+        # Generate candidate parameters (may require passing data)
+        for param in self.method.generate_points(
+            data, verifier_column=self.verifier_column
+        ):
+            to_retry = self.method.run(data, param, verifier_column=self.verifier_column)
+            avg_performance, avg_cost = self.compute_performance_cost(
+                data, to_retry, costs=costs, verifier_cost=verifier_cost
+            )
+
+            if cost_constraint is not None:
+                if avg_cost < cost_constraint[0] or avg_cost > cost_constraint[1]:
+                    continue
+
+            slm_llm_slope, slm_perf, _ = self.get_slm_llm_slope_perf(
+                data, costs=costs, verifier_cost=verifier_cost
+            )
+
+            # Slope between automix and slm
+            if abs(avg_cost - slm_cost) < 1e-10:
+                automix_slm_slope = 0.0
+            else:
+                automix_slm_slope = (avg_performance - slm_perf) / (avg_cost - slm_cost)
+            
+            # Avoid division by zero when calculating ibc_lift
+            if abs(slm_llm_slope) < 1e-10:
+                # If slope is zero or very small, ibc_lift is undefined
+                # Use a fallback: compare automix_slm_slope directly
+                if automix_slm_slope > 0:
+                    ibc_lift = float('inf')  # Positive improvement
+                elif automix_slm_slope < 0:
+                    ibc_lift = float('-inf')  # Negative improvement
+                else:
+                    ibc_lift = 0.0
+            else:
+                ibc_lift = (automix_slm_slope - slm_llm_slope) / slm_llm_slope
+            
+            thresh_dic[str(param)] = ibc_lift
+
+        if not thresh_dic:
+            # No valid parameters found
+            self.best_param = None
+            return None
+        
+        # Handle case where all ibc_lift values are NaN or invalid
+        valid_scores = {}
+        for k, v in thresh_dic.items():
+            if isinstance(v, float):
+                if pd.isna(v) or v == float('-inf'):
+                    continue
+            valid_scores[k] = v
+        
+        if not valid_scores:
+            # All scores are invalid, use first parameter as fallback
+            self.best_param = eval(list(thresh_dic.keys())[0])
+        else:
+            # Find best parameter, handling inf and -inf
+            def safe_max_key(d):
+                """Find key with maximum value, handling inf/-inf."""
+                max_val = float('-inf')
+                max_key = None
+                has_inf = False
+                for k, v in d.items():
+                    if isinstance(v, float):
+                        if v == float('inf'):
+                            has_inf = True
+                            max_key = k  # Prefer inf over finite values
+                            break
+                    if v > max_val:
+                        max_val = v
+                        max_key = k
+                return max_key if max_key is not None else list(d.keys())[0]
+            
+            best_key = safe_max_key(valid_scores) if valid_scores else list(thresh_dic.keys())[0]
+            self.best_param = eval(best_key)
+
+        return self.best_param
+
+    def infer(self, df_row: pd.Series):
+        """
+        Run automix on given dataframe row to get routing decision.
+
+        Args:
+            df_row: Single dataframe row
+
+        Returns:
+            Boolean indicating whether to route to large model
+        """
+        # Use best parameter or default if not trained
+        if self.best_param is None:
+            # Use default parameter for untrained model
+            from .methods import AutomixUnion
+            if isinstance(self.method, AutomixUnion):
+                # For AutomixUnion, use Threshold method (last method,
+                # index 3) with default threshold 0.5
+                default_param = (0.5, 3)  # Threshold with threshold 0.5
+            else:
+                # For other methods (Threshold, etc.),
+                # use default threshold of 0.5
+                default_param = 0.5
+            to_retry = self.method.run(
+                df_row, default_param, verifier_column=self.verifier_column
+            )
+        else:
+            to_retry = self.method.run(
+                df_row, self.best_param, verifier_column=self.verifier_column
+            )
+        return to_retry
+
+    def forward(self, batch: dict) -> dict:
+        """
+        Forward pass for routing decision.
+
+        Args:
+            batch: Dictionary containing:
+                - "data": pandas DataFrame with model scores
+                - "mode": "train" or "infer"
+
+        Returns:
+            Dictionary with routing outputs:
+                - "decisions": Boolean tensor of routing decisions
+                - "performance": Average performance
+                - "cost": Average cost
+        """
+        data = batch["data"]
+        mode = batch.get("mode", "infer")
+
+        if mode == "train":
+            # During training, try all parameters
+            best_param = self.train_routing(data)
+            to_retry = self.method.run(
+                data, best_param, verifier_column=self.verifier_column
+            )
+        else:
+            # During inference, use best parameter or default
+            # If best_param is None, use default parameter for inference
+            if self.best_param is None:
+                # Use default parameter for untrained model
+                # Check if method is AutomixUnion (POMDP) which needs
+                # (param, method_index) tuple
+                from .methods import AutomixUnion
+                if isinstance(self.method, AutomixUnion):
+                    # For AutomixUnion, use Threshold method (last method,
+                    # index 3) with default threshold 0.5
+                    # POMDP contains: [POMDPSimple, GreedyPOMDP,
+                    # DoubleThreshold, Threshold]
+                    default_param = (0.5, 3)  # Threshold with threshold 0.5
+                else:
+                    # For other methods (Threshold, etc.),
+                    # use default threshold of 0.5
+                    default_param = 0.5
+                to_retry = self.method.run(
+                    data, default_param, verifier_column=self.verifier_column
+                )
+            else:
+                # Use the method.run directly on the entire DataFrame
+                to_retry = self.method.run(
+                    data, self.best_param, verifier_column=self.verifier_column
+                )
+
+        # Convert to tensor
+        decisions = torch.tensor(to_retry.values, dtype=torch.bool)
+
+        # Compute metrics
+        avg_performance, avg_cost = self.compute_performance_cost(data, to_retry)
+
+        return {
+            "decisions": decisions,
+            "performance": avg_performance,
+            "cost": avg_cost,
+        }
+
+    def evaluate(
+        self,
+        data: pd.DataFrame,
+        costs=None,
+        verifier_cost=None,
+        return_dict=False,
+        return_decisions=False,
+    ):
+        """
+        Evaluate trained automix on full dataframe to compute metrics.
+
+        Args:
+            data: Evaluation dataset
+            costs: [small_model_cost, large_model_cost]
+            verifier_cost: Cost of running verifier
+            return_dict: Return results as dictionary
+            return_decisions: Include routing decisions in return
+
+        Returns:
+            Metrics (tuple or dict depending on return_dict)
+        """
+        costs, verifier_cost = self._fill_variables(
+            costs=costs, verifier_cost=verifier_cost
+        )
+        slm_cost, llm_cost = costs
+
+        # Use method.run directly on the entire DataFrame for efficiency
+        to_retry = self.method.run(
+            data, self.best_param, verifier_column=self.verifier_column
+        )
+        avg_performance, avg_cost = self.compute_performance_cost(data, to_retry)
+        slm_llm_slope, slm_perf, llm_perf = self.get_slm_llm_slope_perf(data)
+        
+        # Avoid division by zero
+        if abs(avg_cost - slm_cost) < 1e-10:
+            automix_slm_slope = 0.0
+        else:
+            automix_slm_slope = (avg_performance - slm_perf) / (avg_cost - slm_cost)
+        
+        # Avoid division by zero when calculating ibc_lift
+        if abs(slm_llm_slope) < 1e-10:
+            # If slope is zero or very small, ibc_lift is undefined
+            if automix_slm_slope > 0:
+                ibc_lift = float('inf')
+            elif automix_slm_slope < 0:
+                ibc_lift = float('-inf')
+            else:
+                ibc_lift = 0.0
+        else:
+            ibc_lift = (automix_slm_slope - slm_llm_slope) / slm_llm_slope
+
+        if return_dict:
+            result = {
+                "ibc_lift": ibc_lift,
+                "automix_slm_slope": automix_slm_slope,
+                "avg_performance": avg_performance,
+                "avg_cost": avg_cost,
+            }
+            if return_decisions:
+                result["route_to_llm"] = to_retry
+            return result
+
+        if return_decisions:
+            return ibc_lift, automix_slm_slope, avg_performance, avg_cost, to_retry
+
+        return ibc_lift, automix_slm_slope, avg_performance, avg_cost

@@ -1,0 +1,11 @@
+template: |
+  Given the query '{query}', decompose it into as many as 4 meaningful sub-queries (minimum 1, maximum 4). \
+  Try to cover the full scope of the original query by breaking it down into multiple specific and distinct sub-tasks \
+  whenever possible. Aim for the maximum number of high-quality sub-queries without introducing redundancy. \
+  Each sub-query should be clear, self-contained, and semantically coherent. \
+
+  **Output formatting rules (must be followed strictly):**
+      - Output only the decomposed sub-queries, one per line.
+      - Do not include any other text, explanations, or headers in your output.
+      - Each line should contain only one sub-query.
+

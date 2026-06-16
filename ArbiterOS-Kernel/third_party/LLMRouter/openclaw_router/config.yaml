@@ -1,0 +1,96 @@
+# ============================================================
+# OpenClaw Router Configuration (Together API)
+# ============================================================
+
+serve:
+  host: "0.0.0.0"
+  port: 8000
+  show_model_prefix: true
+
+# Routing Strategy
+# Options: random, round_robin, rules, llm, llmrouter
+router:
+  strategy: llm
+  provider: together
+  base_url: https://api.together.xyz/v1
+  model: "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo"  # small model for routing decisions
+
+# IMPORTANT:
+# - NVIDIA supports key rotation via list.
+# - Other providers accept string key; list is also accepted but only the first valid key is used.
+# - Local OpenAI-compatible backends can run with empty key when auth_mode resolves to none.
+api_keys:
+  # together: ${TOGETHER_API_KEY}
+  # or directly:
+  together: "Your-Together-API-Key"
+
+# LLM Backend Configuration (Together-hosted models)
+llms:
+  llama-3.1-8b:
+    description: "Fast general chat"
+    provider: together
+    model: "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo"
+    base_url: https://api.together.xyz/v1
+    input_price: 0.0
+    output_price: 0.0
+    max_tokens: 2048
+    context_limit: 131072
+
+  llama-3.3-70b:
+    description: "Stronger reasoning and instruction following"
+    provider: together
+    model: "meta-llama/Llama-3.3-70B-Instruct-Turbo"
+    base_url: https://api.together.xyz/v1
+    input_price: 0.0
+    output_price: 0.0
+    max_tokens: 2048
+    context_limit: 131072
+
+  qwen-2.5-7b:
+    description: "Low-latency Qwen model"
+    provider: together
+    model: "Qwen/Qwen2.5-7B-Instruct-Turbo"
+    base_url: https://api.together.xyz/v1
+    input_price: 0.0
+    output_price: 0.0
+    max_tokens: 2048
+    context_limit: 131072
+
+  qwen-2.5-72b:
+    description: "High-capability Qwen model"
+    provider: together
+    model: "Qwen/Qwen2.5-72B-Instruct"
+    base_url: https://api.together.xyz/v1
+    input_price: 0.0
+    output_price: 0.0
+    max_tokens: 2048
+    context_limit: 131072
+
+# Routing Memory (experimental)
+# Stores query->model routing history for more consistent decisions
+memory:
+  enabled: false
+  path: "${HOME}/.llmrouter/openclaw_memory.jsonl"
+  top_k: 10
+  retriever_model: "facebook/contriever-msmarco"
+  device: "cpu"
+
+# Media Understanding (experimental)
+# Converts images/audio/video to text descriptions for routing and memory
+# Uses Together AI vision and audio APIs
+media:
+  enabled: true
+  # Uses the same together API key from api_keys section
+  api_key_env: "TOGETHER_API_KEY"
+  base_url: "https://api.together.xyz/v1"
+  # Vision model for image/video understanding
+  vision_model: "Qwen/Qwen3-VL-8B-Instruct"
+  # Audio transcription model (Whisper)
+  audio_model: "openai/whisper-large-v3"
+  # Prompts
+  image_prompt: "Describe this image concisely in 2-3 sentences."
+  video_prompt: "Describe what you see in these video frames."
+  # Video processing
+  video_max_frames: 4
+  # Max description length stored in memory
+  max_description_chars: 500

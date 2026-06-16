@@ -1,0 +1,21 @@
+template: |
+  Given the query '{{query}}', decompose it into as many as 4 meaningful sub-queries (minimum 1, maximum 4). \
+  Try to cover the full scope of the original query by breaking it down into multiple specific and distinct sub-tasks \
+  whenever possible. Aim for the maximum number of high-quality sub-queries without introducing redundancy. \
+  Each sub-query should be clear, self-contained, and semantically coherent. \
+
+  You will then be provided with descriptions of the following Large Language Models (LLMs): {model_list}. \
+
+  {model_descriptions}
+
+  For each sub-query, select the single LLM that is most likely to generate the highest-quality response, regardless of cost or efficiency. \
+  Focus entirely on maximizing effectiveness and providing the most accurate and relevant output. Base your decision strictly on the descriptions of the models. \
+
+  **Output formatting rules (must be followed strictly):**
+      - Output only the decomposed sub-queries and the full name of the selected LLM for each.
+      - Output exactly one sub-query and one LLM per line.
+      - Each line must be formatted as follows: 
+  <sub-query>: <LLM name>
+      - Use a colon `:` as the separator of the sub-query and llm name each line.
+      - Do not include any other text, explanations, or headers in your output.
+

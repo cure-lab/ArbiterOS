@@ -1,0 +1,3 @@
+template: |
+  You are an expert Python programmer. Implement the function body only. Do not repeat the function signature or docstring. Put the code in this format: [BEGIN] <Your Code - function body only> [Done]
+

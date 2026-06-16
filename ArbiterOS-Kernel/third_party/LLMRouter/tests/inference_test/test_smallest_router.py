@@ -1,0 +1,41 @@
+import argparse
+import os
+from llmrouter.models import SmallestLLM
+
+
+def main():
+    # Correct default path based on your folder structure
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))  # /data/taofeng2/LLMRouter
+    default_yaml = os.path.join(project_root, "configs", "model_config_test", "smallest_llm.yaml")
+
+    parser = argparse.ArgumentParser(
+        description="Test the SmallestLLM router with a YAML configuration file."
+    )
+    parser.add_argument(
+        "--yaml_path",
+        type=str,
+        default=default_yaml,
+        help=f"Path to the YAML config file (default: {default_yaml})",
+    )
+    args = parser.parse_args()
+
+    # Verify file existence
+    if not os.path.exists(args.yaml_path):
+        raise FileNotFoundError(f"YAML file not found: {args.yaml_path}")
+
+    # Initialize the router
+    print(f"📄 Using YAML file: {args.yaml_path}")
+    llm = SmallestLLM(args.yaml_path)
+    print("✅ SmallestLLM initialized successfully!")
+
+    # Run inference
+    result = llm.route_batch()
+    print(result)
+
+    result_ = llm.route_single({"query": "How are you"})
+    print(result_)
+
+
+if __name__ == "__main__":
+    main()
+
