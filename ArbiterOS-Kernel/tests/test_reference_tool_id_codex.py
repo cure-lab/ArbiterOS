@@ -2,6 +2,9 @@
 
 import json
 
+import pytest
+
+import arbiteros_kernel.litellm_callback as lc
 from arbiteros_kernel.litellm_callback import (
     _collect_prior_tool_call_ids_from_request,
     _collect_prior_tool_call_ids_from_responses_input,
@@ -64,7 +67,10 @@ def test_inject_reference_tool_id_codex_description_uses_responses_wording():
     assert "call_abc (exec_command)" in desc
 
 
-def test_inject_reference_tool_id_openclaw_description_uses_chat_wording():
+def test_inject_reference_tool_id_openclaw_description_uses_chat_wording(monkeypatch):
+    monkeypatch.setattr(
+        lc, "_read_tool_agent_from_litellm_config", lambda: "openclaw"
+    )
     data = {
         "model": "gpt-4",
         "messages": [{"role": "tool", "tool_call_id": "call_chat", "content": "ok"}],
@@ -89,7 +95,10 @@ def test_inject_reference_tool_id_codex_flat_tool_schema():
     assert "reference_tool_id" in params["required"]
 
 
-def test_inject_reference_tool_id_openclaw_nested_tool_schema_unchanged():
+def test_inject_reference_tool_id_openclaw_nested_tool_schema_unchanged(monkeypatch):
+    monkeypatch.setattr(
+        lc, "_read_tool_agent_from_litellm_config", lambda: "openclaw"
+    )
     data = {
         "model": "gpt-4",
         "messages": [],
