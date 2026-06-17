@@ -2018,6 +2018,35 @@ def _save_langfuse_node_json(data: dict) -> None:
         f.flush()
 
 
+def _iter_anthropic_content_blocks(content: Any) -> list[dict[str, Any]]:
+    """Yield dict blocks from Anthropic-style message content lists."""
+    if not isinstance(content, list):
+        return []
+    return [block for block in content if isinstance(block, dict)]
+
+
+def _record_prior_tool_call_id(
+    out: list[tuple[str, str]],
+    seen: set[str],
+    id_to_name: dict[str, str],
+    *,
+    tool_call_id: Any,
+    tool_name: Any = "",
+) -> None:
+    if not isinstance(tool_call_id, str) or not tool_call_id.strip():
+        return
+    s = tool_call_id.strip()
+    name = str(tool_name).strip() if isinstance(tool_name, str) else ""
+    if name:
+        id_to_name[s] = name
+    elif s not in id_to_name:
+        id_to_name[s] = ""
+    if s in seen:
+        return
+    seen.add(s)
+    out.append((s, id_to_name.get(s, name)))
+
+
 def _collect_prior_tool_call_ids_from_messages(messages: Any) -> list[tuple[str, str]]:
     """Collect (tool_call_id, tool_name) from prior assistant tool_calls and role=tool messages."""
     out: list[tuple[str, str]] = []
@@ -2028,7 +2057,8 @@ def _collect_prior_tool_call_ids_from_messages(messages: Any) -> list[tuple[str,
     for msg in messages:
         if not isinstance(msg, dict):
             continue
-        if msg.get("role") == "assistant":
+        role = msg.get("role")
+        if role == "assistant":
             for tc in msg.get("tool_calls") or []:
                 if not isinstance(tc, dict):
                     continue
@@ -2038,19 +2068,41 @@ def _collect_prior_tool_call_ids_from_messages(messages: Any) -> list[tuple[str,
                 if isinstance(fn, dict):
                     n = fn.get("name")
                     name = str(n).strip() if isinstance(n, str) else ""
-                if isinstance(tc_id, str) and tc_id.strip():
-                    s = tc_id.strip()
-                    id_to_name[s] = name or id_to_name.get(s, "")
-                    if s not in seen:
-                        seen.add(s)
-                        out.append((s, name))
-        elif msg.get("role") == "tool":
+                _record_prior_tool_call_id(
+                    out,
+                    seen,
+                    id_to_name,
+                    tool_call_id=tc_id,
+                    tool_name=name,
+                )
+            for block in _iter_anthropic_content_blocks(msg.get("content")):
+                if str(block.get("type") or "").strip() != "tool_use":
+                    continue
+                _record_prior_tool_call_id(
+                    out,
+                    seen,
+                    id_to_name,
+                    tool_call_id=block.get("id"),
+                    tool_name=block.get("name"),
+                )
+        elif role == "tool":
             tc_id = msg.get("tool_call_id")
-            if isinstance(tc_id, str) and tc_id.strip() and tc_id.strip() not in seen:
-                s = tc_id.strip()
-                seen.add(s)
-                name = id_to_name.get(s, "")
-                out.append((s, name))
+            _record_prior_tool_call_id(
+                out,
+                seen,
+                id_to_name,
+                tool_call_id=tc_id,
+            )
+        elif role == "user":
+            for block in _iter_anthropic_content_blocks(msg.get("content")):
+                if str(block.get("type") or "").strip() != "tool_result":
+                    continue
+                _record_prior_tool_call_id(
+                    out,
+                    seen,
+                    id_to_name,
+                    tool_call_id=block.get("tool_use_id"),
+                )
     return out
 
 
@@ -2104,6 +2156,7 @@ def _build_reference_tool_id_description(
     prior_items: list[tuple[str, str]],
     *,
     use_codex_responses_wording: bool = False,
+    use_claude_code_wording: bool = False,
 ) -> str:
     if use_codex_responses_wording:
         base_desc = (
@@ -2117,6 +2170,18 @@ def _build_reference_tool_id_description(
             "derived from a prior exec_command output; process sessionId from a prior process list.) "
             "Copy the exact call_id string from the matching function_call item. "
             "Wrong: ['read']. Right: ['call_xxx']. Use [] when no prior tool output."
+        )
+    elif use_claude_code_wording:
+        base_desc = (
+            "List prior tool_use 'id' values (NOT tool names) whose tool_result output "
+            "you used for this call's input. In conversation history, each prior tool invocation "
+            "appears as a tool_use block with 'id' in an assistant message, followed by a "
+            "tool_result block with the matching 'tool_use_id' in a user message. Consider ALL "
+            "prior tool calls in the conversation, not just the most recent one; include every "
+            "id whose output fed into your current arguments. "
+            "(Examples: Write/Edit content from a prior Read; Bash command derived from prior "
+            "tool output.) Copy the exact tool_use id string. "
+            "Wrong: ['Read']. Right: ['tooluse_xxx']. Use [] when no prior tool output."
         )
     else:
         base_desc = (
@@ -2139,6 +2204,7 @@ def _build_reference_tool_id_schema(
     prior_items: list[tuple[str, str]],
     *,
     use_codex_responses_wording: bool = False,
+    use_claude_code_wording: bool = False,
 ) -> dict[str, Any]:
     return {
         "type": "array",
@@ -2146,6 +2212,7 @@ def _build_reference_tool_id_schema(
         "description": _build_reference_tool_id_description(
             prior_items,
             use_codex_responses_wording=use_codex_responses_wording,
+            use_claude_code_wording=use_claude_code_wording,
         ),
     }
 
@@ -2189,6 +2256,11 @@ def _resolve_tool_parameters_container(tool: dict[str, Any]) -> Optional[dict[st
     params = tool.get("parameters")
     if isinstance(params, dict):
         return params
+
+    if _is_claude_code_tool_agent():
+        input_schema = tool.get("input_schema")
+        if isinstance(input_schema, dict):
+            return input_schema
 
     return None
 
@@ -2244,13 +2316,16 @@ def _inject_reference_tool_id_into_tools(data: dict) -> None:
         return
     prior_items = _collect_prior_tool_call_ids_from_request(data)
     use_codex_wording = _is_responses_api_request(data)
+    use_claude_code_wording = _is_claude_code_tool_agent() and not use_codex_wording
     schema = _build_reference_tool_id_schema(
         prior_items,
         use_codex_responses_wording=use_codex_wording,
+        use_claude_code_wording=use_claude_code_wording,
     )
     description_hint = _build_reference_tool_id_description(
         prior_items,
         use_codex_responses_wording=use_codex_wording,
+        use_claude_code_wording=use_claude_code_wording,
     )
     needs_global_hint = False
     for tool in tools:
@@ -6022,6 +6097,10 @@ def _is_codex_tool_agent() -> bool:
     return _read_tool_agent_from_litellm_config() == "codex"
 
 
+def _is_claude_code_tool_agent() -> bool:
+    return _read_tool_agent_from_litellm_config() == "claude_code"
+
+
 def _extract_codex_suffix_json_objects(content: str) -> tuple[str, list[dict[str, Any]]]:
     """
     Best-effort split for Codex non-strict outputs:
@@ -6240,13 +6319,25 @@ def _is_strict_topic_category_content(obj: dict) -> bool:
     return set(obj.keys()) == {"topic", "category", "content"}
 
 
+def _normalize_reference_tool_id_list(value: Any) -> list[str]:
+    """Coerce reference_tool_id to a string list (handles JSON-encoded strings from models)."""
+    if isinstance(value, list):
+        return [str(x) for x in value if x is not None and str(x).strip()]
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return []
+        parsed = _safe_json_loads(stripped)
+        if isinstance(parsed, list):
+            return [str(x) for x in parsed if x is not None and str(x).strip()]
+        return [stripped]
+    return []
+
+
 def _strip_and_record_reference_tool_ids_from_message(
     message_dict: dict, data: dict
 ) -> None:
-    """从 tool_calls 的 arguments 中剥去 reference_tool_id 并存入 trace 字典，原地修改 message_dict。"""
-    tool_calls = message_dict.get("tool_calls")
-    if not isinstance(tool_calls, list):
-        return
+    """从 tool_calls 或 Anthropic tool_use input 中剥去 reference_tool_id 并存入 trace 字典。"""
     trace_id = None
     if isinstance(data, dict):
         meta = data.get("metadata")
@@ -6256,35 +6347,71 @@ def _strip_and_record_reference_tool_ids_from_message(
         return
     tid = trace_id.strip()
     modified = False
-    for tc in tool_calls:
-        if not isinstance(tc, dict):
+    tool_calls = message_dict.get("tool_calls")
+    if isinstance(tool_calls, list):
+        for tc in tool_calls:
+            if not isinstance(tc, dict):
+                continue
+            tc_id = tc.get("id") or tc.get("tool_call_id")
+            if not isinstance(tc_id, str) or not tc_id.strip():
+                continue
+            fn = tc.get("function")
+            if not isinstance(fn, dict):
+                continue
+            raw_args = fn.get("arguments")
+            if isinstance(raw_args, str):
+                args = _safe_json_loads(raw_args)
+            elif isinstance(raw_args, dict):
+                args = dict(raw_args)
+            else:
+                args = {}
+            if not isinstance(args, dict):
+                continue
+            cleaned = _strip_and_record_reference_tool_id_in_arguments(
+                args,
+                tool_call_id=tc_id.strip(),
+                trace_id=tid,
+            )
+            modified = True
+            fn_copy = dict(fn)
+            fn_copy["arguments"] = json.dumps(cleaned, ensure_ascii=False) if cleaned else "{}"
+            tc["function"] = fn_copy
+        if modified:
+            message_dict["tool_calls"] = tool_calls
+
+    if message_dict.get("role") != "assistant":
+        return
+    content = message_dict.get("content")
+    if not isinstance(content, list):
+        return
+    new_content: list[Any] = []
+    content_modified = False
+    for block in content:
+        if not isinstance(block, dict):
+            new_content.append(block)
             continue
-        tc_id = tc.get("id") or tc.get("tool_call_id")
+        if str(block.get("type") or "").strip() != "tool_use":
+            new_content.append(block)
+            continue
+        tc_id = block.get("id")
         if not isinstance(tc_id, str) or not tc_id.strip():
+            new_content.append(block)
             continue
-        fn = tc.get("function")
-        if not isinstance(fn, dict):
+        tool_input = block.get("input")
+        if not isinstance(tool_input, dict):
+            new_content.append(block)
             continue
-        raw_args = fn.get("arguments")
-        if isinstance(raw_args, str):
-            args = _safe_json_loads(raw_args)
-        elif isinstance(raw_args, dict):
-            args = dict(raw_args)
-        else:
-            args = {}
-        if not isinstance(args, dict):
-            continue
-        cleaned = _strip_and_record_reference_tool_id_in_arguments(
-            args,
+        cleaned_input = _strip_and_record_reference_tool_id_in_arguments(
+            dict(tool_input),
             tool_call_id=tc_id.strip(),
             trace_id=tid,
         )
-        modified = True
-        fn_copy = dict(fn)
-        fn_copy["arguments"] = json.dumps(cleaned, ensure_ascii=False) if cleaned else "{}"
-        tc["function"] = fn_copy
-    if modified:
-        message_dict["tool_calls"] = tool_calls
+        block_copy = dict(block)
+        block_copy["input"] = cleaned_input
+        new_content.append(block_copy)
+        content_modified = True
+    if content_modified:
+        message_dict["content"] = new_content
 
 
 def _strip_and_record_reference_tool_id_in_arguments(
@@ -6298,9 +6425,7 @@ def _strip_and_record_reference_tool_id_in_arguments(
         return arguments
     if not isinstance(trace_id, str) or not trace_id.strip():
         return arguments
-    ref_list = arguments.get("reference_tool_id")
-    if not isinstance(ref_list, list):
-        ref_list = []
+    ref_list = _normalize_reference_tool_id_list(arguments.get("reference_tool_id"))
     with _stripped_categories_lock:
         by_trace = _stripped_reference_tool_ids_by_trace.setdefault(trace_id.strip(), {})
         by_trace[tool_call_id.strip()] = [str(x) for x in ref_list if x is not None]
@@ -6498,33 +6623,62 @@ def _wrap_reference_tool_ids_into_messages(
         if not isinstance(msg, dict) or msg.get("role") != "assistant":
             continue
         tool_calls = msg.get("tool_calls")
-        if not isinstance(tool_calls, list):
+        if isinstance(tool_calls, list):
+            for tc in tool_calls:
+                if not isinstance(tc, dict):
+                    continue
+                tc_id = tc.get("id") or tc.get("tool_call_id")
+                if not isinstance(tc_id, str) or not tc_id.strip():
+                    continue
+                ref_list = by_trace.get(tc_id.strip())
+                if ref_list is None:
+                    continue
+                fn = tc.get("function")
+                if not isinstance(fn, dict):
+                    continue
+                raw_args = fn.get("arguments")
+                if isinstance(raw_args, str):
+                    args = _safe_json_loads(raw_args) or {}
+                elif isinstance(raw_args, dict):
+                    args = dict(raw_args)
+                else:
+                    args = {}
+                if not isinstance(args, dict):
+                    continue
+                args["reference_tool_id"] = ref_list
+                fn_copy = dict(fn)
+                fn_copy["arguments"] = json.dumps(args, ensure_ascii=False)
+                tc["function"] = fn_copy
+                modified = True
+        content = msg.get("content")
+        if not isinstance(content, list):
             continue
-        for tc in tool_calls:
-            if not isinstance(tc, dict):
+        new_content: list[Any] = []
+        content_modified = False
+        for block in content:
+            if not isinstance(block, dict):
+                new_content.append(block)
                 continue
-            tc_id = tc.get("id") or tc.get("tool_call_id")
+            if str(block.get("type") or "").strip() != "tool_use":
+                new_content.append(block)
+                continue
+            tc_id = block.get("id")
             if not isinstance(tc_id, str) or not tc_id.strip():
+                new_content.append(block)
                 continue
             ref_list = by_trace.get(tc_id.strip())
             if ref_list is None:
+                new_content.append(block)
                 continue
-            fn = tc.get("function")
-            if not isinstance(fn, dict):
-                continue
-            raw_args = fn.get("arguments")
-            if isinstance(raw_args, str):
-                args = _safe_json_loads(raw_args) or {}
-            elif isinstance(raw_args, dict):
-                args = dict(raw_args)
-            else:
-                args = {}
-            if not isinstance(args, dict):
-                continue
-            args["reference_tool_id"] = ref_list
-            fn_copy = dict(fn)
-            fn_copy["arguments"] = json.dumps(args, ensure_ascii=False)
-            tc["function"] = fn_copy
+            tool_input = block.get("input")
+            input_args = dict(tool_input) if isinstance(tool_input, dict) else {}
+            input_args["reference_tool_id"] = ref_list
+            block_copy = dict(block)
+            block_copy["input"] = input_args
+            new_content.append(block_copy)
+            content_modified = True
+        if content_modified:
+            msg["content"] = new_content
             modified = True
     return {**data, "messages": messages} if modified else data
 
