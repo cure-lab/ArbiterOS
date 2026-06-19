@@ -54,6 +54,8 @@ arbiteros_local_policy_confirm: true
 # Test mode (default false): only applies when arbiteros_local_policy_confirm is true.
 # When true, every block is auto-kept (same as pressing Y) without waiting at the terminal.
 arbiteros_local_policy_confirm_test_mode: false
+# When true, append each final pre-call payload to log/precall.jsonl.
+precall_log_enabled: true
 
 litellm_settings:
   # Following settings for anthropics models
