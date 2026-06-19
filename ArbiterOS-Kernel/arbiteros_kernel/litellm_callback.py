@@ -587,6 +587,16 @@ def _read_tool_agent_from_litellm_config() -> Optional[str]:
     return normalized or None
 
 
+def _precall_log_enabled_from_litellm_config() -> bool:
+    cfg = _read_litellm_config_yaml()
+    if not isinstance(cfg, dict):
+        return True
+    value = cfg.get("precall_log_enabled")
+    if isinstance(value, bool):
+        return value
+    return True
+
+
 def _normalize_model_name_for_compat(raw_model: Any) -> str:
     if not isinstance(raw_model, str):
         return ""
@@ -2344,6 +2354,8 @@ def _inject_reference_tool_id_into_tools(data: dict) -> None:
 
 def _save_precall_to_log(data: dict) -> None:
     """将 pre_call 最终发给 LLM 的 payload 追加到 log/precall.jsonl"""
+    if not _precall_log_enabled_from_litellm_config():
+        return
     try:
         entry = {
             "ts": datetime.now().isoformat(),
