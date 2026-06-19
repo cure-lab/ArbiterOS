@@ -116,6 +116,8 @@ _stripped_categories_by_trace: dict[str, list[str]] = {}
 _stripped_topics_by_trace: dict[str, list[Optional[str]]] = {}
 _stripped_reference_tool_ids_by_trace: dict[str, dict[str, list[str]]] = {}
 _stripped_categories_lock = threading.Lock()
+_pending_instruction_token_usage_by_trace: dict[str, dict[str, Any]] = {}
+_pending_instruction_token_usage_lock = threading.Lock()
 _MAX_STRIPPED_CATEGORIES = 1000
 
 # instruction_parsing: per-trace InstructionBuilder cache
@@ -1872,9 +1874,9 @@ def _record_trace_token_usage(
     *,
     model: Optional[str] = None,
     source: str = "post_call_success",
-) -> None:
+) -> Optional[dict[str, Any]]:
     if not isinstance(trace_id, str) or not trace_id.strip():
-        return
+        return None
     usage_dict = _extract_usage_dict_from_response_obj(response_obj)
     delta = (
         _extract_total_tokens_from_usage_dict(usage_dict)
@@ -1882,7 +1884,7 @@ def _record_trace_token_usage(
         else 0
     )
     if delta <= 0:
-        return
+        return None
 
     tid = trace_id.strip()
     round_record: Optional[dict[str, Any]] = None
@@ -1918,6 +1920,7 @@ def _record_trace_token_usage(
             state.trace_total_cost_usd = round(
                 max(0.0, float(state.trace_total_cost_usd)) + round_cost, 10
             )
+            llm_call_seq = len(state.token_usage_rounds) + 1
             round_record = {
                 "recorded_at": datetime.now().isoformat(),
                 "turn_index": int(state.turn_index),
@@ -1931,21 +1934,95 @@ def _record_trace_token_usage(
                 "uncached_input_tokens": cache_counts["uncached_input_tokens"],
                 "round_cost_usd": round_cost,
                 "trace_total_cost_usd_after": state.trace_total_cost_usd,
+                "llm_call_seq": llm_call_seq,
             }
             state.token_usage_rounds.append(round_record)
             state.backup_updated_at = datetime.now().isoformat()
             break
 
     if round_record is None:
-        return
+        return None
     _persist_trace_state_to_disk()
     _save_json(
         "token_usage_round",
         {"trace_id": tid, **round_record},
     )
+    token_usage = _instruction_token_usage_from_round_record(round_record)
+    _set_pending_instruction_token_usage(tid, token_usage)
+    return round_record
 
 
-def _accumulate_trace_total_tokens(trace_id: Optional[str], response_obj: Any) -> None:
+def _instruction_token_usage_from_round_record(
+    round_record: dict[str, Any],
+) -> dict[str, Any]:
+    usage = round_record.get("usage")
+    if not isinstance(usage, dict):
+        usage = {}
+    prompt_tokens = usage.get("prompt_tokens")
+    if prompt_tokens is None:
+        prompt_tokens = usage.get("input_tokens")
+    completion_tokens = usage.get("completion_tokens")
+    if completion_tokens is None:
+        completion_tokens = usage.get("output_tokens")
+    return {
+        "llm_call_seq": round_record.get("llm_call_seq"),
+        "model": round_record.get("model"),
+        "turn_index": round_record.get("turn_index"),
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": round_record.get("round_total_tokens"),
+        "cache_hit_tokens": round_record.get("cache_hit_tokens"),
+        "cache_miss_tokens": round_record.get("cache_miss_tokens"),
+        "uncached_input_tokens": round_record.get("uncached_input_tokens"),
+        "cost_usd": round_record.get("round_cost_usd"),
+        "recorded_at": round_record.get("recorded_at"),
+    }
+
+
+def _set_pending_instruction_token_usage(
+    trace_id: str, token_usage: dict[str, Any]
+) -> None:
+    tid = trace_id.strip()
+    if not tid:
+        return
+    with _pending_instruction_token_usage_lock:
+        _pending_instruction_token_usage_by_trace[tid] = dict(token_usage)
+
+
+def _clear_pending_instruction_token_usage(trace_id: Optional[str]) -> None:
+    if not isinstance(trace_id, str) or not trace_id.strip():
+        return
+    tid = trace_id.strip()
+    with _pending_instruction_token_usage_lock:
+        _pending_instruction_token_usage_by_trace.pop(tid, None)
+
+
+def _attach_pending_token_usage_to_instructions(
+    builder: Any,
+    trace_id: str,
+    start_index: int,
+) -> None:
+    if builder is None or start_index < 0:
+        return
+    tid = trace_id.strip() if isinstance(trace_id, str) else ""
+    if not tid:
+        return
+    with _pending_instruction_token_usage_lock:
+        token_usage = _pending_instruction_token_usage_by_trace.get(tid)
+    if not isinstance(token_usage, dict):
+        return
+    instructions = getattr(builder, "instructions", None)
+    if not isinstance(instructions, list) or start_index >= len(instructions):
+        return
+    usage_copy = dict(token_usage)
+    for instr in instructions[start_index:]:
+        if isinstance(instr, dict):
+            instr["token_usage"] = dict(usage_copy)
+
+
+def _accumulate_trace_total_tokens(
+    trace_id: Optional[str], response_obj: Any
+) -> Optional[dict[str, Any]]:
     model_name: Optional[str] = None
     payload = _to_json(response_obj)
     if isinstance(payload, dict):
@@ -1956,7 +2033,7 @@ def _accumulate_trace_total_tokens(trace_id: Optional[str], response_obj: Any) -
         raw_model = getattr(response_obj, "model", None)
         if isinstance(raw_model, str) and raw_model.strip():
             model_name = raw_model.strip()
-    _record_trace_token_usage(
+    return _record_trace_token_usage(
         trace_id,
         response_obj,
         model=model_name,
@@ -4052,7 +4129,9 @@ def _commit_response_instructions_after_policy(
             instr["policy_protected"] = policy_protected.strip()
         if user_approved:
             instr["user_approved"] = True
-    _save_instructions_to_trace_file(trace_id, builder)
+    _save_instructions_to_trace_file(
+        trace_id, builder, token_usage_start_index=count_before
+    )
 
 
 def _replace_instructions_from_modified_response(
@@ -5581,10 +5660,19 @@ def _get_instruction_builder_for_trace(trace_id: str) -> Optional[Any]:
         return builder
 
 
-def _save_instructions_to_trace_file(trace_id: str, builder: Any) -> None:
+def _save_instructions_to_trace_file(
+    trace_id: str,
+    builder: Any,
+    *,
+    token_usage_start_index: Optional[int] = None,
+) -> None:
     """Persist InstructionBuilder to log/instruction/{trace_id}.json"""
     if not trace_id or not builder:
         return
+    if token_usage_start_index is not None:
+        _attach_pending_token_usage_to_instructions(
+            builder, trace_id, token_usage_start_index
+        )
     try:
         path = _instruction_trace_file_path(trace_id)
         with open(path, "w", encoding="utf-8") as f:
@@ -6110,12 +6198,15 @@ def _add_instruction_for_non_strict(data: dict, content: str) -> None:
     builder = _get_instruction_builder_for_trace(trace_id)
     if builder is None:
         return
+    count_before = len(getattr(builder, "instructions", []) or [])
     _add_non_strict_content_instructions(
         builder=builder,
         content=content,
         trace_id=trace_id,
     )
-    _save_instructions_to_trace_file(trace_id, builder)
+    _save_instructions_to_trace_file(
+        trace_id, builder, token_usage_start_index=count_before
+    )
 
 
 def _is_codex_tool_agent() -> bool:
@@ -6508,13 +6599,18 @@ def _response_transform_content_only(data: dict, message_dict: dict) -> Optional
                 if builder is not None:
                     instruction_type = _normalize_category_to_instruction_type(category)
                     try:
+                        count_before = len(getattr(builder, "instructions", []) or [])
                         builder.add_from_structured_output(
                             structured={
                                 "intent": instruction_type,
                                 "content": inner_content,
                             }
                         )
-                        _save_instructions_to_trace_file(trace_id, builder)
+                        _save_instructions_to_trace_file(
+                            trace_id,
+                            builder,
+                            token_usage_start_index=count_before,
+                        )
                     except Exception:
                         pass  # Best-effort; don't fail the main flow
 
@@ -7552,7 +7648,11 @@ class MyCustomHandler(CustomLogger):
                             instr["policy_protected"] = (
                                 policy_violation_reason_for_langfuse or ""
                             )
-                        _save_instructions_to_trace_file(trace_id, builder)
+                        _save_instructions_to_trace_file(
+                            trace_id,
+                            builder,
+                            token_usage_start_index=count_before,
+                        )
             elif (
                 apply_info.get("policy_confirmation_rejected")
                 and not skip_instruction_governance
@@ -7568,7 +7668,11 @@ class MyCustomHandler(CustomLogger):
                     instrs = getattr(builder, "instructions", []) or []
                     for instr in instrs[count_before:]:
                         instr["user_approved"] = True
-                    _save_instructions_to_trace_file(trace_id, builder)
+                    _save_instructions_to_trace_file(
+                        trace_id,
+                        builder,
+                        token_usage_start_index=count_before,
+                    )
             client_msg = (
                 apply_info.get("raw_response")
                 if apply_info.get("policy_confirmation_rejected")
@@ -7801,7 +7905,11 @@ class MyCustomHandler(CustomLogger):
                                 instr["policy_confirmation_ask"] = True
                             except Exception:
                                 pass
-                            _save_instructions_to_trace_file(trace_id, builder)
+                            _save_instructions_to_trace_file(
+                                trace_id,
+                                builder,
+                                token_usage_start_index=_policy_instruction_count_before,
+                            )
                         response = _apply_canonical_message_to_response(
                             response,
                             final_msg_dict,
@@ -7870,6 +7978,7 @@ class MyCustomHandler(CustomLogger):
             _trace_id,
             metadata=(data.get("metadata") if isinstance(data, dict) else None),
         )
+        _clear_pending_instruction_token_usage(_trace_id)
         return response
 
     async def async_post_call_streaming_hook(
