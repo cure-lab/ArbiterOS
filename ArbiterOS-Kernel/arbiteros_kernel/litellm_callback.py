@@ -89,9 +89,19 @@ _LANGFUSE_NODE_LOG_FILE = (
 )
 _LANGFUSE_NODE_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
 _TRACE_STATE_FILE = Path(__file__).resolve().parent.parent / "log" / "trace_state.json"
-_PRECALL_LOG_FILE = Path(__file__).resolve().parent.parent / "log" / "precall.jsonl"
-_INSTRUCTION_LOG_DIR = Path(__file__).resolve().parent.parent / "log"
+_LOG_ROOT = Path(__file__).resolve().parent.parent / "log"
+_INSTRUCTION_LOG_DIR = _LOG_ROOT / "instruction"
+_PRECALL_LOG_DIR = _LOG_ROOT / "precall"
 _INSTRUCTION_LOG_DIR.mkdir(parents=True, exist_ok=True)
+_PRECALL_LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _instruction_trace_file_path(trace_id: str) -> Path:
+    return _INSTRUCTION_LOG_DIR / f"{trace_id.strip()}.json"
+
+
+def _precall_trace_file_path(trace_id: str) -> Path:
+    return _PRECALL_LOG_DIR / f"{trace_id.strip()}.json"
 
 # Ensure `.env` is loaded when LiteLLM imports this module via `litellm_config.yaml`.
 # This makes Langfuse/MLflow callbacks work without manually exporting env vars.
@@ -1794,7 +1804,7 @@ def _snapshot_trace_backup_state(
         return
     tid = trace_id.strip()
 
-    instruction_file = str(_INSTRUCTION_LOG_DIR / f"{tid}.json")
+    instruction_file = str(_instruction_trace_file_path(tid))
     instruction_count = 0
     builder = _peek_instruction_builder_for_trace(tid)
     if builder is not None:
@@ -2352,16 +2362,19 @@ def _inject_reference_tool_id_into_tools(data: dict) -> None:
         _inject_reference_tool_id_global_hint(data, description_hint)
 
 
-def _save_precall_to_log(data: dict) -> None:
-    """将 pre_call 最终发给 LLM 的 payload 追加到 log/precall.jsonl"""
+def _save_precall_to_log(data: dict, trace_id: Optional[str]) -> None:
+    """将 pre_call 最终发给 LLM 的 payload 追加到 log/precall/{trace_id}.json"""
     if not _precall_log_enabled_from_litellm_config():
+        return
+    if not isinstance(trace_id, str) or not trace_id.strip():
         return
     try:
         entry = {
             "ts": datetime.now().isoformat(),
             "payload": _to_json(data),
         }
-        with open(_PRECALL_LOG_FILE, "a", encoding="utf-8") as f:
+        path = _precall_trace_file_path(trace_id)
+        with open(path, "a", encoding="utf-8") as f:
             json.dump(entry, f, ensure_ascii=False, default=str)
             f.write("\n")
             f.flush()
@@ -5531,7 +5544,7 @@ def _resolve_category_cache_trace_id(data: dict) -> Optional[str]:
 
 def _get_instruction_builder_for_trace(trace_id: str) -> Optional[Any]:
     """Get or create InstructionBuilder for a trace_id. Returns None if instruction_parsing unavailable.
-    On cache miss, tries to load instructions from log/{trace_id}.json so watermarks can read prop_*.
+    On cache miss, tries to load instructions from log/instruction/{trace_id}.json so watermarks can read prop_*.
     """
     if (
         InstructionBuilder is None
@@ -5544,7 +5557,7 @@ def _get_instruction_builder_for_trace(trace_id: str) -> Optional[Any]:
         if builder is None:
             builder = InstructionBuilder(trace_id=trace_id)
             # 从磁盘加载已持久化的 instructions，供 pre_call 水印读取 prop_*（避免 cache miss 时 builder 为空）
-            trace_file = _INSTRUCTION_LOG_DIR / f"{trace_id.strip()}.json"
+            trace_file = _instruction_trace_file_path(trace_id)
             if trace_file.exists():
                 try:
                     raw = json.loads(trace_file.read_text(encoding="utf-8"))
@@ -5569,11 +5582,11 @@ def _get_instruction_builder_for_trace(trace_id: str) -> Optional[Any]:
 
 
 def _save_instructions_to_trace_file(trace_id: str, builder: Any) -> None:
-    """Persist InstructionBuilder to log/{trace_id}.json"""
+    """Persist InstructionBuilder to log/instruction/{trace_id}.json"""
     if not trace_id or not builder:
         return
     try:
-        path = _INSTRUCTION_LOG_DIR / f"{trace_id}.json"
+        path = _instruction_trace_file_path(trace_id)
         with open(path, "w", encoding="utf-8") as f:
             f.write(builder.to_json())
     except Exception:
@@ -5636,7 +5649,7 @@ def _lookup_tool_instruction_metadata_for_trace(
 def _build_instruction_parser_snapshot(
     trace_id: str, builder: Optional[Any]
 ) -> dict[str, Any]:
-    trace_file = _INSTRUCTION_LOG_DIR / f"{trace_id}.json"
+    trace_file = _instruction_trace_file_path(trace_id)
     snapshot: dict[str, Any] = {
         "instruction_file": str(trace_file),
         "instruction_file_exists": trace_file.exists(),
@@ -7310,7 +7323,10 @@ class MyCustomHandler(CustomLogger):
             state.trace_id if state is not None else None,
             metadata=(metadata_for_backup if isinstance(metadata_for_backup, dict) else None),
         )
-        _save_precall_to_log(data)
+        _save_precall_to_log(
+            data,
+            state.trace_id if state is not None else None,
+        )
         return data
 
     async def async_post_call_failure_hook(
