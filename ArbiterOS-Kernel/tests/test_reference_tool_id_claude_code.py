@@ -1,4 +1,4 @@
-"""Tests for reference_tool_id on Claude Code (Anthropic input_schema + tool_use history)."""
+"""Tests for depends_on on Claude Code (Anthropic input_schema + tool_use history)."""
 
 import json
 
@@ -7,11 +7,11 @@ import pytest
 from arbiteros_kernel import litellm_callback as lc
 from arbiteros_kernel.litellm_callback import (
     _collect_prior_tool_call_ids_from_messages,
-    _inject_reference_tool_id_into_tools,
+    _inject_tool_depends_on_into_tools,
     _normalize_reference_tool_id_list,
     _resolve_tool_parameters_container,
-    _strip_and_record_reference_tool_id_in_arguments,
-    _strip_and_record_reference_tool_ids_from_message,
+    _strip_and_record_tool_depends_on_in_arguments,
+    _strip_and_record_tool_depends_on_from_message,
     _wrap_reference_tool_ids_into_request,
     _stripped_reference_tool_ids_by_trace,
     _stripped_categories_lock,
@@ -37,24 +37,24 @@ def claude_code_agent(monkeypatch):
     )
 
 
-def test_inject_reference_tool_id_claude_code_input_schema(claude_code_agent):
+def test_inject_depends_on_claude_code_input_schema(claude_code_agent):
     data = {
         "model": "claude-sonnet-4-5-20250929",
         "messages": [],
         "tools": [_claude_code_tool()],
     }
-    _inject_reference_tool_id_into_tools(data)
+    _inject_tool_depends_on_into_tools(data)
     schema = data["tools"][0]["input_schema"]
-    assert "reference_tool_id" in schema["properties"]
-    assert "reference_tool_id" in schema["required"]
+    assert "depends_on" in schema["properties"]
+    assert "depends_on" in schema["required"]
     assert "file_path" in schema["properties"]
-    desc = schema["properties"]["reference_tool_id"]["description"]
+    desc = schema["properties"]["depends_on"]["description"]
     assert "tool_use" in desc
     assert "tool_result" in desc
     assert "role='tool'" not in desc
 
 
-def test_inject_reference_tool_id_claude_code_valid_ids_from_anthropic_history(
+def test_inject_depends_on_claude_code_valid_ids_from_anthropic_history(
     claude_code_agent,
 ):
     data = {
@@ -85,8 +85,8 @@ def test_inject_reference_tool_id_claude_code_valid_ids_from_anthropic_history(
         ],
         "tools": [_claude_code_tool("Write")],
     }
-    _inject_reference_tool_id_into_tools(data)
-    desc = data["tools"][0]["input_schema"]["properties"]["reference_tool_id"][
+    _inject_tool_depends_on_into_tools(data)
+    desc = data["tools"][0]["input_schema"]["properties"]["depends_on"][
         "description"
     ]
     assert "tooluse_read_1 (Read)" in desc
@@ -120,7 +120,7 @@ def test_collect_prior_tool_ids_from_anthropic_messages():
     assert collected == [("tooluse_read_1", "Read")]
 
 
-def test_wrap_reference_tool_ids_into_anthropic_tool_use_history():
+def test_wrap_depends_ons_into_anthropic_tool_use_history():
     trace_id = "trace-wrap-claude-code-test"
     with _stripped_categories_lock:
         _stripped_reference_tool_ids_by_trace[trace_id] = {
@@ -160,14 +160,14 @@ def test_wrap_reference_tool_ids_into_anthropic_tool_use_history():
         wrapped = _wrap_reference_tool_ids_into_request(data, trace_id=trace_id)
         read_input = wrapped["messages"][0]["content"][0]["input"]
         write_input = wrapped["messages"][1]["content"][0]["input"]
-        assert read_input["reference_tool_id"] == []
-        assert write_input["reference_tool_id"] == ["tooluse_read_1"]
+        assert read_input["depends_on"] == []
+        assert write_input["depends_on"] == ["tooluse_read_1"]
     finally:
         with _stripped_categories_lock:
             _stripped_reference_tool_ids_by_trace.pop(trace_id, None)
 
 
-def test_strip_and_record_reference_tool_ids_from_anthropic_message():
+def test_strip_and_record_depends_ons_from_anthropic_message():
     trace_id = "trace-strip-claude-code-test"
     with _stripped_categories_lock:
         _stripped_reference_tool_ids_by_trace.pop(trace_id, None)
@@ -181,15 +181,15 @@ def test_strip_and_record_reference_tool_ids_from_anthropic_message():
                 "input": {
                     "file_path": "/tmp/b.txt",
                     "content": "hello",
-                    "reference_tool_id": ["tooluse_read_1"],
+                    "depends_on": ["tooluse_read_1"],
                 },
             }
         ],
     }
     request_data = {"metadata": {"arbiteros_trace_id": trace_id}}
-    _strip_and_record_reference_tool_ids_from_message(message, request_data)
+    _strip_and_record_tool_depends_on_from_message(message, request_data)
     stripped_input = message["content"][0]["input"]
-    assert "reference_tool_id" not in stripped_input
+    assert "depends_on" not in stripped_input
     with _stripped_categories_lock:
         assert _stripped_reference_tool_ids_by_trace[trace_id]["tooluse_write_1"] == [
             "tooluse_read_1"
@@ -197,7 +197,7 @@ def test_strip_and_record_reference_tool_ids_from_anthropic_message():
         _stripped_reference_tool_ids_by_trace.pop(trace_id, None)
 
 
-def test_normalize_reference_tool_id_list_parses_json_string():
+def test_normalize_depends_on_list_parses_json_string():
     assert _normalize_reference_tool_id_list('["tooluse_read_1"]') == [
         "tooluse_read_1"
     ]
@@ -208,19 +208,19 @@ def test_normalize_reference_tool_id_list_parses_json_string():
     assert _normalize_reference_tool_id_list("") == []
 
 
-def test_strip_malformed_string_reference_tool_id(claude_code_agent):
+def test_strip_malformed_string_depends_on(claude_code_agent):
     trace_id = "trace-malformed-ref-test"
     with _stripped_categories_lock:
         _stripped_reference_tool_ids_by_trace.pop(trace_id, None)
-    cleaned = _strip_and_record_reference_tool_id_in_arguments(
+    cleaned = _strip_and_record_tool_depends_on_in_arguments(
         {
             "file_path": "/tmp/b.txt",
-            "reference_tool_id": '["tooluse_read_1"]',
+            "depends_on": '["tooluse_read_1"]',
         },
         tool_call_id="tooluse_write_1",
         trace_id=trace_id,
     )
-    assert "reference_tool_id" not in cleaned
+    assert "depends_on" not in cleaned
     with _stripped_categories_lock:
         assert _stripped_reference_tool_ids_by_trace[trace_id]["tooluse_write_1"] == [
             "tooluse_read_1"
