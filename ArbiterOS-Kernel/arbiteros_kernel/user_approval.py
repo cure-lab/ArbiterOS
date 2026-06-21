@@ -23,20 +23,50 @@ def _get_tool_call_id(instr: Dict[str, Any]) -> Optional[str]:
     return tc_id.strip() if isinstance(tc_id, str) and tc_id.strip() else None
 
 
-def _get_reference_tool_ids(instr: Dict[str, Any]) -> List[str]:
-    """Extract reference_tool_id list from instruction content."""
+def _get_dependency_tool_call_ids(
+    instr: Dict[str, Any], all_instructions: List[Dict[str, Any]]
+) -> List[str]:
+    """Extract tool_call_id targets from instruction depends_on metadata or legacy args."""
     content = instr.get("content")
     if not isinstance(content, dict):
         return []
     args = content.get("arguments") or {}
-    ref_ids = args.get("reference_tool_id")
-    if not isinstance(ref_ids, list):
+    legacy = args.get("depends_on") or args.get("reference_tool_id")
+    if isinstance(legacy, list):
+        legacy_ids = [
+            str(r).strip()
+            for r in legacy
+            if isinstance(r, str) and r.strip()
+        ]
+        if legacy_ids:
+            return legacy_ids
+
+    deps = instr.get("depends_on")
+    if not isinstance(deps, list):
         return []
-    result = []
-    for r in ref_ids:
-        if isinstance(r, str) and r.strip():
-            result.append(r.strip())
+    dep_instr_ids = {
+        dep.get("instruction_id").strip()
+        for dep in deps
+        if isinstance(dep, dict)
+        and isinstance(dep.get("instruction_id"), str)
+        and dep.get("instruction_id").strip()
+    }
+    if not dep_instr_ids:
+        return []
+    result: List[str] = []
+    for other in all_instructions:
+        oid = other.get("id")
+        if not isinstance(oid, str) or oid.strip() not in dep_instr_ids:
+            continue
+        o_tc = _get_tool_call_id(other)
+        if o_tc:
+            result.append(o_tc)
     return result
+
+
+def _get_reference_tool_ids(instr: Dict[str, Any]) -> List[str]:
+    """Extract dependency tool_call_id list from instruction (legacy name)."""
+    return _get_dependency_tool_call_ids(instr, [])
 
 
 def _get_last_n_valid_instructions(
@@ -106,9 +136,9 @@ def apply_user_approval_preprocessing(
     # Find user_approved instructions in those 5
     approved = [instr for instr in last_5_valid if instr.get("user_approved")]
 
-    # Elevate: for each approved, set self + reference_tool_id targets to HIGH/LOW
+    # Elevate: for each approved, set self + dependency targets to HIGH/LOW
     for instr in approved:
-        ref_ids = _get_reference_tool_ids(instr)
+        ref_ids = _get_dependency_tool_call_ids(instr, instructions_copy)
         tc_id = _get_tool_call_id(instr)
         ids_to_elevate = set(ref_ids)
         if tc_id:
@@ -121,9 +151,11 @@ def apply_user_approval_preprocessing(
                     st["prop_trustworthiness"] = "HIGH"
                     st["prop_confidentiality"] = "LOW"
 
-    # Recompute prop for current instructions that have reference_tool_id
+    # Recompute prop for current instructions that have dependencies
     for instr in latest_for_policy:
-        if _get_reference_tool_ids(instr):
+        if _get_dependency_tool_call_ids(instr, instructions_copy) or instr.get(
+            "depends_on"
+        ):
             taint = compute_prop_taint_for_instruction(instructions_copy, instr)
             st = instr.get("security_type")
             if isinstance(st, dict):
