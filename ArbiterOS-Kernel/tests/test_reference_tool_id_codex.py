@@ -1,4 +1,4 @@
-"""Tests for reference_tool_id injection/wrap on Codex (Responses API) and OpenClaw paths."""
+"""Tests for depends_on injection/wrap on Codex (Responses API) and OpenClaw paths."""
 
 import json
 
@@ -8,9 +8,9 @@ import arbiteros_kernel.litellm_callback as lc
 from arbiteros_kernel.litellm_callback import (
     _collect_prior_tool_call_ids_from_request,
     _collect_prior_tool_call_ids_from_responses_input,
-    _inject_reference_tool_id_into_tools,
+    _inject_tool_depends_on_into_tools,
     _resolve_tool_parameters_container,
-    _strip_and_record_reference_tool_ids_from_message,
+    _strip_and_record_tool_depends_on_from_message,
     _wrap_reference_tool_ids_into_request,
     _stripped_reference_tool_ids_by_trace,
     _stripped_categories_lock,
@@ -46,7 +46,7 @@ def _openclaw_tool(name: str = "read") -> dict:
     }
 
 
-def test_inject_reference_tool_id_codex_description_uses_responses_wording():
+def test_inject_depends_on_codex_description_uses_responses_wording():
     data = {
         "model": "gpt-5.5",
         "input": [
@@ -59,15 +59,15 @@ def test_inject_reference_tool_id_codex_description_uses_responses_wording():
         ],
         "tools": [_codex_tool()],
     }
-    _inject_reference_tool_id_into_tools(data)
-    desc = data["tools"][0]["parameters"]["properties"]["reference_tool_id"]["description"]
+    _inject_tool_depends_on_into_tools(data)
+    desc = data["tools"][0]["parameters"]["properties"]["depends_on"]["description"]
     assert "function_call_output" in desc
     assert "call_id" in desc
     assert "role='tool'" not in desc
     assert "call_abc (exec_command)" in desc
 
 
-def test_inject_reference_tool_id_openclaw_description_uses_chat_wording(monkeypatch):
+def test_inject_depends_on_openclaw_description_uses_chat_wording(monkeypatch):
     monkeypatch.setattr(
         lc, "_read_tool_agent_from_litellm_config", lambda: "openclaw"
     )
@@ -76,26 +76,26 @@ def test_inject_reference_tool_id_openclaw_description_uses_chat_wording(monkeyp
         "messages": [{"role": "tool", "tool_call_id": "call_chat", "content": "ok"}],
         "tools": [_openclaw_tool()],
     }
-    _inject_reference_tool_id_into_tools(data)
-    desc = data["tools"][0]["function"]["parameters"]["properties"]["reference_tool_id"]["description"]
+    _inject_tool_depends_on_into_tools(data)
+    desc = data["tools"][0]["function"]["parameters"]["properties"]["depends_on"]["description"]
     assert "role='tool'" in desc
     assert "tool_call_id" in desc
     assert "function_call_output" not in desc
 
 
-def test_inject_reference_tool_id_codex_flat_tool_schema():
+def test_inject_depends_on_codex_flat_tool_schema():
     data = {
         "model": "gpt-5.5",
         "input": [],
         "tools": [_codex_tool()],
     }
-    _inject_reference_tool_id_into_tools(data)
+    _inject_tool_depends_on_into_tools(data)
     params = data["tools"][0]["parameters"]
-    assert "reference_tool_id" in params["properties"]
-    assert "reference_tool_id" in params["required"]
+    assert "depends_on" in params["properties"]
+    assert "depends_on" in params["required"]
 
 
-def test_inject_reference_tool_id_openclaw_nested_tool_schema_unchanged(monkeypatch):
+def test_inject_depends_on_openclaw_nested_tool_schema_unchanged(monkeypatch):
     monkeypatch.setattr(
         lc, "_read_tool_agent_from_litellm_config", lambda: "openclaw"
     )
@@ -104,10 +104,10 @@ def test_inject_reference_tool_id_openclaw_nested_tool_schema_unchanged(monkeypa
         "messages": [],
         "tools": [_openclaw_tool()],
     }
-    _inject_reference_tool_id_into_tools(data)
+    _inject_tool_depends_on_into_tools(data)
     params = data["tools"][0]["function"]["parameters"]
-    assert "reference_tool_id" in params["properties"]
-    assert "reference_tool_id" in params["required"]
+    assert "depends_on" in params["properties"]
+    assert "depends_on" in params["required"]
     assert "path" in params["properties"]
 
 
@@ -158,7 +158,7 @@ def test_collect_prior_tool_ids_merges_messages_and_input():
     assert ("call_resp", "exec_command") in collected
 
 
-def test_wrap_reference_tool_ids_into_responses_input():
+def test_wrap_depends_ons_into_responses_input():
     trace_id = "trace-wrap-codex-test"
     with _stripped_categories_lock:
         _stripped_reference_tool_ids_by_trace[trace_id] = {
@@ -177,14 +177,14 @@ def test_wrap_reference_tool_ids_into_responses_input():
         }
         wrapped = _wrap_reference_tool_ids_into_request(data, trace_id=trace_id)
         args = json.loads(wrapped["input"][0]["arguments"])
-        assert args["reference_tool_id"] == ["call_prev"]
+        assert args["depends_on"] == ["call_prev"]
         assert args["cmd"] == "ls"
     finally:
         with _stripped_categories_lock:
             _stripped_reference_tool_ids_by_trace.pop(trace_id, None)
 
 
-def test_strip_and_record_reference_tool_ids_from_message():
+def test_strip_and_record_depends_ons_from_message():
     trace_id = "trace-strip-codex-test"
     with _stripped_categories_lock:
         _stripped_reference_tool_ids_by_trace.pop(trace_id, None)
@@ -199,7 +199,7 @@ def test_strip_and_record_reference_tool_ids_from_message():
                     "arguments": json.dumps(
                         {
                             "cmd": "ls",
-                            "reference_tool_id": ["call_prev"],
+                            "depends_on": ["call_prev"],
                         }
                     ),
                 },
@@ -207,9 +207,9 @@ def test_strip_and_record_reference_tool_ids_from_message():
         ],
     }
     request_data = {"metadata": {"arbiteros_trace_id": trace_id}}
-    _strip_and_record_reference_tool_ids_from_message(message, request_data)
+    _strip_and_record_tool_depends_on_from_message(message, request_data)
     stripped_args = json.loads(message["tool_calls"][0]["function"]["arguments"])
-    assert "reference_tool_id" not in stripped_args
+    assert "depends_on" not in stripped_args
     assert stripped_args["cmd"] == "ls"
     with _stripped_categories_lock:
         assert _stripped_reference_tool_ids_by_trace[trace_id]["call_xyz"] == [
@@ -218,17 +218,17 @@ def test_strip_and_record_reference_tool_ids_from_message():
         _stripped_reference_tool_ids_by_trace.pop(trace_id, None)
 
 
-def _tool_schema_has_reference_tool_id(tool: dict) -> bool:
+def _tool_schema_has_depends_on(tool: dict) -> bool:
     params = _resolve_tool_parameters_container(tool)
     if not isinstance(params, dict):
         return False
     props = params.get("properties")
     if not isinstance(props, dict):
         return False
-    return "reference_tool_id" in props
+    return "depends_on" in props
 
 
-def test_inject_reference_tool_id_codex_non_function_tools():
+def test_inject_depends_on_codex_non_function_tools():
     data = {
         "model": "gpt-5.5",
         "input": [],
@@ -261,16 +261,16 @@ def test_inject_reference_tool_id_codex_non_function_tools():
             },
         ],
     }
-    _inject_reference_tool_id_into_tools(data)
+    _inject_tool_depends_on_into_tools(data)
     tools = data["tools"]
 
     tool_search_params = tools[0]["parameters"]
-    assert "reference_tool_id" in tool_search_params["properties"]
-    assert "reference_tool_id" in tool_search_params["required"]
+    assert "depends_on" in tool_search_params["properties"]
+    assert "depends_on" in tool_search_params["required"]
     assert "query" in tool_search_params["properties"]
 
     assert "parameters" not in tools[1]
-    assert "[arbiteros_reference_tool_id]" in tools[1]["description"]
+    assert "[arbiteros_depends_on]" in tools[1]["description"]
     assert "function_call_output" in tools[1]["description"]
     assert tools[1].get("format") is not None
 
@@ -280,11 +280,11 @@ def test_inject_reference_tool_id_codex_non_function_tools():
     assert "parameters" not in tools[3]
     assert "description" not in tools[3]
 
-    assert "[arbiteros_reference_tool_id]" in data["instructions"]
+    assert "[arbiteros_depends_on]" in data["instructions"]
     assert "function_call_output" in data["instructions"]
 
 
-def test_inject_reference_tool_id_all_codex_tools_from_precall_fixture():
+def test_inject_depends_on_all_codex_tools_from_precall_fixture():
     fixture = {
         "type": "function",
         "name": "exec_command",
@@ -311,14 +311,14 @@ def test_inject_reference_tool_id_all_codex_tools_from_precall_fixture():
     web = {"type": "web_search", "search_content_types": ["text"]}
     image = {"type": "image_generation", "output_format": "png"}
     data = {"input": [], "tools": [fixture, custom, tool_search, web, image]}
-    _inject_reference_tool_id_into_tools(data)
+    _inject_tool_depends_on_into_tools(data)
 
-    assert _tool_schema_has_reference_tool_id(data["tools"][0])
-    assert _tool_schema_has_reference_tool_id(data["tools"][2])
+    assert _tool_schema_has_depends_on(data["tools"][0])
+    assert _tool_schema_has_depends_on(data["tools"][2])
     assert "parameters" not in data["tools"][1]
     assert "parameters" not in data["tools"][3]
     assert "parameters" not in data["tools"][4]
-    assert "[arbiteros_reference_tool_id]" in data["tools"][1]["description"]
+    assert "[arbiteros_depends_on]" in data["tools"][1]["description"]
     assert "description" not in data["tools"][3]
     assert "description" not in data["tools"][4]
-    assert "[arbiteros_reference_tool_id]" in data["instructions"]
+    assert "[arbiteros_depends_on]" in data["instructions"]
