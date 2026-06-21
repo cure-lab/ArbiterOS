@@ -152,9 +152,10 @@ def compute_prop_taint_for_instruction(
 ) -> TaintStatus:
     """Compute prop_confidentiality and prop_trustworthiness for a single instruction.
 
-    - Pure text (no tool_name): use own confidentiality and trustworthiness.
-    - Tool call: aggregate own conf/trust + all instructions whose tool_call_id
-      equals this one or any reference_tool_id. trust=min, conf=max.
+    - Pure text (no tool_name): use own confidentiality and trustworthiness, unless
+      ``depends_on`` references other instructions (aggregate their prop_*).
+    - Tool call: aggregate own conf/trust + dependencies from ``depends_on`` (by
+      instruction_id) or legacy ``reference_tool_id`` tool_call_id refs.
     """
     st = instr.get("security_type")
     if not isinstance(st, dict):
@@ -164,20 +165,70 @@ def compute_prop_taint_for_instruction(
         s = v if isinstance(v, str) else "UNKNOWN"
         return (s or "UNKNOWN").strip() or "UNKNOWN"
 
+    def _depends_on_instruction_ids() -> set[str]:
+        deps = instr.get("depends_on")
+        if not isinstance(deps, list):
+            return set()
+        ids: set[str] = set()
+        for dep in deps:
+            if isinstance(dep, dict):
+                iid = dep.get("instruction_id")
+                if isinstance(iid, str) and iid.strip():
+                    ids.add(iid.strip())
+        return ids
+
+    def _aggregate_from_instruction_ids(dep_ids: set[str]) -> TaintStatus:
+        trust_vals: List[str] = [own_trust]
+        conf_vals: List[str] = [own_conf]
+        for other in instructions or []:
+            if other is instr:
+                continue
+            oid = other.get("id")
+            if not isinstance(oid, str) or oid.strip() not in dep_ids:
+                continue
+            ost = other.get("security_type")
+            if not isinstance(ost, dict):
+                continue
+            prop_conf = ost.get("prop_confidentiality") or ost.get("confidentiality")
+            prop_trust = ost.get("prop_trustworthiness") or ost.get("trustworthiness")
+            if isinstance(prop_conf, str) and prop_conf.strip() in LEVEL_ORDER:
+                conf_vals.append(prop_conf.strip())
+            if isinstance(prop_trust, str) and prop_trust.strip() in LEVEL_ORDER:
+                trust_vals.append(prop_trust.strip())
+        raw_trust: SecurityLevel = cast(
+            SecurityLevel,
+            min(trust_vals, key=lambda v: LEVEL_ORDER[v]) if trust_vals else "UNKNOWN",
+        )
+        raw_conf: SecurityLevel = cast(
+            SecurityLevel,
+            max(conf_vals, key=lambda v: LEVEL_ORDER[v]) if conf_vals else "UNKNOWN",
+        )
+        return TaintStatus(trustworthiness=raw_trust, confidentiality=raw_conf)
+
     own_conf = _safe_level(st.get("confidentiality"))
     own_trust = _safe_level(st.get("trustworthiness"))
+    dep_ids = _depends_on_instruction_ids()
 
     content = instr.get("content")
     if not isinstance(content, dict) or "tool_name" not in content:
-        # Pure text: use own values
+        if dep_ids:
+            return _aggregate_from_instruction_ids(dep_ids)
         return TaintStatus(
             trustworthiness=own_trust if own_trust in LEVEL_ORDER else "UNKNOWN",
             confidentiality=own_conf if own_conf in LEVEL_ORDER else "UNKNOWN",
         )
 
-    # Tool call: collect tool_call_ids to include (self + reference_tool_id)
+    if dep_ids:
+        return _aggregate_from_instruction_ids(dep_ids)
+
+    # Tool call legacy path: self + reference_tool_id / depends_on in arguments
     tc_id = content.get("tool_call_id")
-    ref_ids = content.get("arguments", {}).get("reference_tool_id") or []
+    args = content.get("arguments") or {}
+    ref_ids = (
+        args.get("depends_on")
+        or args.get("reference_tool_id")
+        or []
+    )
     ids_to_include: set[str] = set()
     if isinstance(tc_id, str) and tc_id.strip():
         ids_to_include.add(tc_id.strip())
