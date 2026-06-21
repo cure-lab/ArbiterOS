@@ -26,8 +26,17 @@ model_list:
                 description: "The instruction category type. Use the most Accurate category possible, rather than only choose 'COGNITIVE_CORE__RESPOND'. "
               content:
                 type: string
-                description: "The actual content of the instruction"
-            required: [topic, category, content]
+                description: "The actual content of the instruction. It can be anything and in any format you need to generate."
+              depends_on:
+                type: array
+                items:
+                  type: integer
+                description: "Prior runtime_step integers; use [] when none. Full rules and step catalog are injected at request time."
+            required:
+              - topic
+              - category
+              - content
+              - depends_on
             additionalProperties: false
           strict: true
 
