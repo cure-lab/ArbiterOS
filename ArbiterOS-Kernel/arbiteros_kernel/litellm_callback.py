@@ -73,6 +73,17 @@ from arbiteros_kernel.protocol_adapter import (
     collect_responses_stream_text as _pa_collect_responses_stream_text,
 )
 from arbiteros_kernel.user_approval import apply_user_approval_preprocessing
+from arbiteros_kernel.instruction_depends_on import (
+    DEPENDS_ON_CATALOG_RULES,
+    build_depends_on_schema_description,
+    build_runtime_step_catalog,
+    build_step_catalog_with_previews,
+    kernel_depends_on_tool_call,
+    normalize_text_depends_on_raw,
+    normalize_tool_depends_on_raw,
+    resolve_runtime_steps_to_depends_on,
+    resolve_tool_call_ids_to_depends_on,
+)
 from arbiteros_kernel.policy_runtime import get_runtime, policy_runtime_override
 from arbiteros_kernel.role_policy_cfg_loader import load_role_policy_config
 
@@ -115,6 +126,11 @@ _NO_WRAP_SENTINEL = "__arbiteros_no_wrap__"
 _stripped_categories_by_trace: dict[str, list[str]] = {}
 _stripped_topics_by_trace: dict[str, list[Optional[str]]] = {}
 _stripped_reference_tool_ids_by_trace: dict[str, dict[str, list[str]]] = {}
+_stripped_text_depends_on_by_trace: dict[str, list[list[int]]] = {}
+_pending_text_depends_on_by_trace: dict[str, Any] = {}
+_PENDING_TEXT_DEPENDS_ON_UNSET = object()
+_TOOL_DEPENDS_ON_ARG = "depends_on"
+_LEGACY_TOOL_DEPENDS_ON_ARG = "reference_tool_id"
 _stripped_categories_lock = threading.Lock()
 _pending_instruction_token_usage_by_trace: dict[str, dict[str, Any]] = {}
 _pending_instruction_token_usage_lock = threading.Lock()
@@ -558,6 +574,58 @@ def _read_litellm_config_yaml() -> dict[str, Any]:
         _LITELLM_YAML_CACHE_MTIME_NS = mtime_ns
         _LITELLM_YAML_CACHE_VALUE = dict(cfg)
         return cfg
+
+
+def _lookup_response_format_from_litellm_config(model: str) -> Optional[dict[str, Any]]:
+    """Resolve ``response_format`` from ``litellm_config.yaml`` model_list for *model*."""
+    requested = (model or "").strip()
+    if not requested:
+        return None
+    base_model, _role = split_model_and_role(requested)
+    candidates = {requested}
+    if isinstance(base_model, str) and base_model.strip():
+        candidates.add(base_model.strip())
+    cfg = _read_litellm_config_yaml()
+    model_list = cfg.get("model_list") if isinstance(cfg, dict) else None
+    if not isinstance(model_list, list):
+        return None
+    for entry in model_list:
+        if not isinstance(entry, dict):
+            continue
+        model_name = str(entry.get("model_name") or "").strip()
+        params = entry.get("litellm_params")
+        if not isinstance(params, dict):
+            continue
+        upstream = str(params.get("model") or "").strip()
+        if model_name not in candidates and upstream not in candidates:
+            continue
+        rf = params.get("response_format")
+        if isinstance(rf, dict):
+            return copy.deepcopy(rf)
+    return None
+
+
+def _ensure_kernel_response_format(data: dict) -> None:
+    """
+    Ensure ``data['response_format']`` is set before catalog injection.
+
+    OpenClaw often omits ``response_format`` in the request; LiteLLM would merge it
+    from ``litellm_config.yaml`` downstream, but kernel hooks run first and need it
+    locally for step-catalog injection.
+    """
+    if not isinstance(data, dict):
+        return
+    rf = data.get("response_format")
+    if isinstance(rf, dict):
+        _merge_agent_response_format_into_content(data)
+        return
+    model = data.get("model")
+    if not isinstance(model, str) or not model.strip():
+        return
+    rf_from_config = _lookup_response_format_from_litellm_config(model.strip())
+    if rf_from_config is None:
+        return
+    data["response_format"] = rf_from_config
 
 
 def _upstream_model_name_for_chat_api(model: str) -> str:
@@ -2249,7 +2317,7 @@ def _collect_prior_tool_call_ids_from_request(data: dict[str, Any]) -> list[tupl
     return merged
 
 
-def _build_reference_tool_id_description(
+def _build_tool_depends_on_description(
     prior_items: list[tuple[str, str]],
     *,
     use_codex_responses_wording: bool = False,
@@ -2297,7 +2365,7 @@ def _build_reference_tool_id_description(
     return base_desc
 
 
-def _build_reference_tool_id_schema(
+def _build_tool_depends_on_schema(
     prior_items: list[tuple[str, str]],
     *,
     use_codex_responses_wording: bool = False,
@@ -2306,7 +2374,7 @@ def _build_reference_tool_id_schema(
     return {
         "type": "array",
         "items": {"type": "string"},
-        "description": _build_reference_tool_id_description(
+        "description": _build_tool_depends_on_description(
             prior_items,
             use_codex_responses_wording=use_codex_responses_wording,
             use_claude_code_wording=use_claude_code_wording,
@@ -2314,21 +2382,40 @@ def _build_reference_tool_id_schema(
     }
 
 
-def _inject_reference_tool_id_into_params(
+def _build_reference_tool_id_schema(
+    prior_items: list[tuple[str, str]],
+    *,
+    use_codex_responses_wording: bool = False,
+    use_claude_code_wording: bool = False,
+) -> dict[str, Any]:
+    return _build_tool_depends_on_schema(
+        prior_items,
+        use_codex_responses_wording=use_codex_responses_wording,
+        use_claude_code_wording=use_claude_code_wording,
+    )
+
+
+def _inject_tool_depends_on_into_params(
     params: dict[str, Any], schema: dict[str, Any]
 ) -> None:
     if params.get("type") != "object":
         params["type"] = "object"
     props = params.get("properties")
     if not isinstance(props, dict):
-        params["properties"] = {"reference_tool_id": schema}
+        params["properties"] = {_TOOL_DEPENDS_ON_ARG: schema}
     else:
-        props["reference_tool_id"] = schema
+        props[_TOOL_DEPENDS_ON_ARG] = schema
     required = params.get("required")
     if not isinstance(required, list):
-        params["required"] = ["reference_tool_id"]
-    elif "reference_tool_id" not in required:
-        params["required"] = [*required, "reference_tool_id"]
+        params["required"] = [_TOOL_DEPENDS_ON_ARG]
+    elif _TOOL_DEPENDS_ON_ARG not in required:
+        params["required"] = [*required, _TOOL_DEPENDS_ON_ARG]
+
+
+def _inject_reference_tool_id_into_params(
+    params: dict[str, Any], schema: dict[str, Any]
+) -> None:
+    _inject_tool_depends_on_into_params(params, schema)
 
 
 def _resolve_tool_parameters_container(tool: dict[str, Any]) -> Optional[dict[str, Any]]:
@@ -2344,7 +2431,7 @@ def _resolve_tool_parameters_container(tool: dict[str, Any]) -> Optional[dict[st
         if tool.get("type") == "function":
             fn["parameters"] = {
                 "type": "object",
-                "required": ["reference_tool_id"],
+                "required": [_TOOL_DEPENDS_ON_ARG],
                 "properties": {},
             }
             return fn["parameters"]
@@ -2362,10 +2449,11 @@ def _resolve_tool_parameters_container(tool: dict[str, Any]) -> Optional[dict[st
     return None
 
 
-_REFERENCE_TOOL_ID_DESC_MARKER = "[arbiteros_reference_tool_id]"
+_TOOL_DEPENDS_ON_DESC_MARKER = "[arbiteros_depends_on]"
+_REFERENCE_TOOL_ID_DESC_MARKER = _TOOL_DEPENDS_ON_DESC_MARKER
 
 
-def _append_reference_tool_id_hint_to_tool_description(
+def _append_tool_depends_on_hint_to_tool_description(
     tool: dict[str, Any],
     description_text: str,
 ) -> bool:
@@ -2375,51 +2463,64 @@ def _append_reference_tool_id_hint_to_tool_description(
     existing = tool.get("description")
     if not isinstance(existing, str) or not existing.strip():
         return False
-    if _REFERENCE_TOOL_ID_DESC_MARKER in existing:
+    if _TOOL_DEPENDS_ON_DESC_MARKER in existing:
         return True
     hint_block = (
-        f"{_REFERENCE_TOOL_ID_DESC_MARKER}\n"
-        "When calling this tool, include reference_tool_id in the tool arguments JSON "
+        f"{_TOOL_DEPENDS_ON_DESC_MARKER}\n"
+        f"When calling this tool, include {_TOOL_DEPENDS_ON_ARG} in the tool arguments JSON "
         f"(string array of upstream call_id values; use [] when none). {description_text}"
     )
     tool["description"] = f"{existing.rstrip()}\n\n{hint_block}"
     return True
 
 
-def _inject_reference_tool_id_global_hint(
+def _append_reference_tool_id_hint_to_tool_description(
+    tool: dict[str, Any],
+    description_text: str,
+) -> bool:
+    return _append_tool_depends_on_hint_to_tool_description(tool, description_text)
+
+
+def _inject_tool_depends_on_global_hint(
     data: dict[str, Any], description_text: str
 ) -> None:
     """Fallback for built-in Codex tools that cannot accept parameters or description."""
     if not description_text.strip():
         return
     hint_content = (
-        f"{_REFERENCE_TOOL_ID_DESC_MARKER}\n"
-        "For every tool call in this turn, include reference_tool_id in the tool arguments "
+        f"{_TOOL_DEPENDS_ON_DESC_MARKER}\n"
+        f"For every tool call in this turn, include {_TOOL_DEPENDS_ON_ARG} in the tool arguments "
         f"(string array of upstream call_id values; use [] when none). {description_text}"
     )
     data.update(
         _pa_inject_system_hint_into_request(
             data,
             hint_content=hint_content,
-            marker=_REFERENCE_TOOL_ID_DESC_MARKER,
+            marker=_TOOL_DEPENDS_ON_DESC_MARKER,
         )
     )
 
 
-def _inject_reference_tool_id_into_tools(data: dict) -> None:
-    """为 tools 添加 required 的 reference_tool_id（parameters 或 description/instructions fallback）。"""
+def _inject_reference_tool_id_global_hint(
+    data: dict[str, Any], description_text: str
+) -> None:
+    _inject_tool_depends_on_global_hint(data, description_text)
+
+
+def _inject_tool_depends_on_into_tools(data: dict) -> None:
+    """为 tools 添加 required 的 depends_on（parameters 或 description/instructions fallback）。"""
     tools = data.get("tools")
     if not isinstance(tools, list):
         return
     prior_items = _collect_prior_tool_call_ids_from_request(data)
     use_codex_wording = _is_responses_api_request(data)
     use_claude_code_wording = _is_claude_code_tool_agent() and not use_codex_wording
-    schema = _build_reference_tool_id_schema(
+    schema = _build_tool_depends_on_schema(
         prior_items,
         use_codex_responses_wording=use_codex_wording,
         use_claude_code_wording=use_claude_code_wording,
     )
-    description_hint = _build_reference_tool_id_description(
+    description_hint = _build_tool_depends_on_description(
         prior_items,
         use_codex_responses_wording=use_codex_wording,
         use_claude_code_wording=use_claude_code_wording,
@@ -2430,13 +2531,17 @@ def _inject_reference_tool_id_into_tools(data: dict) -> None:
             continue
         params = _resolve_tool_parameters_container(tool)
         if params is not None:
-            _inject_reference_tool_id_into_params(params, schema)
+            _inject_tool_depends_on_into_params(params, schema)
             continue
-        if _append_reference_tool_id_hint_to_tool_description(tool, description_hint):
+        if _append_tool_depends_on_hint_to_tool_description(tool, description_hint):
             continue
         needs_global_hint = True
     if needs_global_hint:
-        _inject_reference_tool_id_global_hint(data, description_hint)
+        _inject_tool_depends_on_global_hint(data, description_hint)
+
+
+def _inject_reference_tool_id_into_tools(data: dict) -> None:
+    _inject_tool_depends_on_into_tools(data)
 
 
 def _save_precall_to_log(data: dict, trace_id: Optional[str]) -> None:
@@ -4038,7 +4143,7 @@ def _record_policy_protected_tool_calls(
 
 
 def _add_instructions_from_modified_response(
-    builder: Any, modified_response: dict
+    builder: Any, modified_response: dict, *, resolve_text_depends_on: bool = True
 ) -> int:
     """
     根据 modified_response 追加 instructions（tool_calls 先，再 content）。
@@ -4051,18 +4156,27 @@ def _add_instructions_from_modified_response(
     trace_id = getattr(builder, "trace_id", None)
     for tc_detail in tc_details:
         try:
-            args = tc_detail.get("arguments") or {}
-            args = _ensure_reference_tool_id_in_arguments(
-                args,
-                tc_detail.get("tool_call_id"),
+            tc_id = tc_detail.get("tool_call_id")
+            args = _merge_model_tool_arguments_for_instruction(
+                tc_detail.get("arguments") or {},
                 trace_id,
+                tc_id,
             )
-            builder.add_from_tool_call(
+            instr = builder.add_from_tool_call(
                 tool_name=tc_detail["tool_name"],
                 tool_call_id=tc_detail["tool_call_id"],
                 arguments=args,
                 result=None,
             )
+            if isinstance(instr, dict):
+                raw_deps = _model_tool_depends_on_raw_for_call(trace_id, tc_id)
+                _set_instruction_depends_on(
+                    builder,
+                    instr,
+                    tool_depends_on_raw=raw_deps,
+                    trace_id=trace_id,
+                )
+                _ensure_instruction_depends_on_field(instr)
         except Exception:
             pass
     content = modified_response.get("content")
@@ -4071,6 +4185,7 @@ def _add_instructions_from_modified_response(
             builder=builder,
             content=content,
             trace_id=getattr(builder, "trace_id", None),
+            resolve_text_depends_on=resolve_text_depends_on,
         )
     count_after = len(getattr(builder, "instructions", []) or [])
     return count_after - count_before
@@ -4105,7 +4220,9 @@ def _stage_response_instructions_for_policy(
     Does not write the trace file — caller commits or rolls back after policy.
     """
     _reset_builder_instructions_to_index(builder, instruction_start_index)
-    return _add_instructions_from_modified_response(builder, response_dict)
+    return _add_instructions_from_modified_response(
+        builder, response_dict, resolve_text_depends_on=False
+    )
 
 
 def _commit_response_instructions_after_policy(
@@ -4127,8 +4244,10 @@ def _commit_response_instructions_after_policy(
     for instr in instrs[count_before:]:
         if isinstance(policy_protected, str) and policy_protected.strip():
             instr["policy_protected"] = policy_protected.strip()
+            _ensure_instruction_depends_on_field(instr, force_empty=True)
         if user_approved:
             instr["user_approved"] = True
+        _ensure_instruction_depends_on_field(instr)
     _save_instructions_to_trace_file(
         trace_id, builder, token_usage_start_index=count_before
     )
@@ -4162,18 +4281,27 @@ def _replace_instructions_from_modified_response(
     trace_id = getattr(builder, "trace_id", None)
     for tc_detail in tc_details:
         try:
-            args = tc_detail.get("arguments") or {}
-            args = _ensure_reference_tool_id_in_arguments(
-                args,
-                tc_detail.get("tool_call_id"),
+            tc_id = tc_detail.get("tool_call_id")
+            args = _merge_model_tool_arguments_for_instruction(
+                tc_detail.get("arguments") or {},
                 trace_id,
+                tc_id,
             )
-            builder.add_from_tool_call(
+            instr = builder.add_from_tool_call(
                 tool_name=tc_detail["tool_name"],
                 tool_call_id=tc_detail["tool_call_id"],
                 arguments=args,
                 result=None,
             )
+            if isinstance(instr, dict):
+                raw_deps = _model_tool_depends_on_raw_for_call(trace_id, tc_id)
+                _set_instruction_depends_on(
+                    builder,
+                    instr,
+                    tool_depends_on_raw=raw_deps,
+                    trace_id=trace_id,
+                )
+                _ensure_instruction_depends_on_field(instr)
         except Exception:
             pass
 
@@ -4183,6 +4311,7 @@ def _replace_instructions_from_modified_response(
             builder=builder,
             content=content,
             trace_id=getattr(builder, "trace_id", None),
+            resolve_text_depends_on=True,
         )
 
 
@@ -4702,17 +4831,31 @@ def _emit_tool_result_nodes_if_needed(request_data: dict, state: _TraceState) ->
             builder = _get_instruction_builder_for_trace(state.trace_id)
             if builder is not None:
                 try:
-                    args = _ensure_reference_tool_id_in_arguments(
-                        tool_arguments or {},
-                        tool_call_id,
-                        state.trace_id,
+                    call_args = _find_call_only_tool_arguments_in_builder(
+                        builder, tool_call_id
                     )
+                    if call_args is not None:
+                        args = dict(call_args)
+                    else:
+                        args = _merge_model_tool_arguments_for_instruction(
+                            tool_arguments or {},
+                            state.trace_id,
+                            tool_call_id,
+                        )
                     instr = builder.add_from_tool_call(
                         tool_name=tool_name,
                         tool_call_id=tool_call_id,
                         arguments=args,
                         result=parsed_result,
                     )
+                    if isinstance(instr, dict):
+                        _set_instruction_depends_on(
+                            builder,
+                            instr,
+                            kernel_tool_call_id=tool_call_id,
+                            trace_id=state.trace_id,
+                        )
+                        _ensure_instruction_depends_on_field(instr)
                     instruction_for_metadata = (
                         instr if isinstance(instr, dict) else None
                     )
@@ -4723,6 +4866,9 @@ def _emit_tool_result_nodes_if_needed(request_data: dict, state: _TraceState) ->
                     ):
                         builder.instructions[-1]["policy_protected"] = (
                             policy_protected_reason
+                        )
+                        _ensure_instruction_depends_on_field(
+                            builder.instructions[-1], force_empty=True
                         )
                     _save_instructions_to_trace_file(state.trace_id, builder)
                     parser_snapshot = _build_instruction_parser_snapshot(
@@ -4815,13 +4961,26 @@ def _extract_structured_category_content(
     if not isinstance(message_dict, dict):
         return (None, None, None)
     content = message_dict.get("content")
-    parsed = _safe_json_loads(content)
+    if isinstance(content, str) and content.strip():
+        parsed = _extract_strict_topic_category_payload(content)
+        if parsed is None:
+            parsed = _safe_json_loads(content)
+    else:
+        parsed = None
     if isinstance(parsed, dict) and _is_strict_topic_category_content(parsed):
         category = parsed.get("category")
         topic = parsed.get("topic")
+        thinking_prefix = (
+            _extract_leading_thinking_prefix(content)
+            if isinstance(content, str)
+            else ""
+        )
+        display_content = _combine_thinking_with_unwrapped_content(
+            thinking_prefix, parsed.get("content")
+        )
         return (
             category if isinstance(category, str) else None,
-            parsed.get("content"),
+            display_content,
             topic if isinstance(topic, str) else None,
         )
     # 非严格格式：人为赋予 topic:其他，category: COGNITIVE_CORE__RESPOND
@@ -5898,7 +6057,7 @@ def _normalize_category_to_instruction_type(category: Any) -> str:
 
 
 def _record_stripped_category(
-    data: dict, category: Any, topic: Optional[str] = None
+    data: dict, category: Any, topic: Optional[str] = None, *, depends_on_raw: Any = None
 ) -> None:
     # mock_response 路径下 pre_call 已 append slot，此处不再重复记录，避免 category/topic 重复
     if data.get("_skip_category_topic_recording"):
@@ -5908,6 +6067,7 @@ def _record_stripped_category(
         return
     normalized_category = category if isinstance(category, str) else ""
     normalized_topic = topic if isinstance(topic, str) and topic.strip() else None
+    normalized_depends_on = normalize_text_depends_on_raw(depends_on_raw)
     with _stripped_categories_lock:
         categories = _stripped_categories_by_trace.setdefault(trace_id, [])
         categories.append(normalized_category)
@@ -5917,6 +6077,10 @@ def _record_stripped_category(
         topics.append(normalized_topic)
         if len(topics) > _MAX_STRIPPED_CATEGORIES:
             del topics[: len(topics) - _MAX_STRIPPED_CATEGORIES]
+        depends_slots = _stripped_text_depends_on_by_trace.setdefault(trace_id, [])
+        depends_slots.append(normalized_depends_on)
+        if len(depends_slots) > _MAX_STRIPPED_CATEGORIES:
+            del depends_slots[: len(depends_slots) - _MAX_STRIPPED_CATEGORIES]
 
 
 def _get_stripped_categories_for_trace(trace_id: Optional[str]) -> list[str]:
@@ -5925,6 +6089,228 @@ def _get_stripped_categories_for_trace(trace_id: Optional[str]) -> list[str]:
     with _stripped_categories_lock:
         categories = _stripped_categories_by_trace.get(trace_id.strip(), [])
         return list(categories)
+
+
+def _get_stripped_text_depends_on_for_trace(trace_id: Optional[str]) -> list[list[int]]:
+    if not isinstance(trace_id, str) or not trace_id.strip():
+        return []
+    with _stripped_categories_lock:
+        slots = _stripped_text_depends_on_by_trace.get(trace_id.strip(), [])
+        return [list(x) for x in slots]
+
+
+def _peek_latest_text_depends_on_raw_for_trace(trace_id: Optional[str]) -> list[int]:
+    slots = _get_stripped_text_depends_on_for_trace(trace_id)
+    if not slots:
+        return []
+    return list(slots[-1])
+
+
+def _dedupe_depends_on_entries(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    seen: set[str] = set()
+    out: list[dict[str, Any]] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        instr_id = entry.get("instruction_id")
+        if not isinstance(instr_id, str) or not instr_id.strip():
+            continue
+        iid = instr_id.strip()
+        if iid in seen:
+            continue
+        seen.add(iid)
+        out.append(dict(entry))
+    return out
+
+
+def _set_instruction_depends_on(
+    builder: Any,
+    instr: dict[str, Any],
+    *,
+    text_depends_on_raw: Any = None,
+    tool_depends_on_raw: Any = None,
+    kernel_tool_call_id: Optional[str] = None,
+    trace_id: Optional[str] = None,
+) -> None:
+    if not isinstance(instr, dict) or builder is None:
+        return
+    instructions = list(getattr(builder, "instructions", []) or [])
+    tid = trace_id or getattr(builder, "trace_id", None)
+    current_step = instr.get("runtime_step")
+    current_step_int = current_step if isinstance(current_step, int) else None
+    entries: list[dict[str, Any]] = []
+    if text_depends_on_raw is not None:
+        entries.extend(
+            resolve_runtime_steps_to_depends_on(
+                instructions,
+                text_depends_on_raw,
+                current_runtime_step=current_step_int,
+                trace_id=tid,
+            )
+        )
+    if tool_depends_on_raw is not None:
+        entries.extend(
+            resolve_tool_call_ids_to_depends_on(
+                instructions,
+                tool_depends_on_raw,
+                trace_id=tid,
+            )
+        )
+    if isinstance(kernel_tool_call_id, str) and kernel_tool_call_id.strip():
+        entries.extend(
+            kernel_depends_on_tool_call(instructions, kernel_tool_call_id)
+        )
+    instr["depends_on"] = _dedupe_depends_on_entries(entries)
+
+
+def _clear_pending_text_depends_on(trace_id: Optional[str]) -> None:
+    if not isinstance(trace_id, str) or not trace_id.strip():
+        return
+    with _stripped_categories_lock:
+        _pending_text_depends_on_by_trace.pop(trace_id.strip(), None)
+
+
+def _set_pending_text_depends_on(trace_id: Optional[str], raw: Any) -> None:
+    if not isinstance(trace_id, str) or not trace_id.strip():
+        return
+    with _stripped_categories_lock:
+        _pending_text_depends_on_by_trace[trace_id.strip()] = raw
+
+
+def _consume_pending_text_depends_on(trace_id: Optional[str]) -> tuple[bool, Any]:
+    if not isinstance(trace_id, str) or not trace_id.strip():
+        return (False, None)
+    tid = trace_id.strip()
+    with _stripped_categories_lock:
+        if tid not in _pending_text_depends_on_by_trace:
+            return (False, None)
+        return (True, _pending_text_depends_on_by_trace.pop(tid))
+
+
+def _apply_text_instruction_depends_on(
+    builder: Any,
+    instr: dict[str, Any],
+    trace_id: Optional[str],
+    *,
+    depends_on_raw: Any = _PENDING_TEXT_DEPENDS_ON_UNSET,
+) -> None:
+    if not isinstance(instr, dict):
+        return
+    raw = depends_on_raw
+    if raw is _PENDING_TEXT_DEPENDS_ON_UNSET:
+        was_set, raw = _consume_pending_text_depends_on(trace_id)
+        if not was_set:
+            raw = _peek_latest_text_depends_on_raw_for_trace(trace_id)
+    _set_instruction_depends_on(
+        builder,
+        instr,
+        text_depends_on_raw=raw,
+        trace_id=trace_id,
+    )
+
+
+def _ensure_instruction_depends_on_field(
+    instr: dict[str, Any], *, force_empty: bool = False
+) -> None:
+    if not isinstance(instr, dict):
+        return
+    if force_empty:
+        instr["depends_on"] = []
+    elif "depends_on" not in instr:
+        instr["depends_on"] = []
+
+
+def _get_stripped_tool_depends_on_for_call(
+    trace_id: Optional[str], tool_call_id: Optional[str]
+) -> list[str]:
+    declared = _model_tool_depends_on_raw_for_call(trace_id, tool_call_id)
+    if declared is None:
+        return []
+    return [str(x) for x in declared if x is not None and str(x).strip()]
+
+
+def _model_tool_depends_on_raw_for_call(
+    trace_id: Optional[str], tool_call_id: Optional[str]
+) -> Optional[list[str]]:
+    """Return model-declared depends_on for a tool call, or None if the key was absent."""
+    if not isinstance(trace_id, str) or not trace_id.strip():
+        return None
+    if not isinstance(tool_call_id, str) or not tool_call_id.strip():
+        return None
+    tid = trace_id.strip()
+    tc_id = tool_call_id.strip()
+    with _stripped_categories_lock:
+        by_trace = _stripped_reference_tool_ids_by_trace.get(tid)
+        if not by_trace or tc_id not in by_trace:
+            return None
+        ref_list = by_trace.get(tc_id)
+        if not isinstance(ref_list, list):
+            return None
+        return [str(x) for x in ref_list if x is not None]
+
+
+def _merge_model_tool_arguments_for_instruction(
+    arguments: Any,
+    trace_id: Optional[str],
+    tool_call_id: Optional[str],
+) -> dict[str, Any]:
+    """Rebuild instruction arguments: business fields + model depends_on when declared."""
+    out = dict(arguments) if isinstance(arguments, dict) else {}
+    out.pop(_TOOL_DEPENDS_ON_ARG, None)
+    out.pop(_LEGACY_TOOL_DEPENDS_ON_ARG, None)
+    declared = _model_tool_depends_on_raw_for_call(trace_id, tool_call_id)
+    if declared is not None:
+        out[_TOOL_DEPENDS_ON_ARG] = declared
+    return out
+
+
+def _find_call_only_tool_arguments_in_builder(
+    builder: Any, tool_call_id: Optional[str]
+) -> Optional[dict[str, Any]]:
+    if builder is None or not isinstance(tool_call_id, str) or not tool_call_id.strip():
+        return None
+    tc_id = tool_call_id.strip()
+    for instr in reversed(getattr(builder, "instructions", []) or []):
+        if not isinstance(instr, dict):
+            continue
+        content = instr.get("content")
+        if not isinstance(content, dict):
+            continue
+        if content.get("tool_call_id") != tc_id:
+            continue
+        if content.get("result") is not None:
+            continue
+        args = content.get("arguments")
+        return dict(args) if isinstance(args, dict) else {}
+    return None
+
+
+def _inject_runtime_step_catalog_into_response_format(
+    data: dict, *, trace_id: Optional[str]
+) -> None:
+    if not isinstance(trace_id, str) or not trace_id.strip():
+        return
+    rf = data.get("response_format")
+    if not isinstance(rf, dict):
+        return
+    js = rf.get("json_schema")
+    if not isinstance(js, dict):
+        return
+    schema = js.get("schema")
+    if not isinstance(schema, dict):
+        return
+    props = schema.get("properties")
+    if not isinstance(props, dict):
+        return
+    dep = props.get("depends_on")
+    if not isinstance(dep, dict):
+        return
+    instructions: list[dict[str, Any]] = []
+    if InstructionBuilder is not None:
+        builder = _get_instruction_builder_for_trace(trace_id.strip())
+        if builder is not None:
+            instructions = list(getattr(builder, "instructions", []) or [])
+    dep["description"] = build_depends_on_schema_description(instructions)
 
 
 def _get_stripped_topics_for_trace(trace_id: Optional[str]) -> list[Optional[str]]:
@@ -5942,6 +6328,24 @@ def _clear_stripped_categories_for_trace(trace_id: Optional[str]) -> None:
         _stripped_categories_by_trace.pop(trace_id.strip(), None)
         _stripped_topics_by_trace.pop(trace_id.strip(), None)
         _stripped_reference_tool_ids_by_trace.pop(trace_id.strip(), None)
+        _stripped_text_depends_on_by_trace.pop(trace_id.strip(), None)
+        _pending_text_depends_on_by_trace.pop(trace_id.strip(), None)
+
+
+def _ensure_tool_depends_on_in_arguments(
+    arguments: dict,
+    tool_call_id: Optional[str],
+    trace_id: Optional[str],
+) -> dict:
+    """若 arguments 缺少 depends_on，则从 strip 缓存查并补入（兼容 legacy reference_tool_id）。"""
+    if _TOOL_DEPENDS_ON_ARG in arguments or _LEGACY_TOOL_DEPENDS_ON_ARG in arguments:
+        return arguments
+    ref_list = _get_stripped_tool_depends_on_for_call(trace_id, tool_call_id)
+    if not ref_list:
+        return arguments
+    out = dict(arguments)
+    out[_TOOL_DEPENDS_ON_ARG] = ref_list
+    return out
 
 
 def _ensure_reference_tool_id_in_arguments(
@@ -5949,25 +6353,7 @@ def _ensure_reference_tool_id_in_arguments(
     tool_call_id: Optional[str],
     trace_id: Optional[str],
 ) -> dict:
-    """若 arguments 缺少 reference_tool_id，则从 _stripped_reference_tool_ids_by_trace 查并补入。"""
-    if "reference_tool_id" in arguments:
-        return arguments
-    if not isinstance(tool_call_id, str) or not tool_call_id.strip():
-        return arguments
-    if not isinstance(trace_id, str) or not trace_id.strip():
-        return arguments
-    tid = trace_id.strip()
-    tc_id = tool_call_id.strip()
-    with _stripped_categories_lock:
-        by_trace = _stripped_reference_tool_ids_by_trace.get(tid)
-        if not by_trace:
-            return arguments
-        ref_list = by_trace.get(tc_id)
-        if ref_list is None:
-            return arguments
-    out = dict(arguments)
-    out["reference_tool_id"] = ref_list
-    return out
+    return _ensure_tool_depends_on_in_arguments(arguments, tool_call_id, trace_id)
 
 
 def _add_policy_protected_category_topic(trace_id: Optional[str]) -> None:
@@ -5996,6 +6382,10 @@ def _append_category_topic_for_trace(
         topics.append(topic if isinstance(topic, str) and topic.strip() else None)
         if len(topics) > _MAX_STRIPPED_CATEGORIES:
             del topics[: len(topics) - _MAX_STRIPPED_CATEGORIES]
+        depends_slots = _stripped_text_depends_on_by_trace.setdefault(tid, [])
+        depends_slots.append([])
+        if len(depends_slots) > _MAX_STRIPPED_CATEGORIES:
+            del depends_slots[: len(depends_slots) - _MAX_STRIPPED_CATEGORIES]
 
 
 def _remove_latest_category_topic_for_trace(trace_id: Optional[str]) -> None:
@@ -6010,6 +6400,9 @@ def _remove_latest_category_topic_for_trace(trace_id: Optional[str]) -> None:
         topics = _stripped_topics_by_trace.get(tid)
         if topics:
             topics.pop()
+        depends_slots = _stripped_text_depends_on_by_trace.get(tid)
+        if depends_slots:
+            depends_slots.pop()
 
 
 def _record_non_strict_content_category(
@@ -6370,6 +6763,7 @@ def _add_non_strict_content_instructions(
     builder: Any,
     content: str,
     trace_id: Optional[str],
+    resolve_text_depends_on: bool = True,
 ) -> None:
     if InstructionBuilder is None or builder is None:
         return
@@ -6378,9 +6772,14 @@ def _add_non_strict_content_instructions(
 
     if not _is_codex_tool_agent():
         try:
-            builder.add_from_structured_output(
+            instr = builder.add_from_structured_output(
                 structured={"intent": "RESPOND", "content": content},
             )
+            if isinstance(instr, dict):
+                if resolve_text_depends_on:
+                    _apply_text_instruction_depends_on(builder, instr, trace_id)
+                else:
+                    _ensure_instruction_depends_on_field(instr)
         except Exception:
             pass
         return
@@ -6398,62 +6797,150 @@ def _add_non_strict_content_instructions(
             arguments=args,
         )
         try:
-            normalized_args = _ensure_reference_tool_id_in_arguments(
+            normalized_args = _merge_model_tool_arguments_for_instruction(
                 args,
-                tool_call_id,
                 trace_id,
+                tool_call_id,
             )
-            builder.add_from_tool_call(
+            instr = builder.add_from_tool_call(
                 tool_name=tool_name,
                 tool_call_id=tool_call_id,
                 arguments=normalized_args,
                 result=None,
             )
+            if isinstance(instr, dict):
+                raw_deps = _model_tool_depends_on_raw_for_call(trace_id, tool_call_id)
+                _set_instruction_depends_on(
+                    builder,
+                    instr,
+                    tool_depends_on_raw=raw_deps,
+                    trace_id=trace_id,
+                )
+                _ensure_instruction_depends_on_field(instr)
         except Exception:
             pass
 
     if text_part.strip():
         try:
-            builder.add_from_structured_output(
+            instr = builder.add_from_structured_output(
                 structured={"intent": "RESPOND", "content": text_part},
             )
+            if isinstance(instr, dict):
+                if resolve_text_depends_on:
+                    _apply_text_instruction_depends_on(builder, instr, trace_id)
+                else:
+                    _ensure_instruction_depends_on_field(instr)
         except Exception:
             pass
     elif not parsed_any_tool:
         try:
-            builder.add_from_structured_output(
+            instr = builder.add_from_structured_output(
                 structured={"intent": "RESPOND", "content": content},
             )
+            if isinstance(instr, dict):
+                if resolve_text_depends_on:
+                    _apply_text_instruction_depends_on(builder, instr, trace_id)
+                else:
+                    _ensure_instruction_depends_on_field(instr)
         except Exception:
             pass
 
 
 def _is_strict_topic_category_content(obj: dict) -> bool:
-    """严格 topic/category/content 三字段结构：仅此三 key，content 类型不限。"""
+    """严格 topic/category/content[/depends_on] 结构。"""
     if not isinstance(obj, dict):
         return False
-    return set(obj.keys()) == {"topic", "category", "content"}
+    keys = set(obj.keys())
+    if keys == {"topic", "category", "content", "depends_on"}:
+        return True
+    if keys == {"topic", "category", "content"}:
+        return True
+    return False
+
+
+_THINKING_TAG_RE = re.compile(
+    r"<(?:redacted_)?think(?:ing)?>.*?</(?:redacted_)?think(?:ing)?>\s*",
+    re.IGNORECASE | re.DOTALL,
+)
+_LEADING_THINKING_TAG_RE = re.compile(
+    r"^<(?:redacted_)?think(?:ing)?>.*?</(?:redacted_)?think(?:ing)?>\s*",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _extract_leading_thinking_prefix(content: str) -> str:
+    """Return consecutive leading thinking blocks from assistant content (verbatim)."""
+    if not isinstance(content, str) or not content:
+        return ""
+    prefix_parts: list[str] = []
+    remainder = content
+    while remainder:
+        match = _LEADING_THINKING_TAG_RE.match(remainder)
+        if not match:
+            break
+        prefix_parts.append(match.group(0))
+        remainder = remainder[match.end() :]
+    return "".join(prefix_parts)
+
+
+def _stringify_unwrapped_instruction_content(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if value is None:
+        return ""
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _combine_thinking_with_unwrapped_content(thinking_prefix: str, body: Any) -> str:
+    """Join preserved thinking prefix with unwrapped structure content for agent/instruction."""
+    body_str = _stringify_unwrapped_instruction_content(body)
+    if not isinstance(thinking_prefix, str) or not thinking_prefix.strip():
+        return body_str
+    if not body_str.strip():
+        return thinking_prefix.rstrip()
+    return f"{thinking_prefix.rstrip()}\n\n{body_str}"
+
+
+def _extract_strict_topic_category_payload(content: str) -> Optional[dict[str, Any]]:
+    """
+    Parse strict topic/category/content JSON from assistant text.
+
+    Handles providers that prefix JSON with ``<think>`` blocks or embed
+    the JSON object after other text.
+    """
+    if not isinstance(content, str) or not content.strip():
+        return None
+    stripped = _THINKING_TAG_RE.sub("", content).strip()
+    if not stripped:
+        return None
+    try:
+        parsed = json.loads(stripped)
+        if isinstance(parsed, dict) and _is_strict_topic_category_content(parsed):
+            return parsed
+    except (json.JSONDecodeError, TypeError):
+        pass
+    decoder = json.JSONDecoder()
+    for idx in range(len(stripped) - 1, -1, -1):
+        if stripped[idx] != "{":
+            continue
+        try:
+            obj, _end = decoder.raw_decode(stripped, idx)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict) and _is_strict_topic_category_content(obj):
+            return obj
+    return None
 
 
 def _normalize_reference_tool_id_list(value: Any) -> list[str]:
-    """Coerce reference_tool_id to a string list (handles JSON-encoded strings from models)."""
-    if isinstance(value, list):
-        return [str(x) for x in value if x is not None and str(x).strip()]
-    if isinstance(value, str):
-        stripped = value.strip()
-        if not stripped:
-            return []
-        parsed = _safe_json_loads(stripped)
-        if isinstance(parsed, list):
-            return [str(x) for x in parsed if x is not None and str(x).strip()]
-        return [stripped]
-    return []
+    """Coerce depends_on / legacy reference_tool_id to a string list."""
+    return normalize_tool_depends_on_raw(value)
 
 
-def _strip_and_record_reference_tool_ids_from_message(
+def _strip_and_record_tool_depends_on_from_message(
     message_dict: dict, data: dict
 ) -> None:
-    """从 tool_calls 或 Anthropic tool_use input 中剥去 reference_tool_id 并存入 trace 字典。"""
+    """从 tool_calls 或 Anthropic tool_use input 中剥去 depends_on 并存入 trace 字典。"""
     trace_id = None
     if isinstance(data, dict):
         meta = data.get("metadata")
@@ -6483,7 +6970,7 @@ def _strip_and_record_reference_tool_ids_from_message(
                 args = {}
             if not isinstance(args, dict):
                 continue
-            cleaned = _strip_and_record_reference_tool_id_in_arguments(
+            cleaned = _strip_and_record_tool_depends_on_in_arguments(
                 args,
                 tool_call_id=tc_id.strip(),
                 trace_id=tid,
@@ -6517,7 +7004,7 @@ def _strip_and_record_reference_tool_ids_from_message(
         if not isinstance(tool_input, dict):
             new_content.append(block)
             continue
-        cleaned_input = _strip_and_record_reference_tool_id_in_arguments(
+        cleaned_input = _strip_and_record_tool_depends_on_in_arguments(
             dict(tool_input),
             tool_call_id=tc_id.strip(),
             trace_id=tid,
@@ -6530,30 +7017,55 @@ def _strip_and_record_reference_tool_ids_from_message(
         message_dict["content"] = new_content
 
 
+def _strip_and_record_tool_depends_on_in_arguments(
+    arguments: dict[str, Any],
+    *,
+    tool_call_id: str,
+    trace_id: Optional[str],
+) -> dict[str, Any]:
+    """Pop depends_on (or legacy reference_tool_id) from tool arguments and record for trace."""
+    depends_key: Optional[str] = None
+    if _TOOL_DEPENDS_ON_ARG in arguments:
+        depends_key = _TOOL_DEPENDS_ON_ARG
+    elif _LEGACY_TOOL_DEPENDS_ON_ARG in arguments:
+        depends_key = _LEGACY_TOOL_DEPENDS_ON_ARG
+    if depends_key is None:
+        return arguments
+    if not isinstance(trace_id, str) or not trace_id.strip():
+        return arguments
+    ref_list = normalize_tool_depends_on_raw(arguments.get(depends_key))
+    with _stripped_categories_lock:
+        by_trace = _stripped_reference_tool_ids_by_trace.setdefault(trace_id.strip(), {})
+        by_trace[tool_call_id.strip()] = [str(x) for x in ref_list if x is not None]
+    cleaned = dict(arguments)
+    cleaned.pop(_TOOL_DEPENDS_ON_ARG, None)
+    cleaned.pop(_LEGACY_TOOL_DEPENDS_ON_ARG, None)
+    return cleaned
+
+
 def _strip_and_record_reference_tool_id_in_arguments(
     arguments: dict[str, Any],
     *,
     tool_call_id: str,
     trace_id: Optional[str],
 ) -> dict[str, Any]:
-    """Pop reference_tool_id from a tool arguments dict and record it for the trace."""
-    if "reference_tool_id" not in arguments:
-        return arguments
-    if not isinstance(trace_id, str) or not trace_id.strip():
-        return arguments
-    ref_list = _normalize_reference_tool_id_list(arguments.get("reference_tool_id"))
-    with _stripped_categories_lock:
-        by_trace = _stripped_reference_tool_ids_by_trace.setdefault(trace_id.strip(), {})
-        by_trace[tool_call_id.strip()] = [str(x) for x in ref_list if x is not None]
-    cleaned = dict(arguments)
-    cleaned.pop("reference_tool_id", None)
-    return cleaned
+    return _strip_and_record_tool_depends_on_in_arguments(
+        arguments, tool_call_id=tool_call_id, trace_id=trace_id
+    )
+
+
+def _strip_and_record_reference_tool_ids_from_message(
+    message_dict: dict, data: dict
+) -> None:
+    _strip_and_record_tool_depends_on_from_message(message_dict, data)
 
 
 def _response_transform_content_only(data: dict, message_dict: dict) -> Optional[dict]:
     """没 content 才忽略；有 content 且为严格的 topic/category/content 结构则剥 structure，否则不操作但记录 NO_WRAP。
     支持 content 为字符串或列表 [{"type":"text","text":"..."}]。"""
-    _strip_and_record_reference_tool_ids_from_message(message_dict, data)
+    _strip_and_record_tool_depends_on_from_message(message_dict, data)
+    trace_id_for_pending = _resolve_category_cache_trace_id(data)
+    _clear_pending_text_depends_on(trace_id_for_pending)
     raw_content = message_dict.get("content")
     content: str
     inner: Optional[dict] = None
@@ -6571,14 +7083,24 @@ def _response_transform_content_only(data: dict, message_dict: dict) -> Optional
         return message_dict
     try:
         if inner is None:
-            inner = json.loads(content)
+            inner = _extract_strict_topic_category_payload(content)
+            if inner is None:
+                inner = json.loads(content)
         if isinstance(inner, dict) and _is_strict_topic_category_content(inner):
             category = inner.get("category", "")
             topic = inner.get("topic") if isinstance(inner.get("topic"), str) else None
-            _record_stripped_category(data, category, topic=topic)
+            depends_on_raw = inner.get("depends_on", [])
+            _record_stripped_category(
+                data, category, topic=topic, depends_on_raw=depends_on_raw
+            )
+            _set_pending_text_depends_on(trace_id_for_pending, depends_on_raw)
 
-            # instruction_parsing: content 类型不限，该是啥就是啥
+            # Unwrap JSON shell; preserve leading thinking for agent + instruction.
+            thinking_prefix = _extract_leading_thinking_prefix(content)
             inner_content = inner.get("content")
+            display_content = _combine_thinking_with_unwrapped_content(
+                thinking_prefix, inner_content
+            )
             metadata = data.get("metadata") if isinstance(data, dict) else {}
             trace_id = (
                 metadata.get("arbiteros_trace_id")
@@ -6600,12 +7122,20 @@ def _response_transform_content_only(data: dict, message_dict: dict) -> Optional
                     instruction_type = _normalize_category_to_instruction_type(category)
                     try:
                         count_before = len(getattr(builder, "instructions", []) or [])
-                        builder.add_from_structured_output(
+                        instr = builder.add_from_structured_output(
                             structured={
                                 "intent": instruction_type,
-                                "content": inner_content,
+                                "content": display_content,
                             }
                         )
+                        if isinstance(instr, dict):
+                            _set_instruction_depends_on(
+                                builder,
+                                instr,
+                                text_depends_on_raw=depends_on_raw,
+                                trace_id=trace_id,
+                            )
+                            _ensure_instruction_depends_on_field(instr)
                         _save_instructions_to_trace_file(
                             trace_id,
                             builder,
@@ -6614,7 +7144,7 @@ def _response_transform_content_only(data: dict, message_dict: dict) -> Optional
                     except Exception:
                         pass  # Best-effort; don't fail the main flow
 
-            out = {**message_dict, "content": inner_content}
+            out = {**message_dict, "content": display_content}
             return out
         # 有 content 但非严格格式：POLICY_BLOCK/POLICY_TRANSFORM 等用默认 category/topic；
         # 否则：若有 tool_calls 则 NO_WRAP；若无 tool_calls（疑似 policy 保护：原 content+tool_calls 被去 tool 留 content）
@@ -6623,8 +7153,10 @@ def _response_transform_content_only(data: dict, message_dict: dict) -> Optional
             _record_stripped_category(
                 data, "COGNITIVE_CORE__RESPOND", topic="policy protected"
             )
+            _set_pending_text_depends_on(trace_id_for_pending, [])
         else:
             _record_non_strict_content_category(data, message_dict, content)
+            _set_pending_text_depends_on(trace_id_for_pending, [])
         _add_instruction_for_non_strict(data, content)
     except (json.JSONDecodeError, TypeError):
         # 非 JSON（如纯文本）：POLICY_BLOCK 等用默认 category/topic；
@@ -6633,8 +7165,10 @@ def _response_transform_content_only(data: dict, message_dict: dict) -> Optional
             _record_stripped_category(
                 data, "COGNITIVE_CORE__RESPOND", topic="policy protected"
             )
+            _set_pending_text_depends_on(trace_id_for_pending, [])
         else:
             _record_non_strict_content_category(data, message_dict, content)
+            _set_pending_text_depends_on(trace_id_for_pending, [])
         _add_instruction_for_non_strict(data, content)
     return message_dict
 
@@ -6766,7 +7300,7 @@ def _wrap_reference_tool_ids_into_messages(
                     args = {}
                 if not isinstance(args, dict):
                     continue
-                args["reference_tool_id"] = ref_list
+                args[_TOOL_DEPENDS_ON_ARG] = ref_list
                 fn_copy = dict(fn)
                 fn_copy["arguments"] = json.dumps(args, ensure_ascii=False)
                 tc["function"] = fn_copy
@@ -6793,7 +7327,7 @@ def _wrap_reference_tool_ids_into_messages(
                 continue
             tool_input = block.get("input")
             input_args = dict(tool_input) if isinstance(tool_input, dict) else {}
-            input_args["reference_tool_id"] = ref_list
+            input_args[_TOOL_DEPENDS_ON_ARG] = ref_list
             block_copy = dict(block)
             block_copy["input"] = input_args
             new_content.append(block_copy)
@@ -6845,7 +7379,7 @@ def _wrap_reference_tool_ids_into_responses_input(
         if not isinstance(args, dict):
             new_input.append(item)
             continue
-        args["reference_tool_id"] = ref_list
+        args[_TOOL_DEPENDS_ON_ARG] = ref_list
         item_copy = dict(item)
         item_copy["arguments"] = json.dumps(args, ensure_ascii=False)
         new_input.append(item_copy)
@@ -6886,8 +7420,16 @@ _ARBITEROS_BASE_RESPONSE_SCHEMA: dict[str, Any] = {
             "type": "string",
             "description": "The actual content of the instruction. It may take any form and contain whatever you need to generate.",
         },
+        "depends_on": {
+            "type": "array",
+            "items": {"type": "integer"},
+            "description": (
+                f"{DEPENDS_ON_CATALOG_RULES} "
+                "A full step catalog with previews is injected at request time."
+            ),
+        },
     },
-    "required": ["topic", "category", "content"],
+    "required": ["topic", "category", "content", "depends_on"],
     "additionalProperties": False,
 }
 
@@ -6933,6 +7475,7 @@ def _wrap_messages_with_categories(
     resolved_trace_id = trace_id or _resolve_category_cache_trace_id(data)
     stripped_categories = _get_stripped_categories_for_trace(resolved_trace_id)
     stripped_topics = _get_stripped_topics_for_trace(resolved_trace_id)
+    stripped_depends_on = _get_stripped_text_depends_on_for_trace(resolved_trace_id)
     messages = data.get("messages")
     if not messages or not stripped_categories:
         return data
@@ -6956,10 +7499,19 @@ def _wrap_messages_with_categories(
             if idx_from_end < len(stripped_topics)
             else None
         )
+        depends_on_slot: list[int] = (
+            list(stripped_depends_on[-(idx_from_end + 1)])
+            if idx_from_end < len(stripped_depends_on)
+            else []
+        )
         idx_from_end += 1
         if category == _NO_WRAP_SENTINEL:
             continue
-        wrap_obj: dict[str, Any] = {"category": category, "content": text}
+        wrap_obj: dict[str, Any] = {
+            "category": category,
+            "content": text,
+            "depends_on": depends_on_slot,
+        }
         if isinstance(topic, str) and topic.strip():
             wrap_obj["topic"] = topic
         wrapped = json.dumps(wrap_obj, ensure_ascii=False)
@@ -7132,8 +7684,8 @@ class MyCustomHandler(CustomLogger):
             if truncated is not messages:
                 data = {**data, "messages": truncated}
 
-        # 若 agent 带了 response_format，将其作为子结构塞入我们的 content 字段
-        _merge_agent_response_format_into_content(data)
+        # Ensure response_format (from agent or litellm_config) before catalog injection.
+        _ensure_kernel_response_format(data)
 
         context = _build_device_context(data)
         metadata = data.get("metadata") if isinstance(data, dict) else None
@@ -7186,6 +7738,9 @@ class MyCustomHandler(CustomLogger):
         # 把 history 里 assistant 的 content 按当前 trace 记录的 category 从后往前包回结构，再请求
         data = _wrap_messages_with_categories(data, trace_id=trace_id_for_cache)
         data = _wrap_reference_tool_ids_into_request(data, trace_id=trace_id_for_cache)
+        _inject_runtime_step_catalog_into_response_format(
+            data, trace_id=trace_id_for_cache
+        )
         runtime_override_ctx = (
             policy_runtime_override(role_policy_config_override)
             if isinstance(role_policy_config_override, dict)
@@ -7351,6 +7906,9 @@ class MyCustomHandler(CustomLogger):
                                             count_before:
                                         ]:
                                             instr["policy_protected"] = policy_reason
+                                            _ensure_instruction_depends_on_field(
+                                                instr, force_empty=True
+                                            )
                                         _save_instructions_to_trace_file(
                                             trace_id_for_cache, builder
                                         )
@@ -7400,7 +7958,7 @@ class MyCustomHandler(CustomLogger):
                 )
             )
             _save_json("pre_call", {"call_type": call_type, "incoming": filtered_data})
-        _inject_reference_tool_id_into_tools(data)
+        _inject_tool_depends_on_into_tools(data)
         compat_flags = _resolve_upstream_compat_flags(data.get("model"))
         metadata_for_backup = data.get("metadata") if isinstance(data, dict) else None
         if compat_flags.get("strip_metadata"):
@@ -7647,6 +8205,9 @@ class MyCustomHandler(CustomLogger):
                         for instr in builder.instructions[count_before:]:
                             instr["policy_protected"] = (
                                 policy_violation_reason_for_langfuse or ""
+                            )
+                            _ensure_instruction_depends_on_field(
+                                instr, force_empty=True
                             )
                         _save_instructions_to_trace_file(
                             trace_id,
@@ -8578,3 +9139,4 @@ class MyCustomHandler(CustomLogger):
 
 
 proxy_handler_instance = MyCustomHandler()
+ 
