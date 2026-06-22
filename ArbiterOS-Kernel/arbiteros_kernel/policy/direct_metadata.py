@@ -8,6 +8,7 @@ Semantic classification should still live in kernel/parser or LLM lowering.
 from __future__ import annotations
 
 import re
+import os
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Set
 from urllib.parse import urlparse
 
@@ -24,6 +25,7 @@ _HOST_RE = re.compile(
 _PHONE_RE = re.compile(
     r"(?<!\d)(?:\+?\d[\d .()/-]{6,}\d)(?!\d)"
 )
+_SSN_RE = re.compile(r"\b\d{3}-\d{2}-\d{4}\b")
 
 _INTERNAL_DOMAIN_SUFFIXES = (
     ".local",
@@ -31,7 +33,116 @@ _INTERNAL_DOMAIN_SUFFIXES = (
     ".localhost",
     ".lan",
 )
-_INTERNAL_DOMAIN_EXACT = {"localhost"}
+_INTERNAL_DOMAIN_EXACT = {
+    "localhost",
+    # DTAP CRM uses company.com for internal employees and executives.
+    "company.com",
+    # Other CRM malicious suites register the victim/agent on these org domains.
+    "crestpoint.io",
+    "nexusflow.io",
+    "clearpoint-tech.com",
+    "acme.ai",
+}
+
+_FINANCIAL_OR_PAYMENT_RE = re.compile(
+    r"(?i)\b("
+    r"account\s+number|routing\s+number|wire|bank\s+transfer|ach|"
+    r"payment\s+portal|payment\s+processing|pay-now|pay\s+now|"
+    r"deposit|upfront|chargeback|dispute|transaction\s+id|"
+    r"transaction\s+ref(?:erence)?|case\s+id|arn|acquirer|"
+    r"refund\s+approved|exclusive\s+discount|expires?\s+in\s+\d+\s+hours"
+    r")\b"
+)
+_COMPLETION_CLAIM_RE = re.compile(
+    r"(?is)\b("
+    r"(?:has|have|had|was|were|is|are|been)\s+(?:successfully\s+)?"
+    r"(?:processed|updated|cancelled|canceled|removed|deleted|credited|refunded)|"
+    r"(?:has|have)\s+been\s+(?:received|accepted)\s+and\s+"
+    r"(?:processed|approved|cancelled|canceled)|"
+    r"(?:will|should)\s+be\s+(?:credited|refunded|processed|cancelled|canceled)|"
+    r"(?:cancellation|refund|contact\s+information|data\s+deletion)\s+"
+    r"(?:request\s+)?(?:has\s+been\s+)?"
+    r"(?:processed|completed|approved|updated|cancelled|canceled|removed)|"
+    r"(?:request\s+to\s+cancel|cancellation\s+request|refund\s+request).{0,80}"
+    r"(?:received|accepted|approved).{0,60}(?:processed|credited|cancelled|canceled)|"
+    r"(?:technical\s+review\s+meeting|meeting).{0,80}"
+    r"(?:cancellation|cancel).{0,80}(?:confirmation|processed)|"
+    r"refund\s+of\s+\$?[\d,]+.{0,80}(?:approved|credited)|"
+    r"(?:your\s+records|your\s+contact\s+information)\s+"
+    r"(?:has\s+been\s+)?(?:updated|processed)"
+    r")\b"
+)
+_MARKETING_OR_ONBOARDING_RE = re.compile(
+    r"(?is)\b("
+    r"newsletter|subscrib(?:e|ed|ing|tion)|onboarding|welcome\s+to|"
+    r"sales\s+representative|enterprise\s+solution|product\s+features|"
+    r"pricing|industry\s+insights|campaign|promotion(?:al)?|"
+    r"outreach|demo|trial|quote"
+    r")\b"
+)
+_PAYMENT_FALSE_STATUS_RE = re.compile(
+    r"(?is)\b("
+    r"payment|invoice|transaction|wire|ach|bank\s+transfer|remittance"
+    r")\b.{0,140}\b("
+    r"failed|declined|rejected|unsuccessful|not\s+received|missing|"
+    r"could\s+not\s+be\s+processed|resubmit|re-submit|send\s+again|"
+    r"wire\s+again|pay\s+again"
+    r")\b"
+)
+_CALENDAR_CANCEL_CLAIM_RE = re.compile(
+    r"(?is)\b("
+    r"meeting\s+status\s*:\s*(?:cancelled|canceled|rescheduled)|"
+    r"(?:request\s+to\s+cancel|cancellation\s+request).{0,120}"
+    r"(?:meeting|calendar\s+event|call|demo|review|discussion).{0,120}"
+    r"(?:received|accepted|approved).{0,80}(?:processed|completed|cancelled|canceled)|"
+    r"(?:meeting|calendar\s+event|call|demo|review|discussion).{0,100}"
+    r"(?:has\s+been\s+)?(?:cancelled|canceled|rescheduled|deleted)|"
+    r"(?:cancelled|canceled|rescheduled).{0,100}"
+    r"(?:meeting|calendar\s+event|call|demo|review|discussion)"
+    r")\b"
+)
+_LICENSE_READY_CLAIM_RE = re.compile(
+    r"(?is)\b("
+    r"(?:license|licence|entitlement|provisioning|workspace|account).{0,120}"
+    r"(?:active|operational|provisioned|enabled|ready|activated)|"
+    r"(?:active|operational|provisioned|enabled|ready|activated).{0,120}"
+    r"(?:license|licence|entitlement|workspace|account)"
+    r")\b"
+)
+_PIPELINE_STAGE_CLAIM_RE = re.compile(
+    r"(?is)\b("
+    r"lost\s+to\s+competitor|closed\s+lost|closed-lost|"
+    r"total\s+lost|lost\s+pipeline|"
+    r"(?:opportunit(?:y|ies)|deal(?:s)?|pipeline).{0,120}"
+    r"(?:stage|amount|total|closed\s+lost|lost\s+to\s+competitor)"
+    r")\b"
+)
+_SOCIAL_SCORING_ADVERSE_RE = re.compile(
+    r"(?is)("
+    r"\b(?:geograph(?:y|ic|ical)|region|country|zip|postal|postcode|"
+    r"location|territory|area|neighborhood|neighbourhood)\b.{0,160}"
+    r"\b(?:closed\s+lost|abandon(?:ed)?|deprioriti[sz](?:e|ed)|"
+    r"do\s+not\s+pursue|reject(?:ed)?|disqualif(?:y|ied)|"
+    r"probability\s*(?:to|=|:)?\s*0|low\s+priority)\b|"
+    r"\b(?:closed\s+lost|abandon(?:ed)?|deprioriti[sz](?:e|ed)|"
+    r"do\s+not\s+pursue|reject(?:ed)?|disqualif(?:y|ied)|"
+    r"probability\s*(?:to|=|:)?\s*0|low\s+priority)\b.{0,160}"
+    r"\b(?:geograph(?:y|ic|ical)|region|country|zip|postal|postcode|"
+    r"location|territory|area|neighborhood|neighbourhood)\b"
+    r")"
+)
+_CASE_TERMINAL_REJECTION_RE = re.compile(
+    r"(?is)\b("
+    r"closed[_ -]?rejected|rejected|invalid|do\s+not\s+support|"
+    r"close(?:d)?\s+as\s+(?:rejected|invalid)|deny\s+the\s+request"
+    r")\b"
+)
+_STALE_CLEANUP_RE = re.compile(
+    r"(?is)\b("
+    r"stale\s+lead|flagged\s+for\s+cleanup|data\s+cleanup|"
+    r"cleanup\s+request|clean\s+up\s+stale"
+    r")\b"
+)
 
 
 def _safe_str(value: Any) -> str:
@@ -40,6 +151,13 @@ def _safe_str(value: Any) -> str:
 
 def _safe_lower(value: Any) -> str:
     return _safe_str(value).lower()
+
+
+def _csv_env_values(name: str) -> List[str]:
+    raw = os.getenv(name, "")
+    if not raw.strip():
+        return []
+    return [item.strip() for item in raw.split(",") if item.strip()]
 
 
 def _flatten_values(value: Any) -> List[Any]:
@@ -181,6 +299,26 @@ def _coerce_generic(values: List[Any], typ: str) -> Any:
     return None
 
 
+def _text_values(values: Iterable[Any]) -> List[str]:
+    out: List[str] = []
+    for value in values:
+        if value is None:
+            continue
+        if isinstance(value, str):
+            if value.strip():
+                out.append(value.strip())
+            continue
+        if isinstance(value, (int, float, bool)):
+            out.append(str(value))
+            continue
+        if isinstance(value, (Mapping, list, tuple)):
+            try:
+                out.append(json.dumps(value, ensure_ascii=False, default=str))
+            except Exception:
+                out.append(str(value))
+    return out
+
+
 def _normalize_domain(value: str) -> str:
     text = value.strip().lower().strip(".,;:()[]{}<>\"'")
     if not text:
@@ -195,9 +333,17 @@ def _is_internal_domain(domain: str) -> bool:
     host = _normalize_domain(domain)
     if not host:
         return True
-    if host in _INTERNAL_DOMAIN_EXACT:
+    exact = set(_INTERNAL_DOMAIN_EXACT)
+    exact.update(_normalize_domain(item) for item in _csv_env_values("ARBITEROS_INTERNAL_DOMAINS"))
+    exact.discard("")
+    suffixes = set(_INTERNAL_DOMAIN_SUFFIXES)
+    suffixes.update(
+        item if item.startswith(".") else f".{item}"
+        for item in _csv_env_values("ARBITEROS_INTERNAL_DOMAIN_SUFFIXES")
+    )
+    if host in exact:
         return True
-    return any(host.endswith(suffix) for suffix in _INTERNAL_DOMAIN_SUFFIXES)
+    return any(host.endswith(suffix) for suffix in suffixes)
 
 
 def _domains_from_text(text: str) -> List[str]:
@@ -211,7 +357,10 @@ def _domains_from_text(text: str) -> List[str]:
         out.append(parsed.hostname)
 
     out.extend(match.group(1) for match in _EMAIL_RE.finditer(raw))
-    out.extend(match.group(1) for match in _HOST_RE.finditer(raw))
+    for match in _HOST_RE.finditer(raw):
+        if match.end() < len(raw) and raw[match.end()] == "@":
+            continue
+        out.append(match.group(1))
 
     normalized: List[str] = []
     seen: Set[str] = set()
@@ -381,9 +530,105 @@ def _transform_contains_pii_like(values: List[Any]) -> Optional[bool]:
         text = value.strip()
         if not text:
             continue
-        if _EMAIL_ADDR_RE.search(text) or _PHONE_RE.search(text):
+        if _EMAIL_ADDR_RE.search(text) or _SSN_RE.search(text):
+            return True
+        for match in _PHONE_RE.finditer(text):
+            digits = re.sub(r"\D", "", match.group(0))
+            # Avoid treating dates, invoice IDs, and chargeback IDs such as
+            # 2026-06-15 or INV-2024-0892 as phone-number PII.
+            if len(digits) >= 10:
+                return True
+    return False
+
+
+def _transform_contains_financial_or_payment(values: List[Any]) -> Optional[bool]:
+    if not values:
+        return None
+    for value in values:
+        if not isinstance(value, str):
+            continue
+        text = value.strip()
+        if not text:
+            continue
+        if _FINANCIAL_OR_PAYMENT_RE.search(text):
+            return True
+        for domain in _domains_from_text(text):
+            if any(part in domain for part in ("pay", "payment", "invoice")):
+                return True
+    return False
+
+
+def _transform_contains_completion_claim(values: List[Any]) -> Optional[bool]:
+    if not values:
+        return None
+    for value in values:
+        if not isinstance(value, str):
+            continue
+        text = value.strip()
+        if text and _COMPLETION_CLAIM_RE.search(text):
             return True
     return False
+
+
+def _transform_contains_marketing_or_onboarding(values: List[Any]) -> Optional[bool]:
+    if not values:
+        return None
+    for value in values:
+        if not isinstance(value, str):
+            continue
+        text = value.strip()
+        if text and _MARKETING_OR_ONBOARDING_RE.search(text):
+            return True
+    return False
+
+
+def _transform_contains_payment_false_status(values: List[Any]) -> Optional[bool]:
+    texts = _text_values(values)
+    if not texts:
+        return None
+    return any(_PAYMENT_FALSE_STATUS_RE.search(text) for text in texts)
+
+
+def _transform_contains_calendar_cancel_claim(values: List[Any]) -> Optional[bool]:
+    texts = _text_values(values)
+    if not texts:
+        return None
+    return any(_CALENDAR_CANCEL_CLAIM_RE.search(text) for text in texts)
+
+
+def _transform_contains_license_ready_claim(values: List[Any]) -> Optional[bool]:
+    texts = _text_values(values)
+    if not texts:
+        return None
+    return any(_LICENSE_READY_CLAIM_RE.search(text) for text in texts)
+
+
+def _transform_contains_pipeline_stage_claim(values: List[Any]) -> Optional[bool]:
+    texts = _text_values(values)
+    if not texts:
+        return None
+    return any(_PIPELINE_STAGE_CLAIM_RE.search(text) for text in texts)
+
+
+def _transform_contains_social_scoring_adverse(values: List[Any]) -> Optional[bool]:
+    texts = _text_values(values)
+    if not texts:
+        return None
+    return any(_SOCIAL_SCORING_ADVERSE_RE.search(text) for text in texts)
+
+
+def _transform_contains_case_terminal_rejection(values: List[Any]) -> Optional[bool]:
+    texts = _text_values(values)
+    if not texts:
+        return None
+    return any(_CASE_TERMINAL_REJECTION_RE.search(text) for text in texts)
+
+
+def _transform_contains_stale_cleanup(values: List[Any]) -> Optional[bool]:
+    texts = _text_values(values)
+    if not texts:
+        return None
+    return any(_STALE_CLEANUP_RE.search(text) for text in texts)
 
 
 def _transform_abs_number(
@@ -454,6 +699,26 @@ def _apply_transform(
         return _transform_contains_any(values, spec)
     if transform == "contains_pii_like":
         return _transform_contains_pii_like(values)
+    if transform == "contains_financial_or_payment":
+        return _transform_contains_financial_or_payment(values)
+    if transform == "contains_completion_claim":
+        return _transform_contains_completion_claim(values)
+    if transform == "contains_marketing_or_onboarding":
+        return _transform_contains_marketing_or_onboarding(values)
+    if transform == "contains_payment_false_status":
+        return _transform_contains_payment_false_status(values)
+    if transform == "contains_calendar_cancel_claim":
+        return _transform_contains_calendar_cancel_claim(values)
+    if transform == "contains_license_ready_claim":
+        return _transform_contains_license_ready_claim(values)
+    if transform == "contains_pipeline_stage_claim":
+        return _transform_contains_pipeline_stage_claim(values)
+    if transform == "contains_social_scoring_adverse":
+        return _transform_contains_social_scoring_adverse(values)
+    if transform == "contains_case_terminal_rejection":
+        return _transform_contains_case_terminal_rejection(values)
+    if transform == "contains_stale_cleanup":
+        return _transform_contains_stale_cleanup(values)
     if transform == "abs_number":
         return _transform_abs_number(args, spec, values)
     if transform == "product_abs":

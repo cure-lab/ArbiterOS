@@ -73,6 +73,7 @@ ALLOWED_FLOW_KINDS = {
     "voice_sink",
     "ui_side_effect",
     "exec_side_effect",
+    "business_side_effect",
     "persist_side_effect",
     "respond_sink",
     "none",

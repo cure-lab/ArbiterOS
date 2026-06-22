@@ -1521,9 +1521,14 @@ class PolicyEngine:
         if tool and tool != "@instruction":
             deny_tools = set(deny.get("tools", []) or [])
             allow_tools = set(allow.get("tools", []) or [])
+            allow_prefixes = tuple(
+                item
+                for item in (allow.get("tool_prefixes", []) or [])
+                if isinstance(item, str) and item
+            )
             if tool in deny_tools:
                 return False, f"tool denied: {tool}"
-            if allow_tools and tool not in allow_tools:
+            if allow_tools and tool not in allow_tools and not tool.startswith(allow_prefixes):
                 return False, f"tool not in allowlist: {tool}"
 
         allow_types = set((allow.get("instruction_types", []) or []))

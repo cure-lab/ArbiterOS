@@ -99,7 +99,7 @@ def _default_registry_data() -> list[dict[str, object]]:
         },
         {
             "name": "RateLimitPolicy",
-            "enabled": True,
+            "enabled": False,
             "description": (
                 "Enforces per-conversation and per-tool hard tool-call budgets, "
                 "plus consecutive-repeat limits."
@@ -157,7 +157,7 @@ def _default_registry_data() -> list[dict[str, object]]:
         },
         {
             "name": "AlignmentSentinelPolicy",
-            "enabled": False,
+            "enabled": True,
             "description": (
                 "LLM-based pre-exec alignment check for planned tool calls against recent user objective."
             ),

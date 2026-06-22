@@ -5,6 +5,7 @@ import re
 from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional
 
+from arbiteros_kernel.mcp_tool_classification import classify_mcp_tool_flow
 from arbiteros_kernel.policy_runtime import RUNTIME
 
 _DEFAULT_PROMPT_INJECTION_MARKERS = (
@@ -365,6 +366,9 @@ def _is_high_side_effect_sink(
     cfg: dict[str, Any],
 ) -> bool:
     name = tool_name.lower()
+    mcp_flow = classify_mcp_tool_flow(name)
+    if mcp_flow in {"comm_sink", "business_side_effect", "persist_side_effect"}:
+        return True
     if name not in cfg["high_side_effect_tools"]:
         return False
     if name == "browser":
@@ -480,6 +484,7 @@ def should_trigger_preexec_sentinel(
         st = _safe_dict(current_instr.get("security_type") if isinstance(current_instr, dict) else {})
         if not _is_high_side_effect_sink(tool_name, args_dict, instruction_type=instruction_type, cfg=cfg):
             continue
+        mcp_flow = classify_mcp_tool_flow(tool_name)
 
         source_contexts = _source_contexts_for_op(
             op_args=args_dict,
@@ -504,6 +509,8 @@ def should_trigger_preexec_sentinel(
         prop_untrusted = current_prop_trust in {"LOW", "UNKNOWN"}
 
         op_reasons: list[str] = []
+        if mcp_flow in {"comm_sink", "business_side_effect", "persist_side_effect"}:
+            op_reasons.append(f"mcp_{mcp_flow}_semantic_review")
         if has_untrusted_ingress_source:
             op_reasons.append("untrusted_ingress_source")
         if marker_hit:

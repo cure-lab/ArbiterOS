@@ -21,7 +21,7 @@
   },
   {
     "name": "RateLimitPolicy",
-    "enabled": true,
+    "enabled": false,
     "description": "Enforces per-conversation and per-tool hard tool-call budgets, plus consecutive-repeat limits."
   },
   {

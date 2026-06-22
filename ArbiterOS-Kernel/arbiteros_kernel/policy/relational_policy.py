@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -80,6 +81,134 @@ _SHARED_OR_EXPORTED_PATH_HINTS = (
     "/releases/",
     "/www/",
     "/tmp/",
+)
+
+_GDPR_DELETE_CONTEXT_PATTERNS = (
+    "gdpr",
+    "right to erasure",
+    "right-to-erasure",
+    "data deletion",
+    "data removal",
+    "personal data deletion",
+    "personal data removal",
+    "delete my personal data",
+    "delete all my personal data",
+    "personal information has been removed",
+    "removed from our systems",
+)
+_CRM_CONTACT_DELETE_TOOLS = {
+    "salesforce__delete_contact",
+    "salesforce__delete_record",
+}
+
+_NO_CONSENT_PHRASES = (
+    "do not contact",
+    "do not add",
+    "do not create",
+    "don't contact",
+    "don't add",
+    "must not be contacted",
+    "must not be added",
+    "must not contact",
+    "must not add",
+    "not to contact",
+    "not to add",
+    "did not consent",
+    "has not consented",
+    "never consented",
+    "without consent",
+    "no consent",
+    "not consented",
+    "no opt-in",
+    "no opt in",
+    "opted out",
+    "opt-out",
+    "opt out",
+    "never expressed any interest",
+)
+_SELF_OPT_IN_PHRASES = (
+    "i am interested",
+    "i'm interested",
+    "i’m interested",
+    "i am reaching out",
+    "i'm reaching out",
+    "i’m reaching out",
+    "my name is",
+    "please contact me",
+    "you can reach me",
+    "i would like",
+    "i'd like",
+    "we are interested",
+)
+_THIRD_PARTY_REFERRAL_PHRASES = (
+    "on behalf of",
+    "my colleague",
+    "our colleague",
+    "mentioned",
+    "primary point of contact",
+    "primary business sponsor",
+    "key decision-maker",
+    "handles enterprise",
+    "evaluation team",
+    "copied on any communications",
+)
+_THIRD_PARTY_OPT_IN_CLAIM_PHRASES = (
+    "system records show",
+    "completed the enterprise opt-in form",
+    "completed the opt-in form",
+    "opt-in form",
+    "opt in form",
+    "overrides the previous note",
+    "authorizes direct communication",
+    "authorizing direct communication",
+    "authorized direct communication",
+    "independently",
+)
+
+_CRM_STATE_CHANGE_PREFIXES = (
+    "salesforce__assign_",
+    "salesforce__convert_",
+    "salesforce__create_",
+    "salesforce__delete_",
+    "salesforce__duplicate_",
+    "salesforce__link_",
+    "salesforce__merge_",
+    "salesforce__relationship_create",
+    "salesforce__relationship_delete",
+    "salesforce__set_",
+    "salesforce__update_",
+)
+_CALENDAR_STATE_CHANGE_TOOLS = {
+    "calendar__create_event",
+    "calendar__delete_event",
+    "calendar__update_event",
+    "calendar__accept_invitation",
+}
+_PAYMENT_STATE_CHANGE_PREFIXES = (
+    "paypal__accept_",
+    "paypal__approve_",
+    "paypal__cancel_",
+    "paypal__checkout_",
+    "paypal__create_",
+    "paypal__pay_",
+    "paypal__send_",
+    "paypal__trade_",
+    "paypal__update_",
+)
+_CALENDAR_CANCELLATION_CONTEXT_PATTERNS = (
+    "meeting cancellation request",
+    "meeting cancellation requests",
+    "meeting cancellation guidelines",
+    "calendar cancellation request",
+    "calendar cancellation guidelines",
+    "request to cancel",
+    "requested cancellation",
+    "cancellation request",
+    "cancel the meeting",
+    "cancel this meeting",
+    "cancel my meeting",
+    "meeting has been cancelled",
+    "meeting has been canceled",
 )
 
 # ---------------------------------------------------------------------------
@@ -288,6 +417,398 @@ def _latest_prior_source_instruction(
     return None
 
 
+def _history_source_data_labels(
+    instructions: List[Dict[str, Any]],
+    latest_instructions: List[Dict[str, Any]],
+) -> List[str]:
+    labels: List[str] = []
+    seen: Set[str] = set()
+    for ins in _history_without_latest(instructions or [], latest_instructions or []):
+        if not isinstance(ins, dict):
+            continue
+        sec = _extract_instruction_security(ins)
+        custom = sec.get("custom")
+        if not isinstance(custom, dict):
+            continue
+        metadata = _safe_policy_metadata(custom, set())
+        raw_labels = metadata.get("data_labels")
+        values = raw_labels if isinstance(raw_labels, list) else [raw_labels]
+        for value in values:
+            if not isinstance(value, str) or not value.strip():
+                continue
+            label = value.strip()
+            key = label.upper()
+            if key in seen:
+                continue
+            seen.add(key)
+            labels.append(label)
+    return labels
+
+
+def _iter_strings(value: Any, *, max_items: int = 256) -> List[str]:
+    out: List[str] = []
+
+    def visit(item: Any) -> None:
+        if len(out) >= max_items:
+            return
+        if isinstance(item, str):
+            text = item.strip()
+            if text:
+                out.append(text[:2000])
+            return
+        if isinstance(item, dict):
+            for nested in item.values():
+                visit(nested)
+                if len(out) >= max_items:
+                    break
+            return
+        if isinstance(item, list):
+            for nested in item:
+                visit(nested)
+                if len(out) >= max_items:
+                    break
+
+    visit(value)
+    return out
+
+
+def _content_dict(ins: Any) -> Dict[str, Any]:
+    content = ins.get("content") if isinstance(ins, dict) else {}
+    return content if isinstance(content, dict) else {}
+
+
+def _instruction_arguments(ins: Any) -> Dict[str, Any]:
+    content = _content_dict(ins)
+    args = content.get("arguments")
+    return args if isinstance(args, dict) else {}
+
+
+def _history_context_text(
+    instructions: List[Dict[str, Any]],
+    latest_instructions: List[Dict[str, Any]],
+    *,
+    max_items: int = 220,
+    include_latest: bool = False,
+) -> str:
+    history = _history_without_latest(instructions or [], latest_instructions or [])
+    items = list(history)
+    if include_latest:
+        items.extend(latest_instructions or [])
+    return "\n".join(_iter_strings(items, max_items=max_items)).lower()
+
+
+def _history_mentions_no_consent(
+    instructions: List[Dict[str, Any]],
+    latest_instructions: List[Dict[str, Any]],
+) -> bool:
+    text = _history_context_text(
+        instructions,
+        latest_instructions,
+        max_items=320,
+        include_latest=True,
+    )
+    if not text:
+        return False
+    if any(phrase in text for phrase in _NO_CONSENT_PHRASES):
+        return True
+    return bool(
+        re.search(
+            r"\b(?:no|without|never)\b.{0,60}\b(?:consent|opt[- ]?in|permission|interest)\b",
+            text,
+        )
+    )
+
+
+def _emails_from_text(text: str) -> List[str]:
+    seen: Set[str] = set()
+    out: List[str] = []
+    for match in re.finditer(
+        r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9][A-Za-z0-9.-]*\.[A-Za-z]{2,63}\b",
+        text or "",
+    ):
+        email = match.group(0).strip().lower()
+        if email and email not in seen:
+            seen.add(email)
+            out.append(email)
+    return out
+
+
+def _history_sender_emails(
+    instructions: List[Dict[str, Any]],
+    latest_instructions: List[Dict[str, Any]],
+) -> List[str]:
+    senders: List[str] = []
+    seen: Set[str] = set()
+    for ins in _history_without_latest(instructions or [], latest_instructions or []):
+        args = _instruction_arguments(ins)
+        values: List[Any] = []
+        for key in ("from", "from_email", "sender", "return_path"):
+            values.append(args.get(key))
+        for key in ("From", "ReturnPath"):
+            values.append(args.get(key))
+        for email in _emails_from_text("\n".join(_iter_strings(values, max_items=20))):
+            if email not in seen:
+                seen.add(email)
+                senders.append(email)
+    return senders
+
+
+def _current_target_emails(tool_name: str, args_dict: Dict[str, Any]) -> List[str]:
+    name = _safe_lower(tool_name)
+    keys = (
+        ("email", "email1", "to", "recipient", "address")
+        if name == "salesforce__create_lead"
+        else ("to", "cc", "bcc", "email", "recipient", "address")
+    )
+    values = [args_dict.get(key) for key in keys]
+    return _emails_from_text("\n".join(_iter_strings(values, max_items=20)))
+
+
+def _history_indicates_third_party_referral(
+    instructions: List[Dict[str, Any]],
+    latest_instructions: List[Dict[str, Any]],
+) -> bool:
+    text = _history_context_text(
+        instructions,
+        latest_instructions,
+        max_items=320,
+        include_latest=True,
+    )
+    if not text:
+        return False
+    if any(phrase in text for phrase in _THIRD_PARTY_REFERRAL_PHRASES):
+        return True
+    if any(phrase in text for phrase in _THIRD_PARTY_OPT_IN_CLAIM_PHRASES):
+        return True
+    return False
+
+
+def _target_differs_from_recent_sender(
+    *,
+    tool_name: str,
+    args_dict: Dict[str, Any],
+    instructions: List[Dict[str, Any]],
+    latest_instructions: List[Dict[str, Any]],
+) -> bool:
+    targets = _current_target_emails(tool_name, args_dict)
+    if not targets:
+        return False
+    senders = _history_sender_emails(instructions, latest_instructions)
+    if not senders:
+        return False
+    return all(target not in senders for target in targets)
+
+
+def _current_args_indicate_unverified_opt_in_claim(
+    *,
+    tool_name: str,
+    args_dict: Dict[str, Any],
+) -> bool:
+    if not _current_target_emails(tool_name, args_dict):
+        return False
+    text = "\n".join(_iter_strings(args_dict, max_items=80)).lower()
+    if not text:
+        return False
+    if any(phrase in text for phrase in _THIRD_PARTY_OPT_IN_CLAIM_PHRASES):
+        return True
+    return bool(
+        re.search(
+            r"\bopt[- ]?in\b.{0,120}\b(?:independent(?:ly)?|authori[sz](?:e|ed|ing)|override[sd]?)\b",
+            text,
+        )
+    )
+
+
+def _context_indicates_third_party_consent_risk(
+    *,
+    tool_name: str,
+    args_dict: Dict[str, Any],
+    instructions: List[Dict[str, Any]],
+    latest_instructions: List[Dict[str, Any]],
+) -> bool:
+    if _current_args_indicate_unverified_opt_in_claim(
+        tool_name=tool_name,
+        args_dict=args_dict,
+    ):
+        return True
+    if not _history_indicates_third_party_referral(instructions, latest_instructions):
+        return False
+    return _target_differs_from_recent_sender(
+        tool_name=tool_name,
+        args_dict=args_dict,
+        instructions=instructions,
+        latest_instructions=latest_instructions,
+    )
+
+
+def _is_non_comm_state_change_tool(tool_name: str) -> bool:
+    name = _safe_lower(tool_name)
+    if not name:
+        return False
+    if name.startswith(_CRM_STATE_CHANGE_PREFIXES):
+        return True
+    if name in _CALENDAR_STATE_CHANGE_TOOLS:
+        return True
+    if name.startswith(_PAYMENT_STATE_CHANGE_PREFIXES):
+        return True
+    return False
+
+
+def _is_calendar_state_change_tool(tool_name: str) -> bool:
+    return _safe_lower(tool_name) in _CALENDAR_STATE_CHANGE_TOOLS
+
+
+def _is_crm_state_change_tool(tool_name: str) -> bool:
+    name = _safe_lower(tool_name)
+    return bool(name) and name.startswith(_CRM_STATE_CHANGE_PREFIXES)
+
+
+def _is_payment_state_change_tool(tool_name: str) -> bool:
+    name = _safe_lower(tool_name)
+    return bool(name) and name.startswith(_PAYMENT_STATE_CHANGE_PREFIXES)
+
+
+def _is_opportunity_state_change_tool(tool_name: str) -> bool:
+    name = _safe_lower(tool_name)
+    if not name:
+        return False
+    if "opportunit" in name and _is_crm_state_change_tool(name):
+        return True
+    return name in {
+        "salesforce__update_opportunity",
+        "salesforce__update_opportunity_stage",
+    }
+
+
+def _is_license_state_change_tool(tool_name: str) -> bool:
+    name = _safe_lower(tool_name)
+    if not name:
+        return False
+    return _is_crm_state_change_tool(name) and any(
+        part in name for part in ("license", "licence", "entitlement", "provision")
+    )
+
+
+def _is_case_terminal_state_change_tool(tool_name: str) -> bool:
+    name = _safe_lower(tool_name)
+    if not name:
+        return False
+    return _is_crm_state_change_tool(name) and (
+        "case" in name or name == "salesforce__update_record"
+    )
+
+
+def _history_has_tool_matching(
+    instructions: List[Dict[str, Any]],
+    latest_instructions: List[Dict[str, Any]],
+    predicate: Any,
+) -> bool:
+    for hist in _history_without_latest(instructions or [], latest_instructions or []):
+        tool = _instruction_tool_name(hist)
+        try:
+            if predicate(tool):
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def _tool_names_match(tool_names: List[str], predicate: Any) -> bool:
+    for tool in tool_names or []:
+        try:
+            if predicate(tool):
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def _history_has_non_comm_state_change(
+    instructions: List[Dict[str, Any]],
+    latest_instructions: List[Dict[str, Any]],
+) -> bool:
+    return _history_has_tool_matching(
+        instructions,
+        latest_instructions,
+        _is_non_comm_state_change_tool,
+    )
+
+
+def _history_mentions_calendar_cancellation_request(
+    instructions: List[Dict[str, Any]],
+    latest_instructions: List[Dict[str, Any]],
+) -> bool:
+    text = _history_context_text(
+        instructions,
+        latest_instructions,
+        max_items=360,
+        include_latest=True,
+    )
+    if not text:
+        return False
+    if any(phrase in text for phrase in _CALENDAR_CANCELLATION_CONTEXT_PATTERNS):
+        return True
+    return bool(
+        re.search(
+            r"\b(meeting|calendar\s+event|call|demo|review)\b.{0,120}"
+            r"\b(cancel|cancellation|cancelled|canceled)\b",
+            text,
+        )
+    )
+
+
+def _configured_gdpr_delete_phrases() -> List[str]:
+    cfg = _get_relational_policy_cfg()
+    raw = cfg.get("allow_crm_contact_delete_when_context_contains")
+    if isinstance(raw, list) and raw:
+        return [str(item).strip().lower() for item in raw if str(item).strip()]
+    return list(_GDPR_DELETE_CONTEXT_PATTERNS)
+
+
+def _is_allowed_gdpr_contact_delete(
+    *,
+    tool_name: str,
+    args_dict: Dict[str, Any],
+    instructions: List[Dict[str, Any]],
+    latest_instructions: List[Dict[str, Any]],
+) -> bool:
+    name = _safe_lower(tool_name)
+    if name not in _CRM_CONTACT_DELETE_TOOLS:
+        return False
+    if name == "salesforce__delete_record":
+        module_name = _safe_lower(
+            args_dict.get("module_name") or args_dict.get("module") or args_dict.get("type")
+        )
+        if module_name and module_name not in {"contact", "contacts"}:
+            return False
+
+    text = "\n".join(
+        _iter_strings(instructions or [], max_items=220)
+        + _iter_strings(latest_instructions or [], max_items=80)
+    ).lower()
+    if not text:
+        return False
+    phrases = [phrase for phrase in _configured_gdpr_delete_phrases() if phrase]
+    if any(phrase in text for phrase in phrases):
+        return True
+    return bool(re.search(r"\bdelete\b.{0,80}\b(personal data|personal information)\b", text))
+
+
+def _is_allowed_calendar_cancellation_change(
+    *,
+    tool_name: str,
+    instructions: List[Dict[str, Any]],
+    latest_instructions: List[Dict[str, Any]],
+) -> bool:
+    name = _safe_lower(tool_name)
+    if name not in {"calendar__delete_event", "calendar__update_event"}:
+        return False
+    return _history_mentions_calendar_cancellation_request(
+        instructions,
+        latest_instructions,
+    )
+
+
 def _get_primary_path_hint(args_dict: Dict[str, Any]) -> str:
     for key in (
         "path",
@@ -431,6 +952,7 @@ def _flow_label(flow_kind: str) -> str:
         "voice_sink": "语音输出",
         "ui_side_effect": "UI 控制副作用",
         "exec_side_effect": "执行类副作用",
+        "business_side_effect": "业务系统写入",
         "persist_side_effect": "持久化副作用",
         "respond_sink": "直接回复输出",
     }
@@ -466,6 +988,7 @@ def _relational_policy_title(flow_kind: str) -> str:
         "voice_sink": "语音输出",
         "ui_side_effect": "界面操作",
         "exec_side_effect": "执行类动作",
+        "business_side_effect": "业务系统写入",
         "persist_side_effect": "持久化任务",
         "respond_sink": "直接回复输出",
     }
@@ -492,6 +1015,7 @@ def _relational_policy_function_text(
         "voice_sink": "这一步会把内容直接以语音形式输出，内容一旦播出更难控制，因此先拦截。",
         "ui_side_effect": "这一步会直接影响界面或交互环境，但驱动它的依据还不够可靠，因此先拦截。",
         "exec_side_effect": "这一步会直接影响系统或运行环境，但驱动它的依据还不够可靠，因此先拦截。",
+        "business_side_effect": "这一步会修改业务系统状态，但当前条件下不适合直接执行，因此先拦截。",
         "persist_side_effect": "这一步会把动作固化为持续生效的任务，但当前条件下不适合直接持久化，因此先拦截。",
         "respond_sink": "当前内容不适合直接展示给用户，因此先拦截。",
     }
@@ -931,11 +1455,17 @@ def _evaluate_flow(
         return _level_at_least(actual, required), actual, required, extra
 
     # 7) Human-visible outbound communication:
-    # treat generic message/mail-like sinks as UNKNOWN trust.
+    # Default comm sinks are allowed so benign customer replies can complete.
+    # User-authored relational rules below handle high-risk external sends,
+    # including direct PII/SECRET exfiltration to external recipients.
     if flow_kind == "comm_sink":
-        actual = "UNKNOWN"
-        required = _soft_source_conf(source_conf)
-        return _level_at_least(actual, required), actual, required, extra
+        return True, "UNKNOWN", _soft_source_conf(source_conf), extra
+
+    # 8) Sandbox business-system writes (CRM create/update/convert/merge).
+    # DTAP benign tasks require these after reading customer CRM/mail context.
+    # Destructive CRM actions remain persist_side_effect.
+    if flow_kind == "business_side_effect":
+        return True, source_trust, "LOW", extra
 
     # 8) Voice/audio output is even harder to retract/control.
     if flow_kind == "voice_sink":
@@ -987,6 +1517,7 @@ def _build_relational_context(
     args_dict: Optional[Dict[str, Any]] = None,
     respond_content_present: bool = False,
     required_metadata: Optional[List[Any]] = None,
+    current_accepted_tool_names: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     args_dict = args_dict if isinstance(args_dict, dict) else {}
     ok, actual, required, flow_extra = _evaluate_flow(
@@ -1043,6 +1574,74 @@ def _build_relational_context(
         "respond_content_present": respond_content_present,
         "relational_actual_level": actual,
         "relational_required_level": required,
+        "prior_non_comm_state_change": _history_has_non_comm_state_change(
+            instructions,
+            latest_instructions,
+        ),
+        "prior_calendar_state_change": _history_has_tool_matching(
+            instructions,
+            latest_instructions,
+            _is_calendar_state_change_tool,
+        ),
+        "current_calendar_state_change": _tool_names_match(
+            current_accepted_tool_names or [],
+            _is_calendar_state_change_tool,
+        ),
+        "prior_crm_state_change": _history_has_tool_matching(
+            instructions,
+            latest_instructions,
+            _is_crm_state_change_tool,
+        ),
+        "current_crm_state_change": _tool_names_match(
+            current_accepted_tool_names or [],
+            _is_crm_state_change_tool,
+        ),
+        "prior_payment_state_change": _history_has_tool_matching(
+            instructions,
+            latest_instructions,
+            _is_payment_state_change_tool,
+        ),
+        "current_payment_state_change": _tool_names_match(
+            current_accepted_tool_names or [],
+            _is_payment_state_change_tool,
+        ),
+        "prior_opportunity_state_change": _history_has_tool_matching(
+            instructions,
+            latest_instructions,
+            _is_opportunity_state_change_tool,
+        ),
+        "current_opportunity_state_change": _tool_names_match(
+            current_accepted_tool_names or [],
+            _is_opportunity_state_change_tool,
+        ),
+        "prior_license_state_change": _history_has_tool_matching(
+            instructions,
+            latest_instructions,
+            _is_license_state_change_tool,
+        ),
+        "current_license_state_change": _tool_names_match(
+            current_accepted_tool_names or [],
+            _is_license_state_change_tool,
+        ),
+        "prior_case_terminal_state_change": _history_has_tool_matching(
+            instructions,
+            latest_instructions,
+            _is_case_terminal_state_change_tool,
+        ),
+        "current_case_terminal_state_change": _tool_names_match(
+            current_accepted_tool_names or [],
+            _is_case_terminal_state_change_tool,
+        ),
+        "context_mentions_no_consent": _history_mentions_no_consent(
+            instructions,
+            latest_instructions,
+        ),
+        "context_indicates_third_party_consent_risk": _context_indicates_third_party_consent_risk(
+            tool_name=tool_name,
+            args_dict=args_dict,
+            instructions=instructions,
+            latest_instructions=latest_instructions,
+        ),
     }
 
     sink_custom = sec.get("custom")
@@ -1063,6 +1662,25 @@ def _build_relational_context(
             prefixed = f"source_{key}"
             if prefixed not in ctx:
                 ctx[prefixed] = value
+
+    if flow_kind in {"comm_sink", "delegate_sink", "voice_sink", "respond_sink"}:
+        history_labels = _history_source_data_labels(instructions, latest_instructions)
+        if history_labels:
+            existing = ctx.get("source_data_labels")
+            combined: List[str] = []
+            seen_labels: Set[str] = set()
+            for value in (
+                (existing if isinstance(existing, list) else [existing])
+                + history_labels
+            ):
+                if not isinstance(value, str) or not value.strip():
+                    continue
+                key = value.strip().upper()
+                if key in seen_labels:
+                    continue
+                seen_labels.add(key)
+                combined.append(value.strip())
+            ctx["source_data_labels"] = combined
 
     return ctx
 
@@ -1113,6 +1731,7 @@ class RelationalPolicy(Policy):
         errors: List[str] = []
         seen_errors: set[str] = set()
         kept: List[Dict[str, Any]] = []
+        accepted_tool_names: List[str] = []
 
         # -------------------------------------------------------------------
         # Tool-call flow checks
@@ -1128,6 +1747,7 @@ class RelationalPolicy(Policy):
 
             if flow_kind == "none":
                 kept.append(RUNTIME.write_back_tool_args(tc, args_dict, was_json_str))
+                accepted_tool_names.append(tool_name)
                 continue
 
             if not ins and _fail_closed_on_missing_metadata(tp_cfg):
@@ -1181,6 +1801,7 @@ class RelationalPolicy(Policy):
                 current_taint_status=current_taint_status,
                 args_dict=args_dict,
                 required_metadata=custom_required_metadata,
+                current_accepted_tool_names=accepted_tool_names,
             )
             custom_rule = _evaluate_custom_relational_rules(custom_rules, rel_ctx)
             if custom_rule is not None:
@@ -1220,6 +1841,55 @@ class RelationalPolicy(Policy):
                 _append_unique_error(errors, seen_errors, user_message)
                 continue
 
+            if (
+                flow_kind == "persist_side_effect"
+                and _is_allowed_gdpr_contact_delete(
+                    tool_name=tool_name,
+                    args_dict=args_dict,
+                    instructions=instructions or [],
+                    latest_instructions=latest_instructions or [],
+                )
+            ):
+                RUNTIME.audit(
+                    phase="policy.relational",
+                    trace_id=trace_id,
+                    tool=tool_name,
+                    decision="ALLOW",
+                    reason="CRM contact delete allowed in explicit GDPR/personal-data deletion context",
+                    args=args_dict,
+                    extra={
+                        "flow_kind": flow_kind,
+                        "gdpr_contact_delete_allowed": True,
+                    },
+                )
+                kept.append(RUNTIME.write_back_tool_args(tc, args_dict, was_json_str))
+                accepted_tool_names.append(tool_name)
+                continue
+
+            if (
+                flow_kind == "persist_side_effect"
+                and _is_allowed_calendar_cancellation_change(
+                    tool_name=tool_name,
+                    instructions=instructions or [],
+                    latest_instructions=latest_instructions or [],
+                )
+            ):
+                RUNTIME.audit(
+                    phase="policy.relational",
+                    trace_id=trace_id,
+                    tool=tool_name,
+                    decision="ALLOW",
+                    reason="calendar cancellation change allowed in explicit meeting-cancellation context",
+                    args=args_dict,
+                    extra={
+                        "flow_kind": flow_kind,
+                        "calendar_cancellation_allowed": True,
+                    },
+                )
+                kept.append(RUNTIME.write_back_tool_args(tc, args_dict, was_json_str))
+                accepted_tool_names.append(tool_name)
+                continue
+
             ok, actual, required, extra = _evaluate_flow(
                 flow_kind,
                 sec,
@@ -1231,6 +1901,7 @@ class RelationalPolicy(Policy):
 
             if ok:
                 kept.append(RUNTIME.write_back_tool_args(tc, args_dict, was_json_str))
+                accepted_tool_names.append(tool_name)
                 continue
 
             if flow_kind == "read_sensitive":
@@ -1243,7 +1914,7 @@ class RelationalPolicy(Policy):
                     f"sink trustworthiness < source confidentiality "
                     f"({actual} < {required})"
                 )
-            elif flow_kind in {"ui_side_effect", "exec_side_effect", "persist_side_effect"}:
+            elif flow_kind in {"ui_side_effect", "exec_side_effect", "business_side_effect", "persist_side_effect"}:
                 reason = (
                     f"source trustworthiness < required level for side-effecting action "
                     f"({actual} < {required})"
@@ -1364,6 +2035,7 @@ class RelationalPolicy(Policy):
                 args_dict={},
                 respond_content_present=True,
                 required_metadata=custom_required_metadata,
+                current_accepted_tool_names=accepted_tool_names,
             )
             custom_rule = _evaluate_custom_relational_rules(custom_rules, rel_ctx)
             if custom_rule is not None:

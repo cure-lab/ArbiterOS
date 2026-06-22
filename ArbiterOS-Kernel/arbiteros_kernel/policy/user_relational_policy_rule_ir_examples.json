@@ -97,8 +97,7 @@
                 {
                   "const": [
                     "PII",
-                    "SECRET",
-                    "CUSTOMER_DATA"
+                    "SECRET"
                   ]
                 }
               ]

@@ -2,13 +2,13 @@
   "audit": {
     "log_allow": true,
     "enabled": true,
-    "path": "/data/ArbiterOS/ArbiterOS/ArbiterOS-Kernel/log/policy_audit.jsonl"
+    "path": "log/policy_audit.jsonl"
   },
-
   "alignment_sentinel": {
-    "postexec_enabled": false
+    "postexec_enabled": false,
+    "threshold": 0.7,
+    "timeout_seconds": 20
   },
-
   "alignment_sentinel_trigger": {
     "enabled": true,
     "preexec": {
@@ -43,9 +43,26 @@
         "salesforce__update_opportunity",
         "salesforce__convert_lead"
       ],
-      "high_side_effect_browser_actions": ["act", "upload", "dialog", "navigate"],
-      "high_side_effect_process_actions": ["submit", "send-keys", "paste", "kill", "write"],
-      "high_side_effect_cron_actions": ["add", "update", "remove", "run", "wake"],
+      "high_side_effect_browser_actions": [
+        "act",
+        "upload",
+        "dialog",
+        "navigate"
+      ],
+      "high_side_effect_process_actions": [
+        "submit",
+        "send-keys",
+        "paste",
+        "kill",
+        "write"
+      ],
+      "high_side_effect_cron_actions": [
+        "add",
+        "update",
+        "remove",
+        "run",
+        "wake"
+      ],
       "write_path_hints": [
         "/data/",
         "/root/",
@@ -101,7 +118,12 @@
         "salesforce__get_record",
         "salesforce__list_records"
       ],
-      "browser_ingress_actions": ["snapshot", "console", "pdf", "screenshot"],
+      "browser_ingress_actions": [
+        "snapshot",
+        "console",
+        "pdf",
+        "screenshot"
+      ],
       "prompt_injection_markers": [
         "ignore previous instructions",
         "ignore all previous instructions",
@@ -120,7 +142,6 @@
       "structured_text_min_chars": 1200
     }
   },
-
   "unary_gate": {
     "rule_file": "arbiteros_kernel/policy/unary_gate_rules.json",
     "user_rules_enabled": true,
@@ -149,103 +170,131 @@
       "browser_vision": "browser"
     }
   },
-  
   "allow": {
     "tools": [
-  "read",
-  "write",
-  "edit",
-  "exec",
-  "process",
-  "web_fetch",
-  "web_search",
-  "session_status",
-  "sessions_list",
-  "sessions_history",
-  "sessions_send",
-  "sessions_spawn",
-  "memory_get",
-  "memory_search",
-  "image",
-  "browser"
-],
+      "read",
+      "write",
+      "edit",
+      "exec",
+      "process",
+      "web_fetch",
+      "web_search",
+      "session_status",
+      "sessions_list",
+      "sessions_history",
+      "sessions_send",
+      "sessions_spawn",
+      "memory_get",
+      "memory_search",
+      "image",
+      "browser"
+    ],
+    "tool_prefixes": [
+      "salesforce__",
+      "gmail__",
+      "slack__",
+      "telegram__"
+    ],
     "instruction_types": [],
     "categories": []
   },
-
   "deny": {
     "tools": [],
     "instruction_types": [],
     "categories": []
   },
-
   "paths": {
     "allow_prefixes": [],
     "deny_prefixes": [
-      "/proc", "/sys", "/dev", "/run",
-      "/Windows", "/System32"
+      "/proc",
+      "/sys",
+      "/dev",
+      "/run",
+      "/Windows",
+      "/System32"
     ]
   },
-
-  "input_budget": { "max_str_len": 20000 },
-  "output_budget": { "max_chars": 500 },
-
+  "input_budget": {
+    "max_str_len": 0
+  },
+  "output_budget": {
+    "max_chars": 0
+  },
   "tool_call_limit": {
-    "max_total_tool_calls": 80,
-    "max_calls_per_tool": 30,
+    "max_total_tool_calls": 0,
+    "max_calls_per_tool": 0,
     "per_tool_max_calls": {
-      "web_search": 12,
-      "web_fetch": 20,
-      "browser": 35,
-      "process": 20,
-      "exec": 20
+      "web_search": 0,
+      "web_fetch": 0,
+      "browser": 0,
+      "process": 0,
+      "exec": 0
     }
   },
-
   "rate_limit": {
-    "max_consecutive_same_tool": 20,
+    "max_consecutive_same_tool": 0,
     "window_seconds": 10,
-    "max_calls_per_window": 30
+    "max_calls_per_window": 0
   },
-
   "user_aggregate": {
-    "tools": ["exec"],
+    "tools": [
+      "exec"
+    ],
     "window_seconds": 60,
     "max_events": 50
   },
-
   "schemas": {
     "write": {
       "type": "object",
-      "required": ["content"],
+      "required": [
+        "content"
+      ],
       "properties": {
-        "path": { "type": "string" },
-        "file_path": { "type": "string" },
-        "content": { "type": "string" }
+        "path": {
+          "type": "string"
+        },
+        "file_path": {
+          "type": "string"
+        },
+        "content": {
+          "type": "string"
+        }
       }
     },
     "read": {
       "type": "object",
-      "required": ["path"],
+      "required": [
+        "path"
+      ],
       "properties": {
-        "path": { "type": "string" },
-        "file_path": { "type": "string" },
-        "limit": { "type": "integer" }
+        "path": {
+          "type": "string"
+        },
+        "file_path": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer"
+        }
       }
     },
     "exec": {
       "type": "object",
-      "required": ["command"],
+      "required": [
+        "command"
+      ],
       "properties": {
-        "command": { "type": "string" },
-        "pty": { "type": "boolean" }
+        "command": {
+          "type": "string"
+        },
+        "pty": {
+          "type": "boolean"
+        }
       }
     }
   },
-
   "taint": {
     "enabled": true,
-
     "taint_policy": {
       "input_tools": [
         "read",
@@ -301,24 +350,86 @@
       ],
       "tools_by_action": {
         "browser": {
-          "input_actions": ["status", "start", "stop", "profiles", "tabs", "snapshot", "screenshot", "console", "pdf", "open"],
-          "output_actions": ["focus", "close", "navigate", "upload", "dialog", "act"]
+          "input_actions": [
+            "status",
+            "start",
+            "stop",
+            "profiles",
+            "tabs",
+            "snapshot",
+            "screenshot",
+            "console",
+            "pdf",
+            "open"
+          ],
+          "output_actions": [
+            "focus",
+            "close",
+            "navigate",
+            "upload",
+            "dialog",
+            "act"
+          ]
         },
         "process": {
-          "input_actions": ["list", "poll", "log"],
-          "output_actions": ["write", "send-keys", "submit", "paste", "kill"]
+          "input_actions": [
+            "list",
+            "poll",
+            "log"
+          ],
+          "output_actions": [
+            "write",
+            "send-keys",
+            "submit",
+            "paste",
+            "kill"
+          ]
         },
         "canvas": {
-          "input_actions": ["snapshot"],
-          "output_actions": ["present", "hide", "navigate", "eval", "a2ui_push", "a2ui_reset"]
+          "input_actions": [
+            "snapshot"
+          ],
+          "output_actions": [
+            "present",
+            "hide",
+            "navigate",
+            "eval",
+            "a2ui_push",
+            "a2ui_reset"
+          ]
         },
         "nodes": {
-          "input_actions": ["status", "describe", "camera_snap", "camera_list", "camera_clip", "screen_record", "location_get"],
-          "output_actions": ["pending", "approve", "reject", "notify", "run", "invoke"]
+          "input_actions": [
+            "status",
+            "describe",
+            "camera_snap",
+            "camera_list",
+            "camera_clip",
+            "screen_record",
+            "location_get"
+          ],
+          "output_actions": [
+            "pending",
+            "approve",
+            "reject",
+            "notify",
+            "run",
+            "invoke"
+          ]
         },
         "cron": {
-          "input_actions": ["status", "list", "runs"],
-          "output_actions": ["add", "update", "remove", "run", "wake"]
+          "input_actions": [
+            "status",
+            "list",
+            "runs"
+          ],
+          "output_actions": [
+            "add",
+            "update",
+            "remove",
+            "run",
+            "wake"
+          ]
         }
       }
     }
@@ -329,20 +440,19 @@
     "user_rule_file": "arbiteros_kernel/policy/user_relational_flow_rules.json"
   },
   "exec_composite_policy": {
-  "enabled": true,
-  "allow_multi_read_only": true,
-  "block_if_any_write": true,
-  "block_if_any_exec": true
-},
-
+    "enabled": true,
+    "allow_multi_read_only": true,
+    "block_if_any_write": true,
+    "block_if_any_exec": true
+  },
   "delete_policy": {
     "enabled": true
   },
   "resource_guard": {
-    "max_total_tokens": 12000000,
+    "max_total_tokens": 0,
     "max_total_cost_usd": 0,
-    "max_trace_seconds": 6000,
-    "max_instruction_bytes": 1200000
+    "max_trace_seconds": 0,
+    "max_instruction_bytes": 0
   },
   "cost_telemetry": {
     "enabled": true,
@@ -353,7 +463,7 @@
     "default_output_usd_per_million_tokens": 0
   },
   "cost_down": {
-    "enabled": true,
+    "enabled": false,
     "warn_ratio": 0.8,
     "critical_ratio": 0.95,
     "warn_cost_ratio": 0.8,
@@ -380,60 +490,59 @@
       ":\\(\\)\\s*\\{.*\\};\\s*:"
     ]
   },
-  
   "efsm": {
-  "enabled": true,
-  "initial": "IDLE",
-  "plan_ttl_seconds": 600,
-  "transitions": [
-    {
-      "id": "idle_read_to_after_read",
-      "from": "IDLE",
-      "event": "READ",
-      "to": "AFTER_READ",
-      "effect": "ALLOW",
-      "priority": 100
-    },
-    {
-      "id": "after_read_read_stay",
-      "from": "AFTER_READ",
-      "event": "READ",
-      "to": "AFTER_READ",
-      "effect": "ALLOW",
-      "priority": 95
-    },
-    {
-      "id": "after_read_write_block",
-      "from": "AFTER_READ",
-      "event": "WRITE",
-      "to": "IDLE",
-      "effect": "BLOCK",
-      "priority": 90
-    },
-    {
-      "id": "after_read_exec_clear",
-      "from": "AFTER_READ",
-      "event": "EXEC",
-      "to": "IDLE",
-      "effect": "ALLOW",
-      "priority": 80
-    },
-    {
-      "id": "idle_write_ok",
-      "from": "IDLE",
-      "event": "WRITE",
-      "to": "IDLE",
-      "effect": "ALLOW",
-      "priority": 70
-    },
-    {
-      "id": "idle_exec_ok",
-      "from": "IDLE",
-      "event": "EXEC",
-      "to": "IDLE",
-      "effect": "ALLOW",
-      "priority": 60
-    }
-  ]
-}
+    "enabled": true,
+    "initial": "IDLE",
+    "plan_ttl_seconds": 600,
+    "transitions": [
+      {
+        "id": "idle_read_to_after_read",
+        "from": "IDLE",
+        "event": "READ",
+        "to": "AFTER_READ",
+        "effect": "ALLOW",
+        "priority": 100
+      },
+      {
+        "id": "after_read_read_stay",
+        "from": "AFTER_READ",
+        "event": "READ",
+        "to": "AFTER_READ",
+        "effect": "ALLOW",
+        "priority": 95
+      },
+      {
+        "id": "after_read_write_block",
+        "from": "AFTER_READ",
+        "event": "WRITE",
+        "to": "IDLE",
+        "effect": "BLOCK",
+        "priority": 90
+      },
+      {
+        "id": "after_read_exec_clear",
+        "from": "AFTER_READ",
+        "event": "EXEC",
+        "to": "IDLE",
+        "effect": "ALLOW",
+        "priority": 80
+      },
+      {
+        "id": "idle_write_ok",
+        "from": "IDLE",
+        "event": "WRITE",
+        "to": "IDLE",
+        "effect": "ALLOW",
+        "priority": 70
+      },
+      {
+        "id": "idle_exec_ok",
+        "from": "IDLE",
+        "event": "EXEC",
+        "to": "IDLE",
+        "effect": "ALLOW",
+        "priority": 60
+      }
+    ]
+  }
 }

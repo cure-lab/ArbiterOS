@@ -200,11 +200,20 @@ def _tool_allowed(tool_name: str, instruction_type: str, category: str, cfg: Dic
         return False, "instruction_category denied by allow/deny config"
 
     allow_tools = _normalize_entries(_safe_list(allow.get("tools")))
+    allow_tool_prefixes = tuple(
+        item
+        for item in _normalize_entries(_safe_list(allow.get("tool_prefixes")))
+        if item
+    )
     allow_instruction_types = _normalize_entries(_safe_list(allow.get("instruction_types")))
     allow_categories = _normalize_entries(_safe_list(allow.get("categories")))
 
     if allow_tools:
-        if tool not in allow_tools and not (tool == "apply_patch" and "write" in allow_tools):
+        if (
+            tool not in allow_tools
+            and not tool.startswith(allow_tool_prefixes)
+            and not (tool == "apply_patch" and "write" in allow_tools)
+        ):
             return False, "tool not present in allow.tools"
     if allow_instruction_types:
         if not instruction_type or instruction_type not in allow_instruction_types:

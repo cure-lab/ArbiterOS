@@ -11,6 +11,7 @@ McpFlowKind = Literal[
     "none",
     "read_sensitive",
     "comm_sink",
+    "business_side_effect",
     "persist_side_effect",
 ]
 
@@ -18,6 +19,8 @@ McpFlowKind = Literal[
 _MAIL_SERVICES = {"gmail", "email", "mail"}
 _CHAT_SERVICES = {"slack", "telegram"}
 _CRM_SERVICES = {"salesforce", "crm", "customer_service"}
+_SCHEDULING_SERVICES = {"calendar", "zoom"}
+_WORK_TRACKING_SERVICES = {"atlassian", "jira", "confluence"}
 _MODEL_REVIEW_SERVICES = {
     "claude_review",
     "codex",
@@ -178,6 +181,20 @@ _MUTATION_VERBS = (
     "upload",
     "upsert",
     "write",
+)
+_DESTRUCTIVE_VERBS = (
+    "cancel",
+    "clear",
+    "close",
+    "delete",
+    "disable",
+    "drop",
+    "erase",
+    "purge",
+    "remove",
+    "revoke",
+    "terminate",
+    "wipe",
 )
 _MUTATION_TOKENS = {
     "accept",
@@ -400,8 +417,36 @@ def classify_mcp_tool_flow(tool_name: str) -> McpFlowKind:
 
     if service in _CRM_SERVICES:
         if _starts_with_any(action, _MUTATION_VERBS) or _contains_mutation_token(action):
+            if not _starts_with_any(action, _DESTRUCTIVE_VERBS):
+                return "business_side_effect"
             return "persist_side_effect"
         if _starts_with_any(action, _READ_VERBS) or _contains_read_token(action):
+            return "read_sensitive"
+        return "none"
+
+    if service in _SCHEDULING_SERVICES:
+        if _starts_with_any(action, _READ_VERBS):
+            return "read_sensitive"
+        if _starts_with_any(action, _SEND_VERBS) or _contains_send_token(action):
+            return "comm_sink"
+        if _starts_with_any(action, _MUTATION_VERBS) or _contains_mutation_token(action):
+            if _starts_with_any(action, _DESTRUCTIVE_VERBS):
+                return "persist_side_effect"
+            return "business_side_effect"
+        if _contains_read_token(action):
+            return "read_sensitive"
+        return "none"
+
+    if service in _WORK_TRACKING_SERVICES:
+        if _starts_with_any(action, _READ_VERBS):
+            return "read_sensitive"
+        if _starts_with_any(action, _SEND_VERBS) or _contains_send_token(action):
+            return "comm_sink"
+        if _starts_with_any(action, _MUTATION_VERBS) or _contains_mutation_token(action):
+            if _starts_with_any(action, _DESTRUCTIVE_VERBS):
+                return "persist_side_effect"
+            return "business_side_effect"
+        if _contains_read_token(action):
             return "read_sensitive"
         return "none"
 

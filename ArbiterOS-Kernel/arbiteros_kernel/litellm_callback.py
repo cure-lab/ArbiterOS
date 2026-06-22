@@ -5110,6 +5110,13 @@ def _append_pending_warnings_to_assistant_content_if_needed(
     Skips policy confirmation (Yes/No) turns: list is left unchanged.
     Langfuse uses the pre-append dict; this only mutates the copy returned to the agent.
     """
+    append_enabled = os.getenv(
+        "ARBITEROS_APPEND_OBSERVE_WARNINGS_TO_ASSISTANT", ""
+    ).strip().lower() in {"1", "true", "yes", "on"}
+    if not append_enabled:
+        with _trace_state_lock:
+            state.pending_warning_texts.clear()
+        return
     if not isinstance(msg_dict, dict):
         return
     if (

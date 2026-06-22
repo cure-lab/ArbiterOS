@@ -52,7 +52,43 @@ _REGISTRIES = {
 }
 
 
-def _parse_mcp_tool_fallback(tool_name: str) -> Optional[ToolParseResult]:
+_SECRET_READ_HINTS = (
+    "verification",
+    "verify",
+    "code",
+    "otp",
+    "one-time",
+    "one time",
+    "password",
+    "passcode",
+    "token",
+    "secret",
+)
+
+
+def _args_text_contains_secret_hint(arguments: Optional[Dict[str, Any]]) -> bool:
+    if not isinstance(arguments, dict):
+        return False
+    stack = list(arguments.values())
+    while stack:
+        value = stack.pop()
+        if isinstance(value, dict):
+            stack.extend(value.values())
+            continue
+        if isinstance(value, list):
+            stack.extend(value)
+            continue
+        if not isinstance(value, str):
+            continue
+        lowered = value.lower()
+        if any(hint in lowered for hint in _SECRET_READ_HINTS):
+            return True
+    return False
+
+
+def _parse_mcp_tool_fallback(
+    tool_name: str, arguments: Optional[Dict[str, Any]] = None
+) -> Optional[ToolParseResult]:
     flow = classify_mcp_tool_flow(tool_name)
     if flow == "read_sensitive":
         lower_name = (tool_name or "").strip().lower()
@@ -63,6 +99,9 @@ def _parse_mcp_tool_fallback(tool_name: str) -> Optional[ToolParseResult]:
             )
             else "UNKNOWN"
         )
+        data_labels = ["CUSTOMER_DATA"]
+        if _args_text_contains_secret_hint(arguments):
+            data_labels.append("SECRET")
         return ToolParseResult(
             "READ",
             make_security_type(
@@ -73,7 +112,7 @@ def _parse_mcp_tool_fallback(tool_name: str) -> Optional[ToolParseResult]:
                 authority="UNKNOWN",
                 custom={
                     "policy_metadata": {
-                        "data_labels": ["CUSTOMER_DATA"],
+                        "data_labels": data_labels,
                         "mcp_flow_kind": flow,
                     }
                 },
@@ -102,6 +141,19 @@ def _parse_mcp_tool_fallback(tool_name: str) -> Optional[ToolParseResult]:
                 reversible=False,
                 authority="UNKNOWN",
                 risk="HIGH",
+                custom={"policy_metadata": {"mcp_flow_kind": flow}},
+            ),
+        )
+    if flow == "business_side_effect":
+        return ToolParseResult(
+            "WRITE",
+            make_security_type(
+                confidentiality="LOW",
+                trustworthiness="HIGH",
+                confidence="UNKNOWN",
+                reversible=True,
+                authority="UNKNOWN",
+                risk="LOW",
                 custom={"policy_metadata": {"mcp_flow_kind": flow}},
             ),
         )
@@ -153,7 +205,7 @@ def parse_tool_instruction(
     tool_key = tool_name if isinstance(tool_name, str) else ""
     parser = registry.get(tool_key) or registry.get(tool_key.lower())
     if not parser:
-        mcp_result = _parse_mcp_tool_fallback(tool_name)
+        mcp_result = _parse_mcp_tool_fallback(tool_name, args)
         if mcp_result is not None:
             return mcp_result
         logger.warning(
