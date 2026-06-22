@@ -54,7 +54,9 @@ def test_inject_depends_on_schema_into_response_format():
     _inject_depends_on_schema_into_response_format(data, trace_id="test-trace")
     dep = data["response_format"]["json_schema"]["schema"]["properties"]["depends_on"]
     assert "ARBITEROS_REF" in dep["description"]
-    assert dep["items"]["type"] == "string"
+    assert dep["items"]["type"] == "object"
+    assert "confidence" in dep["items"]["properties"]
+    assert "counterfactual" in dep["items"]["properties"]
 
 
 def test_inject_ref_markers_into_messages_adds_system_and_user_refs():

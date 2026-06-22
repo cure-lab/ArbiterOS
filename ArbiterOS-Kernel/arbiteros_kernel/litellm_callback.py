@@ -80,6 +80,8 @@ from arbiteros_kernel.instruction_depends_on import (
     REF_KIND_TOOLCALL,
     REF_KIND_TOOLRESULT,
     REF_KIND_USERINPUT,
+    _dedupe_entries as dedupe_depends_on_entries,
+    build_depends_on_entry_schema,
     build_depends_on_items_schema,
     build_depends_on_schema_description,
     build_tool_depends_on_description,
@@ -87,6 +89,7 @@ from arbiteros_kernel.instruction_depends_on import (
     format_arbiteros_ref_marker,
     instruction_ref_kind,
     kernel_depends_on_tool_call,
+    normalize_depends_on_declarations,
     normalize_text_depends_on_raw,
     normalize_tool_depends_on_raw,
     resolve_depends_on_refs,
@@ -133,8 +136,8 @@ load_dotenv(override=False)
 _NO_WRAP_SENTINEL = "__arbiteros_no_wrap__"
 _stripped_categories_by_trace: dict[str, list[str]] = {}
 _stripped_topics_by_trace: dict[str, list[Optional[str]]] = {}
-_stripped_reference_tool_ids_by_trace: dict[str, dict[str, list[str]]] = {}
-_stripped_text_depends_on_by_trace: dict[str, list[list[str]]] = {}
+_stripped_reference_tool_ids_by_trace: dict[str, dict[str, list[dict[str, Any]]]] = {}
+_stripped_text_depends_on_by_trace: dict[str, list[list[dict[str, Any]]]] = {}
 _pending_text_depends_on_by_trace: dict[str, Any] = {}
 _PENDING_TEXT_DEPENDS_ON_UNSET = object()
 _TOOL_DEPENDS_ON_ARG = "depends_on"
@@ -6057,7 +6060,7 @@ def _record_stripped_category(
         return
     normalized_category = category if isinstance(category, str) else ""
     normalized_topic = topic if isinstance(topic, str) and topic.strip() else None
-    normalized_depends_on = normalize_text_depends_on_raw(depends_on_raw)
+    normalized_depends_on = normalize_depends_on_declarations(depends_on_raw)
     with _stripped_categories_lock:
         categories = _stripped_categories_by_trace.setdefault(trace_id, [])
         categories.append(normalized_category)
@@ -6081,7 +6084,9 @@ def _get_stripped_categories_for_trace(trace_id: Optional[str]) -> list[str]:
         return list(categories)
 
 
-def _get_stripped_text_depends_on_for_trace(trace_id: Optional[str]) -> list[list[str]]:
+def _get_stripped_text_depends_on_for_trace(
+    trace_id: Optional[str],
+) -> list[list[dict[str, Any]]]:
     if not isinstance(trace_id, str) or not trace_id.strip():
         return []
     with _stripped_categories_lock:
@@ -6089,7 +6094,9 @@ def _get_stripped_text_depends_on_for_trace(trace_id: Optional[str]) -> list[lis
         return [list(x) for x in slots]
 
 
-def _peek_latest_text_depends_on_raw_for_trace(trace_id: Optional[str]) -> list[str]:
+def _peek_latest_text_depends_on_raw_for_trace(
+    trace_id: Optional[str],
+) -> list[dict[str, Any]]:
     slots = _get_stripped_text_depends_on_for_trace(trace_id)
     if not slots:
         return []
@@ -6097,20 +6104,7 @@ def _peek_latest_text_depends_on_raw_for_trace(trace_id: Optional[str]) -> list[
 
 
 def _dedupe_depends_on_entries(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    seen: set[str] = set()
-    out: list[dict[str, Any]] = []
-    for entry in entries:
-        if not isinstance(entry, dict):
-            continue
-        instr_id = entry.get("instruction_id")
-        if not isinstance(instr_id, str) or not instr_id.strip():
-            continue
-        iid = instr_id.strip()
-        if iid in seen:
-            continue
-        seen.add(iid)
-        out.append(dict(entry))
-    return out
+    return dedupe_depends_on_entries(entries)
 
 
 def _set_instruction_depends_on(
@@ -6230,16 +6224,16 @@ def _ensure_instruction_depends_on_field(
 
 def _get_stripped_tool_depends_on_for_call(
     trace_id: Optional[str], tool_call_id: Optional[str]
-) -> list[str]:
+) -> list[dict[str, Any]]:
     declared = _model_tool_depends_on_raw_for_call(trace_id, tool_call_id)
     if declared is None:
         return []
-    return [str(x) for x in declared if x is not None and str(x).strip()]
+    return list(declared)
 
 
 def _model_tool_depends_on_raw_for_call(
     trace_id: Optional[str], tool_call_id: Optional[str]
-) -> Optional[list[str]]:
+) -> Optional[list[dict[str, Any]]]:
     """Return model-declared depends_on for a tool call, or None if the key was absent."""
     if not isinstance(trace_id, str) or not trace_id.strip():
         return None
@@ -6254,7 +6248,9 @@ def _model_tool_depends_on_raw_for_call(
         ref_list = by_trace.get(tc_id)
         if not isinstance(ref_list, list):
             return None
-        return [str(x) for x in ref_list if x is not None]
+        if ref_list and not isinstance(ref_list[0], dict):
+            return normalize_depends_on_declarations(ref_list)
+        return [dict(x) for x in ref_list if isinstance(x, dict)]
 
 
 def _merge_model_tool_arguments_for_instruction(
@@ -7054,10 +7050,10 @@ def _strip_and_record_tool_depends_on_in_arguments(
         return arguments
     if not isinstance(trace_id, str) or not trace_id.strip():
         return arguments
-    ref_list = normalize_tool_depends_on_raw(arguments.get(depends_key))
+    ref_list = normalize_depends_on_declarations(arguments.get(depends_key))
     with _stripped_categories_lock:
         by_trace = _stripped_reference_tool_ids_by_trace.setdefault(trace_id.strip(), {})
-        by_trace[tool_call_id.strip()] = [str(x) for x in ref_list if x is not None]
+        by_trace[tool_call_id.strip()] = [dict(x) for x in ref_list]
     cleaned = dict(arguments)
     cleaned.pop(_TOOL_DEPENDS_ON_ARG, None)
     cleaned.pop(_LEGACY_TOOL_DEPENDS_ON_ARG, None)
@@ -7321,7 +7317,7 @@ def _wrap_reference_tool_ids_into_messages(
                     args = {}
                 if not isinstance(args, dict):
                     continue
-                args[_TOOL_DEPENDS_ON_ARG] = ref_list
+                args[_TOOL_DEPENDS_ON_ARG] = normalize_depends_on_declarations(ref_list)
                 fn_copy = dict(fn)
                 fn_copy["arguments"] = json.dumps(args, ensure_ascii=False)
                 tc["function"] = fn_copy
@@ -7348,7 +7344,7 @@ def _wrap_reference_tool_ids_into_messages(
                 continue
             tool_input = block.get("input")
             input_args = dict(tool_input) if isinstance(tool_input, dict) else {}
-            input_args[_TOOL_DEPENDS_ON_ARG] = ref_list
+            input_args[_TOOL_DEPENDS_ON_ARG] = normalize_depends_on_declarations(ref_list)
             block_copy = dict(block)
             block_copy["input"] = input_args
             new_content.append(block_copy)
@@ -7400,7 +7396,7 @@ def _wrap_reference_tool_ids_into_responses_input(
         if not isinstance(args, dict):
             new_input.append(item)
             continue
-        args[_TOOL_DEPENDS_ON_ARG] = ref_list
+        args[_TOOL_DEPENDS_ON_ARG] = normalize_depends_on_declarations(ref_list)
         item_copy = dict(item)
         item_copy["arguments"] = json.dumps(args, ensure_ascii=False)
         new_input.append(item_copy)
@@ -7443,7 +7439,7 @@ _ARBITEROS_BASE_RESPONSE_SCHEMA: dict[str, Any] = {
         },
         "depends_on": {
             "type": "array",
-            "items": {"type": "string"},
+            "items": build_depends_on_entry_schema([]),
             "description": DEPENDS_ON_STATIC_SCHEMA_HINT,
         },
     },
@@ -7517,7 +7513,7 @@ def _wrap_messages_with_categories(
             if idx_from_end < len(stripped_topics)
             else None
         )
-        depends_on_slot: list[str] = (
+        depends_on_slot: list[dict[str, Any]] = (
             list(stripped_depends_on[-(idx_from_end + 1)])
             if idx_from_end < len(stripped_depends_on)
             else []

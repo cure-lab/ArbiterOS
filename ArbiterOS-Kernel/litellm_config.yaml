@@ -33,8 +33,26 @@ model_list:
               depends_on:
                 type: array
                 items:
-                  type: string
-                description: "Prior instruction ids from [ARBITEROS_REF ...] markers in the conversation; use [] when none. Allowed ids are injected at request time."
+                  type: object
+                  properties:
+                    instruction_id:
+                      type: string
+                      description: "Prior instruction id from an [ARBITEROS_REF ...] marker."
+                    confidence:
+                      type: number
+                      minimum: 0
+                      maximum: 1
+                      description: "How direct and necessary this causal link is (0-1)."
+                    counterfactual:
+                      type: string
+                      maxLength: 240
+                      description: "One short sentence: if that predecessor had not occurred or produced its output, how would this step likely change?"
+                  required:
+                    - instruction_id
+                    - confidence
+                    - counterfactual
+                  additionalProperties: false
+                description: "Prior-step dependencies from [ARBITEROS_REF ...] markers; each entry needs instruction_id, confidence (0-1), and counterfactual. Use [] when none. Allowed ids are injected at request time."
             required:
               - topic
               - category

@@ -1,7 +1,12 @@
 """Unit tests for instruction depends_on resolution helpers."""
 
 from arbiteros_kernel.instruction_depends_on import (
+    DEFAULT_LEGACY_CONFIDENCE,
+    DEFAULT_LEGACY_COUNTERFACTUAL,
     DEPENDS_ON_CAUSAL_RULES,
+    DEPENDS_ON_COUNTERFACTUAL_RULES,
+    KERNEL_TOOL_RESULT_CONFIDENCE,
+    KERNEL_TOOL_RESULT_COUNTERFACTUAL,
     REF_KIND_LLMOUTPUT,
     REF_KIND_SYSTEMPROMPT,
     REF_KIND_TOOLCALL,
@@ -18,6 +23,7 @@ from arbiteros_kernel.instruction_depends_on import (
     build_tool_depends_on_description,
     format_arbiteros_ref_marker,
     kernel_depends_on_tool_call,
+    normalize_depends_on_declarations,
     resolve_depends_on_refs,
     resolve_instruction_ids_to_depends_on,
     resolve_mixed_depends_on_refs,
@@ -25,6 +31,15 @@ from arbiteros_kernel.instruction_depends_on import (
     resolve_tool_call_ids_to_depends_on,
     strip_arbiteros_ref_marker,
 )
+
+
+def _expected_entry(**kwargs):
+    base = {
+        "confidence": DEFAULT_LEGACY_CONFIDENCE,
+        "counterfactual": DEFAULT_LEGACY_COUNTERFACTUAL,
+    }
+    base.update(kwargs)
+    return base
 
 
 def _text_instr(instr_id: str, step: int, content: str = "hello") -> dict:
@@ -60,6 +75,48 @@ def test_format_and_strip_arbiteros_ref_marker():
     assert strip_arbiteros_ref_marker(marker + "hello") == "hello"
 
 
+def test_normalize_depends_on_declarations_accepts_objects_and_legacy_strings():
+    raw = [
+        {
+            "instruction_id": "i1",
+            "confidence": 0.9,
+            "counterfactual": "Without i1, this step would not know the file path.",
+        },
+        "i2",
+    ]
+    decls = normalize_depends_on_declarations(raw)
+    assert decls[0]["instruction_id"] == "i1"
+    assert decls[0]["confidence"] == 0.9
+    assert decls[1]["instruction_id"] == "i2"
+    assert decls[1]["confidence"] == 0.0
+
+
+def test_resolve_instruction_ids_preserves_confidence_and_counterfactual():
+    instructions = [_text_instr("i1", 1), _text_instr("i2", 2)]
+    resolved = resolve_instruction_ids_to_depends_on(
+        instructions,
+        [
+            {
+                "instruction_id": "i1",
+                "confidence": 0.85,
+                "counterfactual": "Without i1's error trace, this step would not target sanitization.",
+            }
+        ],
+        current_runtime_step=3,
+        trace_id="t1",
+    )
+    assert resolved == [
+        _expected_entry(
+            instruction_id="i1",
+            ref="i1",
+            ref_type=REF_TYPE_INSTRUCTION_ID,
+            source=SOURCE_MODEL,
+            confidence=0.85,
+            counterfactual="Without i1's error trace, this step would not target sanitization.",
+        )
+    ]
+
+
 def test_resolve_instruction_ids_skips_self_and_future():
     instructions = [_text_instr("i1", 1), _text_instr("i2", 2)]
     resolved = resolve_instruction_ids_to_depends_on(
@@ -69,12 +126,12 @@ def test_resolve_instruction_ids_skips_self_and_future():
         trace_id="t1",
     )
     assert resolved == [
-        {
-            "instruction_id": "i1",
-            "ref": "i1",
-            "ref_type": REF_TYPE_INSTRUCTION_ID,
-            "source": SOURCE_MODEL,
-        }
+        _expected_entry(
+            instruction_id="i1",
+            ref="i1",
+            ref_type=REF_TYPE_INSTRUCTION_ID,
+            source=SOURCE_MODEL,
+        )
     ]
 
 
@@ -84,12 +141,12 @@ def test_resolve_runtime_steps_skips_self_and_future():
         instructions, [1, 2, 3], current_runtime_step=2, trace_id="t1"
     )
     assert resolved == [
-        {
-            "instruction_id": "i1",
-            "ref": 1,
-            "ref_type": REF_TYPE_RUNTIME_STEP,
-            "source": SOURCE_MODEL,
-        }
+        _expected_entry(
+            instruction_id="i1",
+            ref=1,
+            ref_type=REF_TYPE_RUNTIME_STEP,
+            source=SOURCE_MODEL,
+        )
     ]
 
 
@@ -100,12 +157,12 @@ def test_resolve_tool_call_ids_prefers_result_instruction():
     ]
     resolved = resolve_tool_call_ids_to_depends_on(instructions, ["tc1"])
     assert resolved == [
-        {
-            "instruction_id": "call-with-result",
-            "ref": "tc1",
-            "ref_type": REF_TYPE_TOOL_CALL_ID,
-            "source": SOURCE_MODEL,
-        }
+        _expected_entry(
+            instruction_id="call-with-result",
+            ref="tc1",
+            ref_type=REF_TYPE_TOOL_CALL_ID,
+            source=SOURCE_MODEL,
+        )
     ]
 
 
@@ -116,12 +173,14 @@ def test_kernel_depends_on_tool_call_targets_call_without_result():
     ]
     resolved = kernel_depends_on_tool_call(instructions, "tc1")
     assert resolved == [
-        {
-            "instruction_id": "call-only",
-            "ref": "call-only",
-            "ref_type": REF_TYPE_INSTRUCTION_ID,
-            "source": SOURCE_KERNEL,
-        }
+        _expected_entry(
+            instruction_id="call-only",
+            ref="call-only",
+            ref_type=REF_TYPE_INSTRUCTION_ID,
+            source=SOURCE_KERNEL,
+            confidence=KERNEL_TOOL_RESULT_CONFIDENCE,
+            counterfactual=KERNEL_TOOL_RESULT_COUNTERFACTUAL,
+        )
     ]
 
 
@@ -143,6 +202,7 @@ def test_build_depends_on_schema_description_lists_allowed_ids():
     assert "Allowed instruction ids" in desc
     assert "i1" in desc
     assert DEPENDS_ON_CAUSAL_RULES.split(".")[0] in desc
+    assert "confidence" in desc.lower() or "counterfactual" in desc.lower()
 
 
 def test_build_allowed_depends_on_instruction_ids_excludes_future():
@@ -153,11 +213,14 @@ def test_build_allowed_depends_on_instruction_ids_excludes_future():
     assert allowed == ["i1"]
 
 
-def test_build_depends_on_items_schema_enum():
+def test_build_depends_on_items_schema_object_with_enum():
     instructions = [_text_instr("i1", 1), _text_instr("i2", 2)]
     items = build_depends_on_items_schema(instructions, current_runtime_step=3)
-    assert items["type"] == "string"
-    assert items["enum"] == ["i1", "i2"]
+    assert items["type"] == "object"
+    assert items["properties"]["instruction_id"]["enum"] == ["i1", "i2"]
+    assert "confidence" in items["properties"]
+    assert "counterfactual" in items["properties"]
+    assert items["required"] == ["instruction_id", "confidence", "counterfactual"]
 
 
 def test_resolve_depends_on_refs_accepts_instruction_ids_and_legacy():
@@ -202,6 +265,7 @@ def test_build_tool_depends_on_description_mentions_ref_markers():
     assert "ARBITEROS_REF" in desc
     assert "Allowed ids" in desc
     assert "DIRECT causal" in desc
+    assert DEPENDS_ON_COUNTERFACTUAL_RULES.split(".")[0] in desc
 
 
 def test_context_instruction_kind_constants():
@@ -225,26 +289,33 @@ def test_set_instruction_depends_on_strips_raw_depends_on_from_tool_arguments():
         content="system",
         context_key="system:0",
     )
+    decl = {
+        "instruction_id": system["id"],
+        "confidence": 0.95,
+        "counterfactual": "Without the system prompt, this tool call would lack scope constraints.",
+    }
     instr = builder.add_from_tool_call(
         tool_name="terminal",
         tool_call_id="call_1",
         arguments={
             "command": "ls",
-            "depends_on": [system["id"]],
+            "depends_on": [decl],
         },
     )
     _set_instruction_depends_on(
         builder,
         instr,
-        tool_depends_on_raw=[system["id"]],
+        tool_depends_on_raw=[decl],
         trace_id="depends-on-strip",
     )
     assert instr["depends_on"] == [
-        {
-            "instruction_id": system["id"],
-            "ref": system["id"],
-            "ref_type": REF_TYPE_INSTRUCTION_ID,
-            "source": SOURCE_MODEL,
-        }
+        _expected_entry(
+            instruction_id=system["id"],
+            ref=system["id"],
+            ref_type=REF_TYPE_INSTRUCTION_ID,
+            source=SOURCE_MODEL,
+            confidence=0.95,
+            counterfactual=decl["counterfactual"],
+        )
     ]
     assert "depends_on" not in instr["content"]["arguments"]

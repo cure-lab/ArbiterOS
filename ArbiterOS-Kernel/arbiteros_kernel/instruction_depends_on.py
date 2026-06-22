@@ -44,20 +44,38 @@ DEPENDS_ON_CAUSAL_RULES = (
     "merely thematic links. Use [] only when no prior step causally shaped this step."
 )
 
+DEPENDS_ON_COUNTERFACTUAL_RULES = (
+    "Each depends_on entry must include confidence (0-1, how direct and necessary the causal "
+    "link is) and counterfactual (one short sentence): if that predecessor had not occurred "
+    "or produced its output, how would this step's decision or action likely change? Mention "
+    "specific evidence from that predecessor; do not restate ids alone or use vague phrases "
+    "like 'informs this step'."
+)
+
 DEPENDS_ON_REF_RULES = (
     f"{DEPENDS_ON_CAUSAL_RULES} "
     "Prior steps are labeled in the conversation with markers like "
     "[ARBITEROS_REF id=<instruction-uuid> kind=SYSTEMPROMPT|USERINPUT|TOOLCALL|TOOLRESULT|LLMOUTPUT]. "
-    "Set depends_on to the id values copied from those markers; use [] when none. "
-    "Only reference instruction ids that appear earlier in the conversation."
+    "Set depends_on to objects with instruction_id copied from those markers; use [] when none. "
+    "Only reference instruction ids that appear earlier in the conversation. "
+    f"{DEPENDS_ON_COUNTERFACTUAL_RULES}"
 )
 
 DEPENDS_ON_CATALOG_RULES = DEPENDS_ON_REF_RULES
 
 DEPENDS_ON_STATIC_SCHEMA_HINT = (
-    "Prior instruction ids from [ARBITEROS_REF ...] markers in the conversation; "
-    "use [] when none. Allowed ids are injected at request time."
+    "Prior-step dependencies from [ARBITEROS_REF ...] markers; each entry needs "
+    "instruction_id, confidence (0-1), and counterfactual. Use [] when none. "
+    "Allowed ids are injected at request time."
 )
+
+KERNEL_TOOL_RESULT_CONFIDENCE = 1.0
+KERNEL_TOOL_RESULT_COUNTERFACTUAL = (
+    "Without the preceding tool call, this tool result would not exist."
+)
+
+DEFAULT_LEGACY_CONFIDENCE = 0.0
+DEFAULT_LEGACY_COUNTERFACTUAL = ""
 
 
 def format_arbiteros_ref_marker(instruction_id: str, kind: str) -> str:
@@ -142,6 +160,56 @@ def build_allowed_depends_on_instruction_ids(
     return allowed
 
 
+def clamp_confidence(value: Any) -> float:
+    if isinstance(value, bool):
+        return DEFAULT_LEGACY_CONFIDENCE
+    if isinstance(value, (int, float)):
+        n = float(value)
+        if n < 0.0:
+            return 0.0
+        if n > 1.0:
+            return 1.0
+        return n
+    return DEFAULT_LEGACY_CONFIDENCE
+
+
+def normalize_counterfactual(value: Any) -> str:
+    if isinstance(value, str):
+        return value.strip()
+    return DEFAULT_LEGACY_COUNTERFACTUAL
+
+
+def build_depends_on_entry_schema(allowed_ids: list[str]) -> dict[str, Any]:
+    instruction_id_schema: dict[str, Any] = {
+        "type": "string",
+        "description": "Prior instruction id from an [ARBITEROS_REF ...] marker.",
+    }
+    if allowed_ids:
+        instruction_id_schema["enum"] = allowed_ids
+    return {
+        "type": "object",
+        "properties": {
+            "instruction_id": instruction_id_schema,
+            "confidence": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1,
+                "description": "How direct and necessary this causal link is (0-1).",
+            },
+            "counterfactual": {
+                "type": "string",
+                "maxLength": 240,
+                "description": (
+                    "One short sentence: if that predecessor had not occurred or produced "
+                    "its output, how would this step likely change?"
+                ),
+            },
+        },
+        "required": ["instruction_id", "confidence", "counterfactual"],
+        "additionalProperties": False,
+    }
+
+
 def build_depends_on_items_schema(
     instructions: list[dict[str, Any]],
     *,
@@ -150,10 +218,7 @@ def build_depends_on_items_schema(
     allowed_ids = build_allowed_depends_on_instruction_ids(
         instructions, current_runtime_step=current_runtime_step
     )
-    items: dict[str, Any] = {"type": "string"}
-    if allowed_ids:
-        items["enum"] = allowed_ids
-    return items
+    return build_depends_on_entry_schema(allowed_ids)
 
 
 def build_depends_on_schema_description(
@@ -180,28 +245,68 @@ def build_depends_on_schema_description(
     )
 
 
-def normalize_text_depends_on_raw(value: Any) -> list[str]:
-    """Normalize depends_on raw values to string refs (instruction ids preferred)."""
+def normalize_depends_on_declarations(value: Any) -> list[dict[str, Any]]:
+    """Parse model depends_on (objects or legacy strings) into declaration dicts."""
     if not isinstance(value, list):
         return []
-    out: list[str] = []
+    out: list[dict[str, Any]] = []
     for item in value:
+        if isinstance(item, dict):
+            iid = item.get("instruction_id") or item.get("id")
+            if isinstance(iid, str) and iid.strip():
+                out.append(
+                    {
+                        "instruction_id": iid.strip(),
+                        "confidence": clamp_confidence(item.get("confidence")),
+                        "counterfactual": normalize_counterfactual(
+                            item.get("counterfactual")
+                        ),
+                    }
+                )
+            continue
         if isinstance(item, bool):
             continue
         if isinstance(item, str) and item.strip():
-            out.append(item.strip())
+            out.append(
+                {
+                    "instruction_id": item.strip(),
+                    "confidence": DEFAULT_LEGACY_CONFIDENCE,
+                    "counterfactual": DEFAULT_LEGACY_COUNTERFACTUAL,
+                }
+            )
             continue
         if isinstance(item, int) and item > 0:
-            out.append(str(item))
+            out.append(
+                {
+                    "instruction_id": str(item),
+                    "confidence": DEFAULT_LEGACY_CONFIDENCE,
+                    "counterfactual": DEFAULT_LEGACY_COUNTERFACTUAL,
+                }
+            )
             continue
         if isinstance(item, float) and item.is_integer() and item > 0:
-            out.append(str(int(item)))
+            out.append(
+                {
+                    "instruction_id": str(int(item)),
+                    "confidence": DEFAULT_LEGACY_CONFIDENCE,
+                    "counterfactual": DEFAULT_LEGACY_COUNTERFACTUAL,
+                }
+            )
     return out
+
+
+def normalize_text_depends_on_raw(value: Any) -> list[str]:
+    """Normalize depends_on raw values to string refs (instruction ids preferred)."""
+    return [
+        decl["instruction_id"]
+        for decl in normalize_depends_on_declarations(value)
+        if isinstance(decl.get("instruction_id"), str) and decl["instruction_id"]
+    ]
 
 
 def normalize_tool_depends_on_raw(value: Any) -> list[str]:
     if isinstance(value, list):
-        return [str(x).strip() for x in value if x is not None and str(x).strip()]
+        return normalize_text_depends_on_raw(value)
     if isinstance(value, str):
         stripped = value.strip()
         if not stripped:
@@ -209,14 +314,10 @@ def normalize_tool_depends_on_raw(value: Any) -> list[str]:
         try:
             parsed = json.loads(stripped)
             if isinstance(parsed, list):
-                return [
-                    str(x).strip()
-                    for x in parsed
-                    if x is not None and str(x).strip()
-                ]
+                return normalize_text_depends_on_raw(parsed)
         except json.JSONDecodeError:
             pass
-        return [stripped]
+        return normalize_text_depends_on_raw([stripped])
     return []
 
 
@@ -249,6 +350,25 @@ def _split_tool_depends_on_ref(item: Any) -> tuple[Optional[int], Optional[str]]
     return None, None
 
 
+def _make_resolved_entry(
+    *,
+    instruction_id: str,
+    ref: Any,
+    ref_type: str,
+    source: str,
+    confidence: float,
+    counterfactual: str,
+) -> dict[str, Any]:
+    return {
+        "instruction_id": instruction_id,
+        "ref": ref,
+        "ref_type": ref_type,
+        "source": source,
+        "confidence": clamp_confidence(confidence),
+        "counterfactual": normalize_counterfactual(counterfactual),
+    }
+
+
 def resolve_instruction_ids_to_depends_on(
     instructions: list[dict[str, Any]],
     raw_ids: Any,
@@ -256,11 +376,12 @@ def resolve_instruction_ids_to_depends_on(
     current_runtime_step: Optional[int] = None,
     trace_id: Optional[str] = None,
 ) -> list[dict[str, Any]]:
-    refs = normalize_text_depends_on_raw(raw_ids)
-    if not refs:
+    declarations = normalize_depends_on_declarations(raw_ids)
+    if not declarations:
         return []
     resolved: list[dict[str, Any]] = []
-    for ref in refs:
+    for decl in declarations:
+        ref = decl["instruction_id"]
         instr = find_instruction_by_id(instructions, ref)
         if instr is None:
             logger.debug(
@@ -284,12 +405,14 @@ def resolve_instruction_ids_to_depends_on(
             )
             continue
         resolved.append(
-            {
-                "instruction_id": ref,
-                "ref": ref,
-                "ref_type": REF_TYPE_INSTRUCTION_ID,
-                "source": SOURCE_MODEL,
-            }
+            _make_resolved_entry(
+                instruction_id=ref,
+                ref=ref,
+                ref_type=REF_TYPE_INSTRUCTION_ID,
+                source=SOURCE_MODEL,
+                confidence=decl["confidence"],
+                counterfactual=decl["counterfactual"],
+            )
         )
     return _dedupe_entries(resolved)
 
@@ -302,20 +425,40 @@ def resolve_depends_on_refs(
     trace_id: Optional[str] = None,
 ) -> list[dict[str, Any]]:
     """Resolve depends_on refs: instruction ids first, then legacy step/tool_call_id."""
-    refs = raw_refs if isinstance(raw_refs, list) else normalize_tool_depends_on_raw(raw_refs)
-    if not refs:
-        return []
-    resolved = resolve_instruction_ids_to_depends_on(
-        instructions,
-        refs,
-        current_runtime_step=current_runtime_step,
-        trace_id=trace_id,
+    raw_list = (
+        raw_refs
+        if isinstance(raw_refs, list)
+        else normalize_tool_depends_on_raw(raw_refs)
     )
+    if not raw_list:
+        return []
+    declarations = normalize_depends_on_declarations(raw_list)
+    resolved: list[dict[str, Any]] = []
     legacy: list[Any] = []
-    for item in refs:
-        if isinstance(item, str) and find_instruction_by_id(instructions, item.strip()):
+    for decl in declarations:
+        ref = decl["instruction_id"]
+        instr = find_instruction_by_id(instructions, ref)
+        if instr is None:
+            legacy.append(ref)
             continue
-        legacy.append(item)
+        step = instr.get("runtime_step")
+        if (
+            isinstance(current_runtime_step, int)
+            and current_runtime_step > 0
+            and isinstance(step, int)
+            and step >= current_runtime_step
+        ):
+            continue
+        resolved.append(
+            _make_resolved_entry(
+                instruction_id=ref,
+                ref=ref,
+                ref_type=REF_TYPE_INSTRUCTION_ID,
+                source=SOURCE_MODEL,
+                confidence=decl["confidence"],
+                counterfactual=decl["counterfactual"],
+            )
+        )
     if legacy:
         resolved.extend(
             resolve_mixed_depends_on_refs(
@@ -445,9 +588,22 @@ def find_tool_call_instruction_id_without_result(
     )
 
 
+_REF_TYPE_DEDUPE_RANK = {
+    REF_TYPE_INSTRUCTION_ID: 3,
+    REF_TYPE_TOOL_CALL_ID: 2,
+    REF_TYPE_RUNTIME_STEP: 1,
+}
+
+
+def _depends_on_entry_rank(entry: dict[str, Any]) -> tuple[float, int, int]:
+    ref_type = entry.get("ref_type")
+    rank = _REF_TYPE_DEDUPE_RANK.get(ref_type, 0) if isinstance(ref_type, str) else 0
+    counterfactual_bonus = 1 if normalize_counterfactual(entry.get("counterfactual")) else 0
+    return (clamp_confidence(entry.get("confidence")), rank, counterfactual_bonus)
+
+
 def _dedupe_entries(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    seen: set[str] = set()
-    out: list[dict[str, Any]] = []
+    by_id: dict[str, dict[str, Any]] = {}
     for entry in entries:
         if not isinstance(entry, dict):
             continue
@@ -455,11 +611,10 @@ def _dedupe_entries(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if not isinstance(instr_id, str) or not instr_id.strip():
             continue
         iid = instr_id.strip()
-        if iid in seen:
-            continue
-        seen.add(iid)
-        out.append(dict(entry))
-    return out
+        prev = by_id.get(iid)
+        if prev is None or _depends_on_entry_rank(entry) >= _depends_on_entry_rank(prev):
+            by_id[iid] = dict(entry)
+    return list(by_id.values())
 
 
 def resolve_runtime_steps_to_depends_on(
@@ -498,12 +653,14 @@ def resolve_runtime_steps_to_depends_on(
             )
             continue
         resolved.append(
-            {
-                "instruction_id": instruction_id,
-                "ref": step,
-                "ref_type": REF_TYPE_RUNTIME_STEP,
-                "source": SOURCE_MODEL,
-            }
+            _make_resolved_entry(
+                instruction_id=instruction_id,
+                ref=step,
+                ref_type=REF_TYPE_RUNTIME_STEP,
+                source=SOURCE_MODEL,
+                confidence=DEFAULT_LEGACY_CONFIDENCE,
+                counterfactual=DEFAULT_LEGACY_COUNTERFACTUAL,
+            )
         )
     return _dedupe_entries(resolved)
 
@@ -528,12 +685,14 @@ def resolve_tool_call_ids_to_depends_on(
             )
             continue
         resolved.append(
-            {
-                "instruction_id": instruction_id,
-                "ref": ref,
-                "ref_type": REF_TYPE_TOOL_CALL_ID,
-                "source": SOURCE_MODEL,
-            }
+            _make_resolved_entry(
+                instruction_id=instruction_id,
+                ref=ref,
+                ref_type=REF_TYPE_TOOL_CALL_ID,
+                source=SOURCE_MODEL,
+                confidence=DEFAULT_LEGACY_CONFIDENCE,
+                counterfactual=DEFAULT_LEGACY_COUNTERFACTUAL,
+            )
         )
     return _dedupe_entries(resolved)
 
@@ -548,12 +707,14 @@ def kernel_depends_on_tool_call(
         return []
     iid = instruction_id.strip()
     return [
-        {
-            "instruction_id": iid,
-            "ref": iid,
-            "ref_type": REF_TYPE_INSTRUCTION_ID,
-            "source": SOURCE_KERNEL,
-        }
+        _make_resolved_entry(
+            instruction_id=iid,
+            ref=iid,
+            ref_type=REF_TYPE_INSTRUCTION_ID,
+            source=SOURCE_KERNEL,
+            confidence=KERNEL_TOOL_RESULT_CONFIDENCE,
+            counterfactual=KERNEL_TOOL_RESULT_COUNTERFACTUAL,
+        )
     ]
 
 

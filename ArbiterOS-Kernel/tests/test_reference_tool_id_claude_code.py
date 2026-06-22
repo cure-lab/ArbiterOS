@@ -18,6 +18,14 @@ from arbiteros_kernel.litellm_callback import (
 )
 
 
+def _legacy_depends_on_entry(instruction_id: str) -> dict:
+    return {
+        "instruction_id": instruction_id,
+        "confidence": 0.0,
+        "counterfactual": "",
+    }
+
+
 def _claude_code_tool(name: str = "Read") -> dict:
     return {
         "name": name,
@@ -161,7 +169,7 @@ def test_wrap_depends_ons_into_anthropic_tool_use_history():
         read_input = wrapped["messages"][0]["content"][0]["input"]
         write_input = wrapped["messages"][1]["content"][0]["input"]
         assert read_input["depends_on"] == []
-        assert write_input["depends_on"] == ["tooluse_read_1"]
+        assert write_input["depends_on"] == [_legacy_depends_on_entry("tooluse_read_1")]
     finally:
         with _stripped_categories_lock:
             _stripped_reference_tool_ids_by_trace.pop(trace_id, None)
@@ -192,7 +200,7 @@ def test_strip_and_record_depends_ons_from_anthropic_message():
     assert "depends_on" not in stripped_input
     with _stripped_categories_lock:
         assert _stripped_reference_tool_ids_by_trace[trace_id]["tooluse_write_1"] == [
-            "tooluse_read_1"
+            _legacy_depends_on_entry("tooluse_read_1")
         ]
         _stripped_reference_tool_ids_by_trace.pop(trace_id, None)
 
@@ -223,7 +231,7 @@ def test_strip_malformed_string_depends_on(claude_code_agent):
     assert "depends_on" not in cleaned
     with _stripped_categories_lock:
         assert _stripped_reference_tool_ids_by_trace[trace_id]["tooluse_write_1"] == [
-            "tooluse_read_1"
+            _legacy_depends_on_entry("tooluse_read_1")
         ]
         _stripped_reference_tool_ids_by_trace.pop(trace_id, None)
 

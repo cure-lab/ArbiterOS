@@ -158,11 +158,19 @@ def test_collect_prior_tool_ids_merges_messages_and_input():
     assert ("call_resp", "exec_command") in collected
 
 
+def _legacy_depends_on_entry(instruction_id: str) -> dict:
+    return {
+        "instruction_id": instruction_id,
+        "confidence": 0.0,
+        "counterfactual": "",
+    }
+
+
 def test_wrap_depends_ons_into_responses_input():
     trace_id = "trace-wrap-codex-test"
     with _stripped_categories_lock:
         _stripped_reference_tool_ids_by_trace[trace_id] = {
-            "call_abc": ["call_prev"],
+            "call_abc": [_legacy_depends_on_entry("call_prev")],
         }
     try:
         data = {
@@ -177,7 +185,7 @@ def test_wrap_depends_ons_into_responses_input():
         }
         wrapped = _wrap_reference_tool_ids_into_request(data, trace_id=trace_id)
         args = json.loads(wrapped["input"][0]["arguments"])
-        assert args["depends_on"] == ["call_prev"]
+        assert args["depends_on"] == [_legacy_depends_on_entry("call_prev")]
         assert args["cmd"] == "ls"
     finally:
         with _stripped_categories_lock:
@@ -213,7 +221,7 @@ def test_strip_and_record_depends_ons_from_message():
     assert stripped_args["cmd"] == "ls"
     with _stripped_categories_lock:
         assert _stripped_reference_tool_ids_by_trace[trace_id]["call_xyz"] == [
-            "call_prev"
+            _legacy_depends_on_entry("call_prev")
         ]
         _stripped_reference_tool_ids_by_trace.pop(trace_id, None)
 
