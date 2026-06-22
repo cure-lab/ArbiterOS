@@ -1,9 +1,12 @@
+# api_key: sk-zk2982f60e8a30b35dde3206ab6ec954d926a195aea39a91
+# api_base: https://api.zhizengzeng.com/v1
+
 model_list:
-  - model_name: gpt-4o-mini
+  - model_name: gpt-4o
     litellm_params:
-      model: openai/gpt-4o-mini
-      api_key:
-      api_base:
+      model: gpt-4o
+      api_key: sk-zk2982f60e8a30b35dde3206ab6ec954d926a195aea39a91
+      api_base: https://api.zhizengzeng.com/v1
       response_format:
         type: json_schema
         json_schema:
@@ -30,8 +33,8 @@ model_list:
               depends_on:
                 type: array
                 items:
-                  type: integer
-                description: "Prior runtime_step integers; use [] when none. Full rules and step catalog are injected at request time."
+                  type: string
+                description: "Prior instruction ids from [ARBITEROS_REF ...] markers in the conversation; use [] when none. Allowed ids are injected at request time."
             required:
               - topic
               - category
@@ -79,21 +82,21 @@ litellm_settings:
 # Skill trust (arbiteros_kernel.skill_trust): path to ``.../skills`` (OpenClaw
 # skill packages). Non-empty ARBITEROS_SKILLS_ROOT overrides ``skills_root`` here.
 arbiteros_skill_trust:
-  skills_root: 
+  skills_root: /Users/ice/.openclaw/plugin-skills
 
 # Used when running ``skill-scanner`` from the kernel. All three keys must be
 # non-empty for ``--use-llm``; otherwise scans use static + behavioral only.
 skill_scanner_llm:
-  model: openai/gpt-4o
+  model: 
   api_base: 
-  api_key:
+  api_key: sk-AwRIObIpiTpewcVm94GIvfZevL6c5Yz2Duj9CR6b3a8x0rmi
 
 
 # Run once per session: before the first pure-text assistant reply, scan these files.
 # If any file is judged BLOCK, append a notice at the end of that reply.
 # LLM transport/parse failures are treated as SAFE (fail-open).
 session_bootstrap_scan:
-  enabled: true
+  enabled: false
   protected_paths:
     - "PATH/TO/YOUR/SOUL.MD"
     - "PATH/TO/YOUR/AGENTS.MD"

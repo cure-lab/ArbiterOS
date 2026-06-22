@@ -74,15 +74,23 @@ from arbiteros_kernel.protocol_adapter import (
 )
 from arbiteros_kernel.user_approval import apply_user_approval_preprocessing
 from arbiteros_kernel.instruction_depends_on import (
-    DEPENDS_ON_CATALOG_RULES,
+    DEPENDS_ON_STATIC_SCHEMA_HINT,
+    REF_KIND_LLMOUTPUT,
+    REF_KIND_SYSTEMPROMPT,
+    REF_KIND_TOOLCALL,
+    REF_KIND_TOOLRESULT,
+    REF_KIND_USERINPUT,
+    build_depends_on_items_schema,
     build_depends_on_schema_description,
-    build_runtime_step_catalog,
-    build_step_catalog_with_previews,
+    build_tool_depends_on_description,
+    find_instruction_id_by_tool_call_id,
+    format_arbiteros_ref_marker,
+    instruction_ref_kind,
     kernel_depends_on_tool_call,
     normalize_text_depends_on_raw,
     normalize_tool_depends_on_raw,
-    resolve_runtime_steps_to_depends_on,
-    resolve_tool_call_ids_to_depends_on,
+    resolve_depends_on_refs,
+    strip_arbiteros_ref_marker,
 )
 from arbiteros_kernel.policy_runtime import get_runtime, policy_runtime_override
 from arbiteros_kernel.role_policy_cfg_loader import load_role_policy_config
@@ -126,7 +134,7 @@ _NO_WRAP_SENTINEL = "__arbiteros_no_wrap__"
 _stripped_categories_by_trace: dict[str, list[str]] = {}
 _stripped_topics_by_trace: dict[str, list[Optional[str]]] = {}
 _stripped_reference_tool_ids_by_trace: dict[str, dict[str, list[str]]] = {}
-_stripped_text_depends_on_by_trace: dict[str, list[list[int]]] = {}
+_stripped_text_depends_on_by_trace: dict[str, list[list[str]]] = {}
 _pending_text_depends_on_by_trace: dict[str, Any] = {}
 _PENDING_TEXT_DEPENDS_ON_UNSET = object()
 _TOOL_DEPENDS_ON_ARG = "depends_on"
@@ -2317,79 +2325,51 @@ def _collect_prior_tool_call_ids_from_request(data: dict[str, Any]) -> list[tupl
     return merged
 
 
-def _build_tool_depends_on_description(
-    prior_items: list[tuple[str, str]],
-    *,
-    use_codex_responses_wording: bool = False,
-    use_claude_code_wording: bool = False,
-) -> str:
-    if use_codex_responses_wording:
-        base_desc = (
-            "List prior tool call_id values (NOT tool names) whose function_call_output "
-            "you used for this call's arguments. In Responses API history, each prior tool "
-            "invocation appears as a function_call item with call_id, followed by a "
-            "function_call_output item with the same call_id. Consider ALL prior tool calls "
-            "in the conversation, not just the most recent one; include every call_id whose "
-            "output fed into your current arguments. "
-            "(Examples: edit/write path/content from a prior read/listdir/grep; command text "
-            "derived from a prior exec_command output; process sessionId from a prior process list.) "
-            "Copy the exact call_id string from the matching function_call item. "
-            "Wrong: ['read']. Right: ['call_xxx']. Use [] when no prior tool output."
-        )
-    elif use_claude_code_wording:
-        base_desc = (
-            "List prior tool_use 'id' values (NOT tool names) whose tool_result output "
-            "you used for this call's input. In conversation history, each prior tool invocation "
-            "appears as a tool_use block with 'id' in an assistant message, followed by a "
-            "tool_result block with the matching 'tool_use_id' in a user message. Consider ALL "
-            "prior tool calls in the conversation, not just the most recent one; include every "
-            "id whose output fed into your current arguments. "
-            "(Examples: Write/Edit content from a prior Read; Bash command derived from prior "
-            "tool output.) Copy the exact tool_use id string. "
-            "Wrong: ['Read']. Right: ['tooluse_xxx']. Use [] when no prior tool output."
-        )
-    else:
-        base_desc = (
-            "List the 'tool_call_id' values (NOT tool names) from prior role='tool' messages whose "
-            "results you used for this call's arguments. Consider ALL tool calls in the conversation history, not just "
-            "the most recent one; include any prior call's 'tool_call_id' whose output fed into your current arguments. "
-            "(Examples: edit/write path/content from prior read/listdir/grep; oldText/newText from read; "
-            "exec command derived from prior tool call's output; process sessionId from process list.) "
-            "Each tool message has a 'tool_call_id' property—copy that exact string. "
-            "Wrong: ['read']. Right: ['call_xxx']. Use [] when no prior tool output."
-        )
-    if prior_items:
-        parts = [f"{i[0]} ({i[1]})" if i[1] else i[0] for i in prior_items]
-        ids_str = ", ".join(parts)
-        base_desc += f" Valid IDs in this conversation (copy exactly): {ids_str}."
-    return base_desc
+def _depends_on_instructions_for_trace(trace_id: Optional[str]) -> list[dict[str, Any]]:
+    if not isinstance(trace_id, str) or not trace_id.strip():
+        return []
+    if InstructionBuilder is None:
+        return []
+    builder = _get_instruction_builder_for_trace(trace_id.strip())
+    if builder is None:
+        return []
+    return list(getattr(builder, "instructions", []) or [])
 
 
 def _build_tool_depends_on_schema(
     prior_items: list[tuple[str, str]],
+    instructions: list[dict[str, Any]],
     *,
     use_codex_responses_wording: bool = False,
     use_claude_code_wording: bool = False,
+    current_runtime_step: Optional[int] = None,
 ) -> dict[str, Any]:
+    del prior_items
     return {
         "type": "array",
-        "items": {"type": "string"},
-        "description": _build_tool_depends_on_description(
-            prior_items,
+        "items": build_depends_on_items_schema(
+            instructions, current_runtime_step=current_runtime_step
+        ),
+        "description": build_tool_depends_on_description(
+            [],
+            instructions,
             use_codex_responses_wording=use_codex_responses_wording,
             use_claude_code_wording=use_claude_code_wording,
+            current_runtime_step=current_runtime_step,
         ),
     }
 
 
 def _build_reference_tool_id_schema(
     prior_items: list[tuple[str, str]],
+    instructions: list[dict[str, Any]],
     *,
     use_codex_responses_wording: bool = False,
     use_claude_code_wording: bool = False,
 ) -> dict[str, Any]:
     return _build_tool_depends_on_schema(
         prior_items,
+        instructions,
         use_codex_responses_wording=use_codex_responses_wording,
         use_claude_code_wording=use_claude_code_wording,
     )
@@ -2507,23 +2487,31 @@ def _inject_reference_tool_id_global_hint(
     _inject_tool_depends_on_global_hint(data, description_text)
 
 
-def _inject_tool_depends_on_into_tools(data: dict) -> None:
+def _inject_tool_depends_on_into_tools(
+    data: dict, *, trace_id: Optional[str] = None
+) -> None:
     """为 tools 添加 required 的 depends_on（parameters 或 description/instructions fallback）。"""
     tools = data.get("tools")
     if not isinstance(tools, list):
         return
     prior_items = _collect_prior_tool_call_ids_from_request(data)
+    instructions = _depends_on_instructions_for_trace(trace_id)
+    next_step = len(instructions) + 1
     use_codex_wording = _is_responses_api_request(data)
     use_claude_code_wording = _is_claude_code_tool_agent() and not use_codex_wording
     schema = _build_tool_depends_on_schema(
         prior_items,
+        instructions,
         use_codex_responses_wording=use_codex_wording,
         use_claude_code_wording=use_claude_code_wording,
+        current_runtime_step=next_step,
     )
-    description_hint = _build_tool_depends_on_description(
+    description_hint = build_tool_depends_on_description(
         prior_items,
+        instructions,
         use_codex_responses_wording=use_codex_wording,
         use_claude_code_wording=use_claude_code_wording,
+        current_runtime_step=next_step,
     )
     needs_global_hint = False
     for tool in tools:
@@ -2540,8 +2528,10 @@ def _inject_tool_depends_on_into_tools(data: dict) -> None:
         _inject_tool_depends_on_global_hint(data, description_hint)
 
 
-def _inject_reference_tool_id_into_tools(data: dict) -> None:
-    _inject_tool_depends_on_into_tools(data)
+def _inject_reference_tool_id_into_tools(
+    data: dict, *, trace_id: Optional[str] = None
+) -> None:
+    _inject_tool_depends_on_into_tools(data, trace_id=trace_id)
 
 
 def _save_precall_to_log(data: dict, trace_id: Optional[str]) -> None:
@@ -6091,7 +6081,7 @@ def _get_stripped_categories_for_trace(trace_id: Optional[str]) -> list[str]:
         return list(categories)
 
 
-def _get_stripped_text_depends_on_for_trace(trace_id: Optional[str]) -> list[list[int]]:
+def _get_stripped_text_depends_on_for_trace(trace_id: Optional[str]) -> list[list[str]]:
     if not isinstance(trace_id, str) or not trace_id.strip():
         return []
     with _stripped_categories_lock:
@@ -6099,7 +6089,7 @@ def _get_stripped_text_depends_on_for_trace(trace_id: Optional[str]) -> list[lis
         return [list(x) for x in slots]
 
 
-def _peek_latest_text_depends_on_raw_for_trace(trace_id: Optional[str]) -> list[int]:
+def _peek_latest_text_depends_on_raw_for_trace(trace_id: Optional[str]) -> list[str]:
     slots = _get_stripped_text_depends_on_for_trace(trace_id)
     if not slots:
         return []
@@ -6141,7 +6131,7 @@ def _set_instruction_depends_on(
     entries: list[dict[str, Any]] = []
     if text_depends_on_raw is not None:
         entries.extend(
-            resolve_runtime_steps_to_depends_on(
+            resolve_depends_on_refs(
                 instructions,
                 text_depends_on_raw,
                 current_runtime_step=current_step_int,
@@ -6150,9 +6140,10 @@ def _set_instruction_depends_on(
         )
     if tool_depends_on_raw is not None:
         entries.extend(
-            resolve_tool_call_ids_to_depends_on(
+            resolve_depends_on_refs(
                 instructions,
                 tool_depends_on_raw,
+                current_runtime_step=current_step_int,
                 trace_id=tid,
             )
         )
@@ -6161,6 +6152,23 @@ def _set_instruction_depends_on(
             kernel_depends_on_tool_call(instructions, kernel_tool_call_id)
         )
     instr["depends_on"] = _dedupe_depends_on_entries(entries)
+    _strip_depends_on_from_instruction_content(instr)
+
+
+def _strip_depends_on_from_instruction_content(instr: dict[str, Any]) -> None:
+    """Keep depends_on only on the instruction; drop kernel metadata from tool args."""
+    content = instr.get("content")
+    if not isinstance(content, dict):
+        return
+    args = content.get("arguments")
+    if not isinstance(args, dict):
+        return
+    if _TOOL_DEPENDS_ON_ARG not in args and _LEGACY_TOOL_DEPENDS_ON_ARG not in args:
+        return
+    cleaned = dict(args)
+    cleaned.pop(_TOOL_DEPENDS_ON_ARG, None)
+    cleaned.pop(_LEGACY_TOOL_DEPENDS_ON_ARG, None)
+    content["arguments"] = cleaned
 
 
 def _clear_pending_text_depends_on(trace_id: Optional[str]) -> None:
@@ -6285,7 +6293,7 @@ def _find_call_only_tool_arguments_in_builder(
     return None
 
 
-def _inject_runtime_step_catalog_into_response_format(
+def _inject_depends_on_schema_into_response_format(
     data: dict, *, trace_id: Optional[str]
 ) -> None:
     if not isinstance(trace_id, str) or not trace_id.strip():
@@ -6310,7 +6318,20 @@ def _inject_runtime_step_catalog_into_response_format(
         builder = _get_instruction_builder_for_trace(trace_id.strip())
         if builder is not None:
             instructions = list(getattr(builder, "instructions", []) or [])
-    dep["description"] = build_depends_on_schema_description(instructions)
+    next_step = len(instructions) + 1
+    dep["items"] = build_depends_on_items_schema(
+        instructions, current_runtime_step=next_step
+    )
+    dep["description"] = build_depends_on_schema_description(
+        instructions, current_runtime_step=next_step
+    )
+
+
+def _inject_runtime_step_catalog_into_response_format(
+    data: dict, *, trace_id: Optional[str]
+) -> None:
+    """Backward-compatible alias."""
+    _inject_depends_on_schema_into_response_format(data, trace_id=trace_id)
 
 
 def _get_stripped_topics_for_trace(trace_id: Optional[str]) -> list[Optional[str]]:
@@ -7422,11 +7443,8 @@ _ARBITEROS_BASE_RESPONSE_SCHEMA: dict[str, Any] = {
         },
         "depends_on": {
             "type": "array",
-            "items": {"type": "integer"},
-            "description": (
-                f"{DEPENDS_ON_CATALOG_RULES} "
-                "A full step catalog with previews is injected at request time."
-            ),
+            "items": {"type": "string"},
+            "description": DEPENDS_ON_STATIC_SCHEMA_HINT,
         },
     },
     "required": ["topic", "category", "content", "depends_on"],
@@ -7499,7 +7517,7 @@ def _wrap_messages_with_categories(
             if idx_from_end < len(stripped_topics)
             else None
         )
-        depends_on_slot: list[int] = (
+        depends_on_slot: list[str] = (
             list(stripped_depends_on[-(idx_from_end + 1)])
             if idx_from_end < len(stripped_depends_on)
             else []
@@ -7522,6 +7540,362 @@ def _wrap_messages_with_categories(
         else:
             messages[i] = {**msg, "content": wrapped}
     return {**data, "messages": messages}
+
+
+def _is_kernel_injected_message_text(text: str) -> bool:
+    if not isinstance(text, str):
+        return True
+    stripped = text.lstrip()
+    lowered = stripped.lower()
+    if lowered.startswith(
+        (
+            "[arbiteros_",
+            "[arbiteros_topic_hint",
+            "[arbiteros_tool_depends_on",
+        )
+    ):
+        return True
+    return stripped.startswith("[ARBITEROS_")
+
+
+def _context_instruction_by_key(
+    instructions: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    out: dict[str, dict[str, Any]] = {}
+    for instr in instructions:
+        if not isinstance(instr, dict):
+            continue
+        key = instr.get("context_key")
+        if isinstance(key, str) and key.strip():
+            out[key.strip()] = instr
+    return out
+
+
+def _sync_context_instructions_for_trace(
+    trace_id: Optional[str], messages: list[Any]
+) -> None:
+    if not isinstance(trace_id, str) or not trace_id.strip():
+        return
+    if InstructionBuilder is None:
+        return
+    builder = _get_instruction_builder_for_trace(trace_id.strip())
+    if builder is None:
+        return
+    if not isinstance(messages, list):
+        return
+
+    by_key = _context_instruction_by_key(
+        list(getattr(builder, "instructions", []) or [])
+    )
+    count_before = len(getattr(builder, "instructions", []) or [])
+    system_idx = 0
+    user_idx = 0
+
+    for msg in messages:
+        if not isinstance(msg, dict):
+            continue
+        role = msg.get("role")
+        text = _extract_text_from_message_content(msg.get("content"))
+        if role == "system":
+            if not isinstance(text, str) or not text.strip():
+                continue
+            if _is_kernel_injected_message_text(text):
+                continue
+            key = f"system:{system_idx}"
+            system_idx += 1
+            if key in by_key:
+                continue
+            try:
+                instr = builder.add_from_context_message(
+                    ref_kind=REF_KIND_SYSTEMPROMPT,
+                    content=text,
+                    context_key=key,
+                )
+                by_key[key] = instr
+            except Exception:
+                pass
+        elif role == "user":
+            if not isinstance(text, str) or not text.strip():
+                continue
+            key = f"user:{user_idx}"
+            user_idx += 1
+            if key in by_key:
+                continue
+            try:
+                instr = builder.add_from_context_message(
+                    ref_kind=REF_KIND_USERINPUT,
+                    content=text,
+                    context_key=key,
+                )
+                by_key[key] = instr
+            except Exception:
+                pass
+
+    if len(getattr(builder, "instructions", []) or []) > count_before:
+        _save_instructions_to_trace_file(
+            trace_id.strip(), builder, token_usage_start_index=count_before
+        )
+
+
+def _build_ref_marker_maps(
+    instructions: list[dict[str, Any]],
+) -> tuple[
+    dict[str, dict[str, Any]],
+    list[dict[str, Any]],
+    dict[str, str],
+    dict[str, str],
+]:
+    by_context_key = _context_instruction_by_key(instructions)
+    llm_output_instrs: list[dict[str, Any]] = []
+    tool_call_id_to_instr_id: dict[str, str] = {}
+    tool_result_id_to_instr_id: dict[str, str] = {}
+
+    for instr in instructions:
+        if not isinstance(instr, dict):
+            continue
+        kind = instruction_ref_kind(instr)
+        instr_id = instr.get("id")
+        if not isinstance(instr_id, str) or not instr_id.strip():
+            continue
+        iid = instr_id.strip()
+        if kind == REF_KIND_LLMOUTPUT:
+            llm_output_instrs.append(instr)
+            continue
+        content = instr.get("content")
+        if not isinstance(content, dict):
+            continue
+        tc_id = content.get("tool_call_id")
+        if not isinstance(tc_id, str) or not tc_id.strip():
+            continue
+        tc_id = tc_id.strip()
+        if kind == REF_KIND_TOOLCALL:
+            tool_call_id_to_instr_id.setdefault(tc_id, iid)
+        elif kind == REF_KIND_TOOLRESULT:
+            tool_result_id_to_instr_id[tc_id] = iid
+
+    return by_context_key, llm_output_instrs, tool_call_id_to_instr_id, tool_result_id_to_instr_id
+
+
+def _prepend_arbiteros_ref(content: str, marker: str) -> str:
+    return marker + strip_arbiteros_ref_marker(content)
+
+
+def _inject_ref_markers_into_messages(
+    data: dict, *, trace_id: Optional[str] = None
+) -> dict:
+    messages = data.get("messages")
+    if not isinstance(messages, list):
+        return data
+    if not isinstance(trace_id, str) or not trace_id.strip():
+        return data
+    if InstructionBuilder is None:
+        return data
+
+    _sync_context_instructions_for_trace(trace_id, messages)
+    builder = _get_instruction_builder_for_trace(trace_id.strip())
+    if builder is None:
+        return data
+    instructions = list(getattr(builder, "instructions", []) or [])
+    (
+        by_context_key,
+        llm_output_instrs,
+        tool_call_id_to_instr_id,
+        tool_result_id_to_instr_id,
+    ) = _build_ref_marker_maps(instructions)
+
+    new_messages = list(messages)
+    modified = False
+    system_idx = 0
+    user_idx = 0
+    llm_output_idx = 0
+
+    for i, msg in enumerate(new_messages):
+        if not isinstance(msg, dict):
+            continue
+        role = msg.get("role")
+        if role == "system":
+            text = _extract_text_from_message_content(msg.get("content"))
+            if not isinstance(text, str) or not text.strip():
+                continue
+            if _is_kernel_injected_message_text(text):
+                continue
+            instr = by_context_key.get(f"system:{system_idx}")
+            system_idx += 1
+            if instr is None:
+                continue
+            kind = instruction_ref_kind(instr) or REF_KIND_SYSTEMPROMPT
+            instr_id = instr.get("id")
+            if not isinstance(instr_id, str) or not instr_id.strip():
+                continue
+            marker = format_arbiteros_ref_marker(instr_id.strip(), kind)
+            content = msg.get("content")
+            if isinstance(content, str):
+                new_messages[i] = {
+                    **msg,
+                    "content": _prepend_arbiteros_ref(content, marker),
+                }
+                modified = True
+            elif isinstance(content, list):
+                new_parts = list(content)
+                for j, part in enumerate(new_parts):
+                    if isinstance(part, dict) and part.get("type") == "text":
+                        txt = part.get("text")
+                        if isinstance(txt, str):
+                            new_parts[j] = {
+                                **part,
+                                "text": _prepend_arbiteros_ref(txt, marker),
+                            }
+                            new_messages[i] = {**msg, "content": new_parts}
+                            modified = True
+                        break
+        elif role == "user":
+            text = _extract_text_from_message_content(msg.get("content"))
+            if not isinstance(text, str) or not text.strip():
+                continue
+            instr = by_context_key.get(f"user:{user_idx}")
+            user_idx += 1
+            if instr is None:
+                continue
+            kind = instruction_ref_kind(instr) or REF_KIND_USERINPUT
+            instr_id = instr.get("id")
+            if not isinstance(instr_id, str) or not instr_id.strip():
+                continue
+            marker = format_arbiteros_ref_marker(instr_id.strip(), kind)
+            content = msg.get("content")
+            if isinstance(content, str):
+                new_messages[i] = {
+                    **msg,
+                    "content": _prepend_arbiteros_ref(content, marker),
+                }
+                modified = True
+            elif isinstance(content, list):
+                new_parts = list(content)
+                for j, part in enumerate(new_parts):
+                    if isinstance(part, dict) and part.get("type") == "text":
+                        txt = part.get("text")
+                        if isinstance(txt, str):
+                            new_parts[j] = {
+                                **part,
+                                "text": _prepend_arbiteros_ref(txt, marker),
+                            }
+                            new_messages[i] = {**msg, "content": new_parts}
+                            modified = True
+                        break
+        elif role == "assistant":
+            updated_msg = dict(msg)
+            msg_modified = False
+            text, content_list, part_idx = _extract_text_to_wrap(updated_msg)
+            if text is not None and llm_output_idx < len(llm_output_instrs):
+                instr = llm_output_instrs[llm_output_idx]
+                llm_output_idx += 1
+                instr_id = instr.get("id")
+                kind = instruction_ref_kind(instr) or REF_KIND_LLMOUTPUT
+                if isinstance(instr_id, str) and instr_id.strip():
+                    marker = format_arbiteros_ref_marker(instr_id.strip(), kind)
+                    if content_list is not None and part_idx is not None:
+                        new_parts = list(content_list)
+                        part = new_parts[part_idx]
+                        if isinstance(part, dict):
+                            txt = part.get("text")
+                            if isinstance(txt, str):
+                                new_parts[part_idx] = {
+                                    **part,
+                                    "text": _prepend_arbiteros_ref(txt, marker),
+                                }
+                                updated_msg = {**updated_msg, "content": new_parts}
+                                msg_modified = True
+                    elif isinstance(updated_msg.get("content"), str):
+                        updated_msg = {
+                            **updated_msg,
+                            "content": _prepend_arbiteros_ref(
+                                updated_msg["content"], marker
+                            ),
+                        }
+                        msg_modified = True
+            tool_calls = updated_msg.get("tool_calls")
+            if isinstance(tool_calls, list) and tool_calls:
+                ref_lines: list[str] = []
+                for tc in tool_calls:
+                    if not isinstance(tc, dict):
+                        continue
+                    tc_id = tc.get("id")
+                    if not isinstance(tc_id, str) or not tc_id.strip():
+                        continue
+                    instr_id = tool_call_id_to_instr_id.get(tc_id.strip())
+                    if not instr_id:
+                        continue
+                    ref_lines.append(
+                        format_arbiteros_ref_marker(
+                            instr_id, REF_KIND_TOOLCALL
+                        ).rstrip("\n")
+                    )
+                if ref_lines:
+                    prefix = "\n".join(ref_lines) + "\n"
+                    content = updated_msg.get("content")
+                    if isinstance(content, str) and content.strip():
+                        updated_msg = {
+                            **updated_msg,
+                            "content": prefix
+                            + strip_arbiteros_ref_marker(content),
+                        }
+                    elif isinstance(content, list):
+                        updated_msg = {**updated_msg, "content": prefix}
+                    else:
+                        updated_msg = {**updated_msg, "content": prefix}
+                    msg_modified = True
+            if msg_modified:
+                new_messages[i] = updated_msg
+                modified = True
+        elif role == "tool":
+            tc_id = msg.get("tool_call_id")
+            if not isinstance(tc_id, str) or not tc_id.strip():
+                continue
+            instr_id = tool_result_id_to_instr_id.get(tc_id.strip())
+            if not instr_id:
+                instr_id = find_instruction_id_by_tool_call_id(
+                    instructions, tc_id.strip(), prefer_with_result=True
+                )
+            if not instr_id:
+                continue
+            marker = format_arbiteros_ref_marker(instr_id, REF_KIND_TOOLRESULT)
+            content = msg.get("content")
+            if isinstance(content, str):
+                stripped = strip_arbiteros_ref_marker(content)
+                if stripped.startswith("[ARBITEROS_TAINT"):
+                    taint_end = stripped.find("]\n")
+                    if taint_end != -1:
+                        taint_prefix = stripped[: taint_end + 2]
+                        body = stripped[taint_end + 2 :]
+                        new_messages[i] = {
+                            **msg,
+                            "content": taint_prefix + marker + body,
+                        }
+                    else:
+                        new_messages[i] = {
+                            **msg,
+                            "content": marker + stripped,
+                        }
+                else:
+                    new_messages[i] = {
+                        **msg,
+                        "content": marker + stripped,
+                    }
+                modified = True
+            elif isinstance(content, list):
+                new_parts = list(content)
+                for j, part in enumerate(new_parts):
+                    if isinstance(part, dict) and part.get("type") == "text":
+                        txt = part.get("text")
+                        if isinstance(txt, str):
+                            new_parts[j] = {
+                                **part,
+                                "text": _prepend_arbiteros_ref(txt, marker),
+                            }
+                            new_messages[i] = {**msg, "content": new_parts}
+                            modified = True
+                        break
+
+    return {**data, "messages": new_messages} if modified else data
 
 
 def _inject_taint_watermarks_into_messages(
@@ -7738,7 +8112,7 @@ class MyCustomHandler(CustomLogger):
         # 把 history 里 assistant 的 content 按当前 trace 记录的 category 从后往前包回结构，再请求
         data = _wrap_messages_with_categories(data, trace_id=trace_id_for_cache)
         data = _wrap_reference_tool_ids_into_request(data, trace_id=trace_id_for_cache)
-        _inject_runtime_step_catalog_into_response_format(
+        _inject_depends_on_schema_into_response_format(
             data, trace_id=trace_id_for_cache
         )
         runtime_override_ctx = (
@@ -7753,6 +8127,7 @@ class MyCustomHandler(CustomLogger):
                 user_messages=_extract_all_user_messages_from_request(data),
                 policy_enabled_override=role_policy_override,
             )
+        data = _inject_ref_markers_into_messages(data, trace_id=trace_id_for_cache)
         data = _inject_taint_watermarks_into_messages(data, trace_id=trace_id_for_cache)
 
         # Clean up any previously persisted noisy topic summaries so future traces
@@ -7958,7 +8333,7 @@ class MyCustomHandler(CustomLogger):
                 )
             )
             _save_json("pre_call", {"call_type": call_type, "incoming": filtered_data})
-        _inject_tool_depends_on_into_tools(data)
+        _inject_tool_depends_on_into_tools(data, trace_id=trace_id_for_cache)
         compat_flags = _resolve_upstream_compat_flags(data.get("model"))
         metadata_for_backup = data.get("metadata") if isinstance(data, dict) else None
         if compat_flags.get("strip_metadata"):
