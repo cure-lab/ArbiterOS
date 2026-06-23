@@ -536,6 +536,31 @@ def find_instruction_id_by_runtime_step(
     return None
 
 
+def find_tool_result_instruction_for_call_id(
+    instructions: list[dict[str, Any]], tool_call_id: str
+) -> Optional[dict[str, Any]]:
+    """Return the first instruction that records a result for ``tool_call_id``."""
+    tc_id = tool_call_id.strip()
+    if not tc_id:
+        return None
+    for instr in instructions:
+        if not isinstance(instr, dict):
+            continue
+        content = _instruction_content(instr.get("content"))
+        if content.get("tool_call_id") != tc_id:
+            continue
+        if content.get("result") is None:
+            continue
+        return instr
+    return None
+
+
+def builder_has_tool_result_for_call_id(
+    instructions: list[dict[str, Any]], tool_call_id: str
+) -> bool:
+    return find_tool_result_instruction_for_call_id(instructions, tool_call_id) is not None
+
+
 def find_instruction_id_by_tool_call_id(
     instructions: list[dict[str, Any]],
     tool_call_id: str,
