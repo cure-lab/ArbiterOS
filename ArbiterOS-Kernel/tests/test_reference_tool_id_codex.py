@@ -158,11 +158,19 @@ def test_collect_prior_tool_ids_merges_messages_and_input():
     assert ("call_resp", "exec_command") in collected
 
 
+def _legacy_depends_on_entry(instruction_id: str) -> dict:
+    return {
+        "instruction_id": instruction_id,
+        "confidence": 0.0,
+        "counterfactual": "",
+    }
+
+
 def test_wrap_depends_ons_into_responses_input():
     trace_id = "trace-wrap-codex-test"
     with _stripped_categories_lock:
         _stripped_reference_tool_ids_by_trace[trace_id] = {
-            "call_abc": ["call_prev"],
+            "call_abc": [_legacy_depends_on_entry("call_prev")],
         }
     try:
         data = {
@@ -177,7 +185,7 @@ def test_wrap_depends_ons_into_responses_input():
         }
         wrapped = _wrap_reference_tool_ids_into_request(data, trace_id=trace_id)
         args = json.loads(wrapped["input"][0]["arguments"])
-        assert args["depends_on"] == ["call_prev"]
+        assert args["depends_on"] == [_legacy_depends_on_entry("call_prev")]
         assert args["cmd"] == "ls"
     finally:
         with _stripped_categories_lock:
@@ -213,7 +221,7 @@ def test_strip_and_record_depends_ons_from_message():
     assert stripped_args["cmd"] == "ls"
     with _stripped_categories_lock:
         assert _stripped_reference_tool_ids_by_trace[trace_id]["call_xyz"] == [
-            "call_prev"
+            _legacy_depends_on_entry("call_prev")
         ]
         _stripped_reference_tool_ids_by_trace.pop(trace_id, None)
 
@@ -322,3 +330,182 @@ def test_inject_depends_on_all_codex_tools_from_precall_fixture():
     assert "description" not in data["tools"][3]
     assert "description" not in data["tools"][4]
     assert "[arbiteros_depends_on]" in data["instructions"]
+
+
+def test_strip_depends_on_uses_internal_trace_id_when_metadata_stripped():
+    from arbiteros_kernel.litellm_callback import (
+        _strip_and_record_tool_depends_on_from_message,
+        _stripped_categories_lock,
+        _stripped_reference_tool_ids_by_trace,
+    )
+
+    trace_id = "trace-strip-internal-id"
+    with _stripped_categories_lock:
+        _stripped_reference_tool_ids_by_trace.pop(trace_id, None)
+    message = {
+        "role": "assistant",
+        "tool_calls": [
+            {
+                "id": "call_xyz",
+                "type": "function",
+                "function": {
+                    "name": "exec_command",
+                    "arguments": json.dumps(
+                        {
+                            "cmd": "ls",
+                            "depends_on": [
+                                {
+                                    "instruction_id": "prev-id",
+                                    "confidence": 0.9,
+                                    "counterfactual": "needed",
+                                }
+                            ],
+                        }
+                    ),
+                },
+            }
+        ],
+    }
+    request_data = {"_arbiteros_trace_id": trace_id}
+    _strip_and_record_tool_depends_on_from_message(message, request_data)
+    stripped_args = json.loads(message["tool_calls"][0]["function"]["arguments"])
+    assert "depends_on" not in stripped_args
+    with _stripped_categories_lock:
+        stored = _stripped_reference_tool_ids_by_trace[trace_id]["call_xyz"]
+        assert stored[0]["instruction_id"] == "prev-id"
+        _stripped_reference_tool_ids_by_trace.pop(trace_id, None)
+
+
+def test_extract_tool_results_from_responses_input():
+    from arbiteros_kernel.litellm_callback import (
+        _extract_tool_call_details_from_responses_input,
+        _extract_tool_results_from_responses_input,
+    )
+
+    input_items = [
+        {
+            "type": "function_call",
+            "name": "exec_command",
+            "call_id": "call_read",
+            "arguments": '{"cmd":"cat file.txt"}',
+        },
+        {
+            "type": "function_call_output",
+            "call_id": "call_read",
+            "output": "menu content",
+        },
+    ]
+    results = _extract_tool_results_from_responses_input(input_items)
+    assert len(results) == 1
+    assert results[0]["tool_call_id"] == "call_read"
+    assert results[0]["content"] == "menu content"
+
+    details = _extract_tool_call_details_from_responses_input(input_items)
+    assert details["call_read"]["tool_name"] == "exec_command"
+    assert details["call_read"]["tool_arguments"]["cmd"] == "cat file.txt"
+
+
+def test_inject_responses_api_text_format_maps_schema():
+    from arbiteros_kernel.litellm_callback import _inject_responses_api_text_format
+
+    data = {
+        "model": "gpt-5.5",
+        "input": [{"type": "message", "role": "user", "content": "hi"}],
+        "text": {"verbosity": "low"},
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "instruction_output",
+                "strict": True,
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "topic": {"type": "string"},
+                        "category": {"type": "string"},
+                        "content": {"type": "string"},
+                        "depends_on": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "instruction_id": {"type": "string"},
+                                    "confidence": {"type": "number"},
+                                    "counterfactual": {"type": "string"},
+                                },
+                            },
+                            "description": "catalog here",
+                        },
+                    },
+                    "required": ["topic", "category", "content", "depends_on"],
+                    "additionalProperties": False,
+                },
+            },
+        },
+    }
+    _inject_responses_api_text_format(data)
+    assert "response_format" not in data
+    assert data["text"]["verbosity"] == "low"
+    fmt = data["text"]["format"]
+    assert fmt["type"] == "json_schema"
+    assert fmt["name"] == "instruction_output"
+    assert fmt["strict"] is True
+    assert fmt["schema"]["properties"]["depends_on"]["description"] == "catalog here"
+
+
+def test_inject_responses_api_text_format_ignores_chat_completions():
+    from arbiteros_kernel.litellm_callback import _inject_responses_api_text_format
+
+    data = {
+        "model": "gpt-4",
+        "messages": [{"role": "user", "content": "hi"}],
+        "response_format": {"type": "json_schema", "json_schema": {"schema": {}}},
+    }
+    _inject_responses_api_text_format(data)
+    assert "response_format" in data
+    assert "format" not in (data.get("text") or {})
+
+
+def test_wrap_responses_input_with_categories():
+    from arbiteros_kernel.litellm_callback import (
+        _stripped_categories_by_trace,
+        _stripped_categories_lock,
+        _stripped_text_depends_on_by_trace,
+        _stripped_topics_by_trace,
+        _wrap_responses_input_with_categories,
+    )
+
+    trace_id = "trace-wrap-responses-text"
+    dep_slot = [
+        {
+            "instruction_id": "aaaa",
+            "confidence": 0.8,
+            "counterfactual": "needed",
+        }
+    ]
+    with _stripped_categories_lock:
+        _stripped_categories_by_trace[trace_id] = ["COGNITIVE_CORE__RESPOND"]
+        _stripped_topics_by_trace[trace_id] = ["读取菜单"]
+        _stripped_text_depends_on_by_trace[trace_id] = [dep_slot]
+    try:
+        data = {
+            "model": "gpt-5.5",
+            "input": [
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "文件内容是菜单"}],
+                }
+            ],
+        }
+        wrapped = _wrap_responses_input_with_categories(data, trace_id=trace_id)
+        text = wrapped["input"][0]["content"][0]["text"]
+        parsed = json.loads(text)
+        assert parsed["category"] == "COGNITIVE_CORE__RESPOND"
+        assert parsed["topic"] == "读取菜单"
+        assert parsed["content"] == "文件内容是菜单"
+        assert parsed["depends_on"] == dep_slot
+    finally:
+        with _stripped_categories_lock:
+            _stripped_categories_by_trace.pop(trace_id, None)
+            _stripped_topics_by_trace.pop(trace_id, None)
+            _stripped_text_depends_on_by_trace.pop(trace_id, None)

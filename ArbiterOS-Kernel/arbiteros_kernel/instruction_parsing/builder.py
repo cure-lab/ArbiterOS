@@ -15,6 +15,14 @@ from typing import Any, Dict, List, Optional
 
 from .tool_parsers import parse_tool_instruction
 from .tool_agent_config import get_tool_agent
+from arbiteros_kernel.instruction_depends_on import (
+    REF_KIND_LLMOUTPUT,
+    REF_KIND_SYSTEMPROMPT,
+    REF_KIND_TOOLCALL,
+    REF_KIND_TOOLRESULT,
+    REF_KIND_USERINPUT,
+)
+
 from .types import (
     INSTRUCTION_TYPE_TO_CATEGORY,
     Instruction,
@@ -100,8 +108,10 @@ class InstructionBuilder:
         rule_types: Optional[List[RuleType]] = None,
         instruction_category: Optional[str] = None,
         instruction_type: Optional[str] = None,
+        arbiteros_ref_kind: Optional[str] = None,
+        context_key: Optional[str] = None,
     ) -> Instruction:
-        return {
+        instr: Instruction = {
             "id": self._new_id(),
             "content": content,
             "runtime_step": runtime_step
@@ -114,6 +124,11 @@ class InstructionBuilder:
             "instruction_category": instruction_category,
             "instruction_type": instruction_type or "REASON",
         }
+        if isinstance(arbiteros_ref_kind, str) and arbiteros_ref_kind.strip():
+            instr["arbiteros_ref_kind"] = arbiteros_ref_kind.strip()
+        if isinstance(context_key, str) and context_key.strip():
+            instr["context_key"] = context_key.strip()
+        return instr
 
     def _commit(self, instr: Instruction) -> Instruction:
         """Wire source_message_id linkage, append to the list, and set cumulative prop_*."""
@@ -182,6 +197,45 @@ class InstructionBuilder:
                 rule_types=rule_types,
                 instruction_category=category,
                 instruction_type=action_type or "REASON",
+                arbiteros_ref_kind=REF_KIND_LLMOUTPUT,
+            )
+        )
+
+    def add_from_context_message(
+        self,
+        *,
+        ref_kind: str,
+        content: str,
+        context_key: str,
+        parent_id: Optional[str] = None,
+        source_message_id: Optional[str] = None,
+        runtime_step: Optional[int] = None,
+    ) -> Instruction:
+        """Register system prompt or user input as a first-class instruction."""
+        category = (
+            "EXECUTION.Human"
+            if ref_kind == REF_KIND_USERINPUT
+            else "EXECUTION.Env"
+        )
+        return self._commit(
+            self._build(
+                content=content,
+                parent_id=parent_id
+                if parent_id is not None
+                else self._last_instruction_id,
+                source_message_id=source_message_id,
+                runtime_step=runtime_step,
+                security_type=make_security_type(
+                    confidentiality="LOW",
+                    trustworthiness="HIGH",
+                    confidence="UNKNOWN",
+                    reversible=True,
+                    authority="UNKNOWN",
+                ),
+                instruction_category=category,
+                instruction_type=ref_kind,
+                arbiteros_ref_kind=ref_kind,
+                context_key=context_key,
             )
         )
 
@@ -210,6 +264,7 @@ class InstructionBuilder:
 
         taint = self.get_taint_status()
         parsed = parse_tool_instruction(tool_name, arguments, taint_status=taint)
+        ref_kind = REF_KIND_TOOLRESULT if result is not None else REF_KIND_TOOLCALL
         return self._commit(
             self._build(
                 content=content,
@@ -223,6 +278,7 @@ class InstructionBuilder:
                     parsed.instruction_type, "EXECUTION.Env"
                 ),
                 instruction_type=parsed.instruction_type,
+                arbiteros_ref_kind=ref_kind,
             )
         )
 
