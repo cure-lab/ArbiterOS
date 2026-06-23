@@ -7182,12 +7182,17 @@ class MyCustomHandler(CustomLogger):
             query_text = " ".join(query_parts)
             original_model = data["model"]
             routed_model, route_info = _llm_router.route_with_info(query_text, original_model)
+            route_log = (
+                f"[LLMRouter] strategy={_llm_router.strategy} | {route_info} | "
+                f"request={original_model} routed_to={routed_model}"
+            )
             _console.print(
                 f"[bold cyan][LLMRouter][/bold cyan] "
                 f"strategy=[yellow]{_llm_router.strategy}[/yellow] | "
                 f"{route_info} | "
                 f"[dim]{original_model}[/dim] → [bold green]{routed_model}[/bold green]"
             )
+            logger.info(route_log)
             if routed_model != original_model:
                 data = {**data, "model": routed_model}
 

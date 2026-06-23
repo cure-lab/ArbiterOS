@@ -2,12 +2,12 @@ model_list:
   - model_name: gpt-5.5
     litellm_params:
       model: openai/gpt-5.5
-      api_key: 
+      api_key:
       api_base: https://poloapi.top/v1
   - model_name: claude-sonnet-4-6
     litellm_params:
       model: openai/claude-sonnet-4-6
-      api_key: 
+      api_key:
       api_base: https://poloapi.top/v1
       response_format:
         type: json_schema
@@ -43,7 +43,7 @@ model_list:
 # enabled: false for openclaw, nanobot, and hermes
 llm_routing:
   enabled: true
-  strategy: smallest_llm
+  strategy: keyword_router
 
 arbiteros_config:
   tool_agent: openclaw

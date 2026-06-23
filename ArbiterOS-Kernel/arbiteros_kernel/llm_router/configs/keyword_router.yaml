@@ -1,0 +1,39 @@
+# KeywordRouter 配置
+# 按优先级降序匹配，第一个命中的规则生效
+
+routing_rules:
+  # 编程/代码相关 → 使用 Claude
+  - keywords:
+      - "代码"
+      - "code"
+      - "编程"
+      - "programming"
+      - "python"
+      - "javascript"
+      - "typescript"
+      - "rust"
+      - "debug"
+      - "refactor"
+      - "implement"
+    model: claude-sonnet-4-6
+    priority: 10
+
+  # 图像/视觉相关 → 使用 GPT
+  - keywords:
+      - "图像"
+      - "image"
+      - "图片"
+      - "picture"
+      - "视觉"
+      - "vision"
+      - "画"
+      - "draw"
+      - "生成图片"
+    model: gpt-5.5
+    priority: 5
+
+# 无匹配时使用的默认模型
+default_model: claude-sonnet-4-6
+
+# 是否区分大小写（默认 false）
+case_sensitive: false

@@ -1,0 +1,23 @@
+# LLMasRouter 配置
+# 使用一个 LLM 来决定路由目标
+
+# 用于路由决策的 LLM 配置
+router_llm:
+  model: "openai/gpt-4o-mini"
+  api_base: "https://api.openai.com/v1"
+  api_key: "${OPENAI_API_KEY}"  # 可使用环境变量
+  temperature: 0.0
+  max_tokens: 150
+
+# 路由规则文件（作为 system prompt）
+rule: "routing_rules.md"  # 相对于 configs/ 目录
+
+# 可选的目标模型列表（需要在 litellm_config.yaml 的 model_list 中定义）
+available_models:
+  - name: "claude-sonnet-4-6"
+    description: "Powerful coding and reasoning model, best for complex tasks, debugging, and algorithm implementation"
+  - name: "gpt-5.5"
+    description: "Multimodal model with vision capabilities, suitable for image generation and visual understanding tasks"
+
+# LLM 调用失败时使用的默认模型
+default_model: "claude-sonnet-4-6"

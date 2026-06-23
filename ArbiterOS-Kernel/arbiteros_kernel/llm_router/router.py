@@ -125,7 +125,13 @@ class ArbiterOSRouter:
         return target, info
 
     def _load_router(self, router_name: str) -> Optional[Any]:
-        """从 llmrouter.models 加载指定路由器实例。"""
+        """从 llmrouter.models 或 arbiteros_kernel.llm_router 加载路由器实例。"""
+        # 优先尝试加载自定义路由器（keyword_router 等）
+        custom_router = self._try_load_custom_router(router_name)
+        if custom_router is not None:
+            return custom_router
+
+        # 回退到 llmrouter-lib 的路由器
         registry = _get_registry()
         if not registry:
             logger.error(
@@ -158,6 +164,36 @@ class ArbiterOSRouter:
         except Exception as e:
             logger.error(f"[LLMRouter] 加载路由器 '{router_name}' 失败: {e}")
             return None
+
+    def _try_load_custom_router(self, router_name: str) -> Optional[Any]:
+        """尝试加载 arbiteros_kernel.llm_router 下的自定义路由器。"""
+        if router_name == "keyword_router":
+            try:
+                from arbiteros_kernel.llm_router.keyword_router import KeywordRouter
+                config_path = Path(__file__).parent / "configs" / "keyword_router.yaml"
+                if not config_path.exists():
+                    logger.warning(f"[KeywordRouter] 配置文件不存在: {config_path}")
+                    return None
+                instance = KeywordRouter.from_yaml(str(config_path))
+                logger.info("[KeywordRouter] 加载成功")
+                return instance
+            except Exception as e:
+                logger.error(f"[KeywordRouter] 加载失败: {e}")
+                return None
+        elif router_name == "llm_as_router":
+            try:
+                from arbiteros_kernel.llm_router.llm_as_router import LLMasRouter
+                config_path = Path(__file__).parent / "configs" / "llm_as_router.yaml"
+                if not config_path.exists():
+                    logger.warning(f"[LLMasRouter] 配置文件不存在: {config_path}")
+                    return None
+                instance = LLMasRouter.from_yaml(str(config_path))
+                logger.info("[LLMasRouter] 加载成功")
+                return instance
+            except Exception as e:
+                logger.error(f"[LLMasRouter] 加载失败: {e}")
+                return None
+        return None
 
     def _build_llm_data(self) -> dict:
         """从 model_list + model_prices_and_context_window.json 动态构建 llm_data。
