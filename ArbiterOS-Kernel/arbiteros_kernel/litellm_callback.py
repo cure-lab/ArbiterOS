@@ -85,6 +85,7 @@ from arbiteros_kernel.instruction_depends_on import (
     build_depends_on_items_schema,
     build_depends_on_schema_description,
     build_tool_depends_on_description,
+    builder_has_tool_result_for_call_id,
     find_instruction_id_by_tool_call_id,
     format_arbiteros_ref_marker,
     instruction_ref_kind,
@@ -238,6 +239,7 @@ _recent_response_key_set: set[str] = set()
 _MAX_RECENT_RESPONSE_KEYS = 512
 _recent_tool_result_keys: list[str] = []
 _recent_tool_result_key_set: set[str] = set()
+_emitted_tool_result_call_ids_by_trace: dict[str, set[str]] = {}
 _MAX_RECENT_TOOL_RESULT_KEYS = 1024
 _claude_code_recent_request_lock = threading.Lock()
 _claude_code_recent_request_by_scope: dict[str, tuple[str, float]] = {}
@@ -4427,12 +4429,54 @@ def _extract_json_dict_from_text(text: str) -> Optional[dict]:
     return None
 
 
+def _normalize_tool_result_content_for_dedupe(content: Any) -> str:
+    """Strip kernel watermarks so identical tool payloads dedupe across turns."""
+    if not isinstance(content, str):
+        return ""
+    text = _strip_leading_taint_watermark(content)
+    text = strip_arbiteros_ref_marker(text)
+    return text.strip()
+
+
+def _register_tool_result_emitted(
+    state: _TraceState, tool_call_id: Optional[str]
+) -> None:
+    trace_id = state.trace_id if isinstance(state.trace_id, str) else None
+    if not isinstance(trace_id, str) or not trace_id.strip():
+        return
+    if not isinstance(tool_call_id, str) or not tool_call_id.strip():
+        return
+    with _trace_state_lock:
+        _emitted_tool_result_call_ids_by_trace.setdefault(
+            trace_id.strip(), set()
+        ).add(tool_call_id.strip())
+
+
 def _should_emit_tool_result_once(state: _TraceState, payload: dict) -> bool:
+    trace_id = state.trace_id if isinstance(state.trace_id, str) else None
+    tool_call_id = payload.get("tool_call_id")
+    if (
+        isinstance(trace_id, str)
+        and trace_id.strip()
+        and isinstance(tool_call_id, str)
+        and tool_call_id.strip()
+    ):
+        tc_id = tool_call_id.strip()
+        tid = trace_id.strip()
+        with _trace_state_lock:
+            emitted = _emitted_tool_result_call_ids_by_trace.setdefault(tid, set())
+            if tc_id in emitted:
+                return False
+            emitted.add(tc_id)
+            return True
+
+    normalized_content = _normalize_tool_result_content_for_dedupe(
+        payload.get("content")
+    )
     dedupe_payload = {
-        "trace_id": state.trace_id,
-        "tool_call_id": payload.get("tool_call_id"),
+        "trace_id": trace_id or "",
         "tool_name": payload.get("tool_name"),
-        "content": payload.get("content"),
+        "content": normalized_content,
     }
     key = hashlib.sha256(
         json.dumps(
@@ -4765,6 +4809,15 @@ def _emit_tool_result_nodes_if_needed(request_data: dict, state: _TraceState) ->
             else None
         )
         content = tool_result.get("content")
+        if InstructionBuilder is not None and state.trace_id:
+            builder = _get_instruction_builder_for_trace(state.trace_id)
+            if builder is not None and isinstance(tool_call_id, str) and tool_call_id.strip():
+                if builder_has_tool_result_for_call_id(
+                    list(getattr(builder, "instructions", []) or []),
+                    tool_call_id.strip(),
+                ):
+                    _register_tool_result_emitted(state, tool_call_id)
+                    continue
         if not _should_emit_tool_result_once(
             state,
             {
@@ -7667,7 +7720,7 @@ def _build_ref_marker_maps(
         if kind == REF_KIND_TOOLCALL:
             tool_call_id_to_instr_id.setdefault(tc_id, iid)
         elif kind == REF_KIND_TOOLRESULT:
-            tool_result_id_to_instr_id[tc_id] = iid
+            tool_result_id_to_instr_id.setdefault(tc_id, iid)
 
     return by_context_key, llm_output_instrs, tool_call_id_to_instr_id, tool_result_id_to_instr_id
 
