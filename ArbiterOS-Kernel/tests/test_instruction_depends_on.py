@@ -11,6 +11,7 @@ from arbiteros_kernel.instruction_depends_on import (
     REF_KIND_SYSTEMPROMPT,
     REF_KIND_TOOLCALL,
     REF_KIND_TOOLRESULT,
+    REF_KIND_USERINPUT,
     REF_TYPE_INSTRUCTION_ID,
     REF_TYPE_RUNTIME_STEP,
     REF_TYPE_TOOL_CALL_ID,
@@ -25,6 +26,7 @@ from arbiteros_kernel.instruction_depends_on import (
     kernel_depends_on_tool_call,
     normalize_depends_on_declarations,
     resolve_depends_on_refs,
+    strip_arbiteros_ref_markers,
     resolve_instruction_ids_to_depends_on,
     resolve_mixed_depends_on_refs,
     resolve_runtime_steps_to_depends_on,
@@ -319,3 +321,24 @@ def test_set_instruction_depends_on_strips_raw_depends_on_from_tool_arguments():
         )
     ]
     assert "depends_on" not in instr["content"]["arguments"]
+
+
+def test_strip_arbiteros_ref_markers_removes_leading_watermarks():
+    marker = format_arbiteros_ref_marker(
+        "2803a5d1-671d-438b-8c5f-3c5d8bc15be4", REF_KIND_LLMOUTPUT
+    )
+    tool_marker = format_arbiteros_ref_marker(
+        "b9179655-b172-46a8-9c17-abd17c79408b", "TOOLRESULT"
+    )
+    assert strip_arbiteros_ref_markers(marker) == ""
+    assert (
+        strip_arbiteros_ref_markers(
+            tool_marker + "\n\n已读取文件内容。"
+        )
+        == "已读取文件内容。"
+    )
+    assert (
+        strip_arbiteros_ref_markers(marker + "已完成！")
+        == "已完成！"
+    )
+
