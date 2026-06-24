@@ -90,6 +90,19 @@ def strip_arbiteros_ref_marker(text: str) -> str:
     return _ARBITEROS_REF_LINE_RE.sub("", text, count=1)
 
 
+def strip_arbiteros_ref_markers(text: str) -> str:
+    """Remove all leading ``[ARBITEROS_REF ...]`` lines (API-only watermarks)."""
+    if not isinstance(text, str):
+        return text
+    out = text
+    while True:
+        stripped = strip_arbiteros_ref_marker(out)
+        if stripped == out:
+            break
+        out = stripped
+    return out.lstrip("\n")
+
+
 def _looks_like_instruction_id(value: str) -> bool:
     try:
         uuid.UUID(value)
