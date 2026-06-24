@@ -37,17 +37,133 @@ class ResponsesStreamFinalize:
 def extract_text_from_message_content(content: Any) -> str:
     if isinstance(content, str):
         return content
+    if isinstance(content, dict):
+        text = content.get("text")
+        if isinstance(text, str) and text.strip():
+            return text
+        inner = content.get("content")
+        if isinstance(inner, str) and inner.strip():
+            return json.dumps(content, ensure_ascii=False)
+        return json.dumps(content, ensure_ascii=False)
     if isinstance(content, list):
         parts: list[str] = []
         for part in content:
             if isinstance(part, dict):
-                text = part.get("text")
+                ptype = str(part.get("type") or "").strip()
+                if ptype in {"text", "output_text"}:
+                    text = part.get("text")
+                elif ptype in {"json", "output_json"}:
+                    payload = part.get("json")
+                    if payload is None:
+                        payload = part.get("parsed")
+                    if isinstance(payload, (dict, list)):
+                        text = json.dumps(payload, ensure_ascii=False)
+                    elif isinstance(payload, str):
+                        text = payload
+                    else:
+                        text = None
+                else:
+                    text = part.get("text")
             else:
                 text = getattr(part, "text", None)
-            if isinstance(text, str):
+            if isinstance(text, str) and text.strip():
                 parts.append(text)
         return "\n".join(parts)
     return ""
+
+
+def _coerce_response_dump(response: Any) -> dict[str, Any]:
+    if isinstance(response, dict):
+        return response
+    if hasattr(response, "model_dump"):
+        try:
+            dumped = response.model_dump()
+            if isinstance(dumped, dict):
+                return dumped
+        except Exception:
+            pass
+    if hasattr(response, "dict"):
+        try:
+            dumped = response.dict()
+            if isinstance(dumped, dict):
+                return dumped
+        except Exception:
+            pass
+    return {}
+
+
+def _resolve_chat_choices(response: Any, response_dump: dict[str, Any]) -> Optional[list[Any]]:
+    choices = getattr(response, "choices", None)
+    if isinstance(choices, list):
+        return choices
+    dump_choices = response_dump.get("choices")
+    if isinstance(dump_choices, list):
+        return dump_choices
+    return None
+
+
+def response_has_chat_completion_choices(response: Any) -> bool:
+    response_dump = _coerce_response_dump(response)
+    choices = _resolve_chat_choices(response, response_dump)
+    return isinstance(choices, list) and bool(choices)
+
+
+def _message_dict_from_choice(choice: Any) -> Optional[dict[str, Any]]:
+    if isinstance(choice, dict):
+        msg = choice.get("message")
+    else:
+        msg = getattr(choice, "message", None)
+    if isinstance(msg, dict):
+        return dict(msg)
+    if msg is None:
+        return None
+    if hasattr(msg, "model_dump"):
+        try:
+            dumped = msg.model_dump()
+            if isinstance(dumped, dict):
+                return dumped
+        except Exception:
+            pass
+    if hasattr(msg, "dict"):
+        try:
+            dumped = msg.dict()
+            if isinstance(dumped, dict):
+                return dumped
+        except Exception:
+            pass
+    return None
+
+
+def normalize_assistant_message_dict(msg_dict: dict[str, Any]) -> dict[str, Any]:
+    """Flatten Anthropic block content and preserve tool_calls when possible."""
+    normalized = dict(msg_dict)
+    content = normalized.get("content")
+    if isinstance(content, str) and content.strip():
+        return normalized
+    extracted_text = extract_text_from_message_content(content)
+    if extracted_text.strip():
+        normalized["content"] = extracted_text
+    elif content is not None and not isinstance(content, str):
+        normalized["content"] = None
+    if not normalized.get("tool_calls") and isinstance(content, list):
+        tool_calls = _extract_tool_calls_from_anthropic_content(content)
+        if tool_calls:
+            normalized["tool_calls"] = tool_calls
+    return normalized
+
+
+def _extract_chat_message_dict_from_response(
+    response: Any, response_dump: dict[str, Any]
+) -> Optional[dict[str, Any]]:
+    choices = _resolve_chat_choices(response, response_dump)
+    if not isinstance(choices, list) or not choices:
+        return None
+    msg_dict = _message_dict_from_choice(choices[0])
+    if not isinstance(msg_dict, dict):
+        return None
+    if "role" not in msg_dict:
+        msg_dict = {**msg_dict, "role": "assistant"}
+    return normalize_assistant_message_dict(msg_dict)
 
 
 def _extract_tool_calls_from_anthropic_content(content: Any) -> list[dict[str, Any]]:
@@ -202,9 +318,90 @@ def extract_tool_calls_from_responses_output(response_dump: Any) -> list[dict[st
     return tool_calls
 
 
+def _system_field_contains_marker(system: Any, marker: str) -> bool:
+    if not isinstance(marker, str) or not marker.strip():
+        return False
+    if isinstance(system, str):
+        return marker in system
+    if isinstance(system, list):
+        for item in system:
+            if not isinstance(item, dict):
+                continue
+            text = item.get("text")
+            if isinstance(text, str) and marker in text:
+                return True
+    return False
+
+
+def _append_text_to_system_field(system: Any, text: str) -> Any:
+    if not isinstance(text, str) or not text.strip():
+        return system
+    block = {"type": "text", "text": text}
+    if isinstance(system, str):
+        if not system.strip():
+            return text
+        return f"{system.rstrip()}\n\n{text}"
+    if isinstance(system, list):
+        return list(system) + [block]
+    return [block]
+
+
+def _merge_message_content_into_system_field(system: Any, content: Any) -> Any:
+    text = extract_text_from_message_content(content)
+    if not isinstance(text, str) or not text.strip():
+        return system
+    return _append_text_to_system_field(system, text)
+
+
+def request_has_top_level_system(data: dict[str, Any]) -> bool:
+    return isinstance(data, dict) and "system" in data and data.get("system") is not None
+
+
+def normalize_anthropic_system_layout(data: dict[str, Any]) -> dict[str, Any]:
+    """
+    Anthropic / Claude Code use top-level ``system``; role=system entries in
+    ``messages[]`` make the upstream reject the request.
+    """
+    if not isinstance(data, dict):
+        return data
+    messages = data.get("messages")
+    if not isinstance(messages, list):
+        return data
+    if not request_has_top_level_system(data):
+        return data
+
+    system_msgs = [
+        msg
+        for msg in messages
+        if isinstance(msg, dict) and msg.get("role") == "system"
+    ]
+    if not system_msgs:
+        return data
+
+    system_value = data.get("system")
+    for msg in system_msgs:
+        system_value = _merge_message_content_into_system_field(
+            system_value, msg.get("content")
+        )
+    non_system_messages = [
+        msg
+        for msg in messages
+        if not (isinstance(msg, dict) and msg.get("role") == "system")
+    ]
+    return {**data, "system": system_value, "messages": non_system_messages}
+
+
 def inject_system_hint_into_request(
     data: dict[str, Any], *, hint_content: str, marker: str
 ) -> dict[str, Any]:
+    if request_has_top_level_system(data):
+        if _system_field_contains_marker(data.get("system"), marker):
+            return normalize_anthropic_system_layout(data)
+        new_system = _append_text_to_system_field(data.get("system"), hint_content)
+        return normalize_anthropic_system_layout(
+            {**data, "system": new_system}
+        )
+
     hint_message = {"role": "system", "content": hint_content}
     messages = data.get("messages")
     if isinstance(messages, list):
@@ -375,47 +572,12 @@ def _build_anthropic_content_blocks(
 
 
 def to_canonical_assistant_message(response: Any) -> CanonicalAssistantMessage:
-    choices = getattr(response, "choices", None)
-    is_chat_completion = isinstance(choices, list)
-    if is_chat_completion:
-        msg = choices[0].message if choices else None
-        msg_dict = (
-            msg
-            if isinstance(msg, dict)
-            else (
-                msg.model_dump()
-                if hasattr(msg, "model_dump")
-                else (msg.dict() if hasattr(msg, "dict") else None)
-            )
-        )
-        if not isinstance(msg_dict, dict):
-            msg_dict = {
-                "content": None,
-                "role": "assistant",
-                "tool_calls": None,
-                "function_call": None,
-                "provider_specific_fields": {},
-                "annotations": [],
-            }
+    response_dump = _coerce_response_dump(response)
+    chat_msg_dict = _extract_chat_message_dict_from_response(response, response_dump)
+    if isinstance(chat_msg_dict, dict):
         return CanonicalAssistantMessage(
-            message=msg_dict, is_chat_completion=True, response_dump=None
+            message=chat_msg_dict, is_chat_completion=True, response_dump=response_dump
         )
-
-    response_dump: Any = None
-    if hasattr(response, "model_dump"):
-        try:
-            response_dump = response.model_dump()
-        except Exception:
-            response_dump = None
-    if response_dump is None and hasattr(response, "dict"):
-        try:
-            response_dump = response.dict()
-        except Exception:
-            response_dump = None
-    if response_dump is None and isinstance(response, dict):
-        response_dump = response
-    if response_dump is None:
-        response_dump = {}
 
     if _is_anthropic_message_shape(response_dump):
         anth_content = response_dump.get("content")
@@ -427,14 +589,18 @@ def to_canonical_assistant_message(response: Any) -> CanonicalAssistantMessage:
                 value = response_dump.get(key)
                 if isinstance(value, (str, int, float, bool)) and value is not None:
                     provider_fields[key] = value
-        msg_dict = {
-            "content": anth_text if anth_text else None,
-            "role": "assistant",
-            "tool_calls": anth_tool_calls if anth_tool_calls else None,
-            "function_call": None,
-            "provider_specific_fields": provider_fields,
-            "annotations": [],
-        }
+        msg_dict = normalize_assistant_message_dict(
+            {
+                "content": anth_content,
+                "role": "assistant",
+                "tool_calls": anth_tool_calls if anth_tool_calls else None,
+                "function_call": None,
+                "provider_specific_fields": provider_fields,
+                "annotations": [],
+            }
+        )
+        if not msg_dict.get("content") and anth_text:
+            msg_dict["content"] = anth_text
         return CanonicalAssistantMessage(
             message=msg_dict, is_chat_completion=False, response_dump=response_dump
         )
