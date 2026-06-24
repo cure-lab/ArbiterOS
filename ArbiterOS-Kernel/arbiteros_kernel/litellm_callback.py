@@ -67,7 +67,10 @@ from arbiteros_kernel.protocol_adapter import (
     extract_text_from_responses_output as _pa_extract_text_from_responses_output,
     finalize_responses_stream as _pa_finalize_responses_stream,
     inject_system_hint_into_request as _pa_inject_system_hint_into_request,
+    normalize_anthropic_system_layout as _pa_normalize_anthropic_system_layout,
+    request_has_top_level_system as _pa_request_has_top_level_system,
     is_responses_api_request as _pa_is_responses_api_request,
+    response_has_chat_completion_choices as _pa_response_has_chat_completion_choices,
     to_canonical_assistant_message as _to_canonical_assistant_message,
     update_responses_tracker_from_chunk as _pa_update_responses_tracker_from_chunk,
     collect_responses_stream_text as _pa_collect_responses_stream_text,
@@ -95,6 +98,7 @@ from arbiteros_kernel.instruction_depends_on import (
     normalize_tool_depends_on_raw,
     resolve_depends_on_refs,
     strip_arbiteros_ref_marker,
+    strip_arbiteros_ref_markers,
 )
 from arbiteros_kernel.policy_runtime import get_runtime, policy_runtime_override
 from arbiteros_kernel.role_policy_cfg_loader import load_role_policy_config
@@ -4138,7 +4142,10 @@ def _record_policy_protected_tool_calls(
 
 
 def _add_instructions_from_modified_response(
-    builder: Any, modified_response: dict, *, resolve_text_depends_on: bool = True
+    builder: Any,
+    modified_response: dict,
+    *,
+    resolve_text_depends_on: bool = True,
 ) -> int:
     """
     根据 modified_response 追加 instructions（tool_calls 先，再 content）。
@@ -4236,7 +4243,10 @@ def _commit_response_instructions_after_policy(
         return
     _reset_builder_instructions_to_index(builder, instruction_start_index)
     count_before = len(getattr(builder, "instructions", []) or [])
-    _add_instructions_from_modified_response(builder, response_dict)
+    _add_instructions_from_modified_response(
+        builder,
+        response_dict,
+    )
     instrs = getattr(builder, "instructions", []) or []
     for instr in instrs[count_before:]:
         if isinstance(policy_protected, str) and policy_protected.strip():
@@ -6991,6 +7001,10 @@ def _add_non_strict_content_instructions(
     if not isinstance(content, str) or not content.strip():
         return
 
+    content = strip_arbiteros_ref_markers(content)
+    if not content.strip():
+        return
+
     if not _is_codex_tool_agent():
         try:
             instr = builder.add_from_structured_output(
@@ -7277,10 +7291,37 @@ def _strip_and_record_reference_tool_ids_from_message(
     _strip_and_record_tool_depends_on_from_message(message_dict, data)
 
 
+def _strip_ref_markers_from_message_dict(message_dict: dict) -> dict:
+    """Remove depends_on API watermarks from assistant text before persist/display."""
+    content = message_dict.get("content")
+    if isinstance(content, str):
+        cleaned = strip_arbiteros_ref_markers(content)
+        if cleaned != content:
+            return {**message_dict, "content": cleaned}
+        return message_dict
+    if isinstance(content, list):
+        new_parts: list[Any] = []
+        changed = False
+        for part in content:
+            if isinstance(part, dict) and part.get("type") == "text":
+                txt = part.get("text")
+                if isinstance(txt, str):
+                    cleaned = strip_arbiteros_ref_markers(txt)
+                    if cleaned != txt:
+                        changed = True
+                    new_parts.append({**part, "text": cleaned})
+                    continue
+            new_parts.append(part)
+        if changed:
+            return {**message_dict, "content": new_parts}
+    return message_dict
+
+
 def _response_transform_content_only(data: dict, message_dict: dict) -> Optional[dict]:
     """没 content 才忽略；有 content 且为严格的 topic/category/content 结构则剥 structure，否则不操作但记录 NO_WRAP。
     支持 content 为字符串或列表 [{"type":"text","text":"..."}]。"""
     _strip_and_record_tool_depends_on_from_message(message_dict, data)
+    message_dict = _strip_ref_markers_from_message_dict(message_dict)
     trace_id_for_pending = _resolve_category_cache_trace_id(data)
     _clear_pending_text_depends_on(trace_id_for_pending)
     raw_content = message_dict.get("content")
@@ -7318,6 +7359,8 @@ def _response_transform_content_only(data: dict, message_dict: dict) -> Optional
             display_content = _combine_thinking_with_unwrapped_content(
                 thinking_prefix, inner_content
             )
+            if isinstance(display_content, str):
+                display_content = strip_arbiteros_ref_markers(display_content)
             metadata = data.get("metadata") if isinstance(data, dict) else {}
             trace_id = (
                 metadata.get("arbiteros_trace_id")
@@ -7967,6 +8010,42 @@ def _prepend_arbiteros_ref(content: str, marker: str) -> str:
     return marker + strip_arbiteros_ref_marker(content)
 
 
+def _chat_messages_for_context_sync(data: dict) -> list[Any]:
+    """Include top-level Anthropic ``system`` as the first logical system message."""
+    messages = data.get("messages")
+    out = list(messages) if isinstance(messages, list) else []
+    if not _pa_request_has_top_level_system(data):
+        return out
+    system_field = data.get("system")
+    system_text = _extract_text_from_message_content(system_field)
+    if isinstance(system_text, str) and system_text.strip():
+        return [{"role": "system", "content": system_field}, *out]
+    return out
+
+
+def _prepend_marker_to_system_field(system: Any, marker: str) -> Any:
+    if not isinstance(marker, str) or not marker.strip():
+        return system
+    if isinstance(system, str):
+        return _prepend_arbiteros_ref(system, marker)
+    if isinstance(system, list):
+        new_parts = list(system)
+        for idx, part in enumerate(new_parts):
+            if not isinstance(part, dict):
+                continue
+            if str(part.get("type") or "").strip() not in {"text", "output_text"}:
+                continue
+            text = part.get("text")
+            if isinstance(text, str):
+                new_parts[idx] = {
+                    **part,
+                    "text": _prepend_arbiteros_ref(text, marker),
+                }
+                return new_parts
+        return [{"type": "text", "text": marker}] + new_parts
+    return [{"type": "text", "text": marker}]
+
+
 def _inject_ref_markers_into_messages(
     data: dict, *, trace_id: Optional[str] = None
 ) -> dict:
@@ -7978,7 +8057,9 @@ def _inject_ref_markers_into_messages(
     if InstructionBuilder is None:
         return data
 
-    _sync_context_instructions_for_trace(trace_id, messages)
+    _sync_context_instructions_for_trace(
+        trace_id, _chat_messages_for_context_sync(data)
+    )
     builder = _get_instruction_builder_for_trace(trace_id.strip())
     if builder is None:
         return data
@@ -7989,6 +8070,28 @@ def _inject_ref_markers_into_messages(
         tool_call_id_to_instr_id,
         tool_result_id_to_instr_id,
     ) = _build_ref_marker_maps(instructions)
+
+    system_field_modified = False
+    if _pa_request_has_top_level_system(data):
+        system_instr = by_context_key.get("system:0")
+        if isinstance(system_instr, dict):
+            system_text = _extract_text_from_message_content(data.get("system"))
+            if (
+                isinstance(system_text, str)
+                and system_text.strip()
+                and not _is_kernel_injected_message_text(system_text)
+            ):
+                instr_id = system_instr.get("id")
+                kind = instruction_ref_kind(system_instr) or REF_KIND_SYSTEMPROMPT
+                if isinstance(instr_id, str) and instr_id.strip():
+                    marker = format_arbiteros_ref_marker(instr_id.strip(), kind)
+                    data = {
+                        **data,
+                        "system": _prepend_marker_to_system_field(
+                            data.get("system"), marker
+                        ),
+                    }
+                    system_field_modified = True
 
     new_messages = list(messages)
     modified = False
@@ -8182,7 +8285,11 @@ def _inject_ref_markers_into_messages(
                             modified = True
                         break
 
-    return {**data, "messages": new_messages} if modified else data
+    return (
+        {**data, "messages": new_messages}
+        if (modified or system_field_modified)
+        else data
+    )
 
 
 def _extract_text_from_responses_content(content: Any) -> str:
@@ -8655,6 +8762,7 @@ class MyCustomHandler(CustomLogger):
                 state.latest_topic_summary = cleaned_previous_topic
             _persist_trace_state_to_disk()
         data = _inject_topic_summary_hint(data, state=state, context=context)
+        data = _pa_normalize_anthropic_system_layout(data)
 
         if created_new_trace:
             root_observation_id = _emit_langfuse_node(
@@ -9000,13 +9108,14 @@ class MyCustomHandler(CustomLogger):
         if msg is not None and response_transform is not None:
             msg_dict = raw_msg_dict
             if msg_dict is not None:
-                data_for_transform = data
+                # Shallow-copy so transform-only flags do not leak into commit-time
+                # depends_on inference on the original request ``data``.
+                data_for_transform = dict(data) if isinstance(data, dict) else {}
                 if (
                     apply_info is not None
                     or skip_policy_check
                     or skip_instruction_governance
                 ):
-                    data_for_transform = dict(data) if isinstance(data, dict) else {}
                     data_for_transform["_skip_category_topic_recording"] = True
                 # instruction 统一在 policy 决策后落库，避免出现“用户未确认先累计”。
                 if (
@@ -9216,7 +9325,7 @@ class MyCustomHandler(CustomLogger):
                         _commit_response_instructions_after_policy(
                             builder,
                             trace_id,
-                            final_msg_dict,
+                            final_msg_dict if isinstance(final_msg_dict, dict) else {},
                             instruction_start_index=_policy_instruction_count_before,
                             user_approved=bool(
                                 getattr(
@@ -9947,29 +10056,101 @@ class MyCustomHandler(CustomLogger):
         except Exception:
             complete = None
 
-        if complete is None or not getattr(complete, "choices", None):
-            # 合并失败：无 transform 时已逐 chunk yield；有 transform 时无法安全重放，不 yield
-            if not apply_transform:
-                full_content_parts = []
-                for c in collected:
-                    if isinstance(c, (ModelResponseStream, ModelResponse)):
-                        part = litellm.get_response_string(response_obj=c)
-                        if part:
-                            full_content_parts.append(part)
-                if full_content_parts:
-                    _save_json(
-                        "post_call_success",
-                        {
-                            "response": {
-                                "content": "".join(full_content_parts),
-                                "role": "assistant",
-                                "tool_calls": None,
-                                "function_call": None,
-                                "provider_specific_fields": {},
-                                "annotations": [],
-                            }
-                        },
+        if complete is None or not _pa_response_has_chat_completion_choices(complete):
+            # 合并失败：无 transform 时已逐 chunk yield；有 transform 时尝试从 chunk 拼文本再重放
+            full_content_parts: list[str] = []
+            for c in collected:
+                if isinstance(c, (ModelResponseStream, ModelResponse)):
+                    part = litellm.get_response_string(response_obj=c)
+                    if part:
+                        full_content_parts.append(part)
+            if apply_transform and full_content_parts:
+                synthetic_msg = {
+                    "content": "".join(full_content_parts),
+                    "role": "assistant",
+                    "tool_calls": None,
+                    "function_call": None,
+                    "provider_specific_fields": {},
+                    "annotations": [],
+                }
+                synthetic_response = _msg_dict_to_model_response(
+                    synthetic_msg,
+                    model=(
+                        request_data.get("model")
+                        if isinstance(request_data, dict)
+                        and isinstance(request_data.get("model"), str)
+                        else "arbiteros-stream-fallback"
+                    ),
+                )
+                complete = await self.async_post_call_success_hook(
+                    data=request_data,
+                    user_api_key_dict=user_api_key_dict,
+                    response=synthetic_response,
+                )
+                canonical_complete = _to_canonical_assistant_message(complete)
+                msg_dict = canonical_complete.message
+                fallback_text = os.getenv(
+                    "ARBITEROS_EMPTY_ASSISTANT_FALLBACK",
+                    "抱歉，我这次没有生成有效回复，请重试。",
+                )
+                if isinstance(msg_dict, dict):
+                    msg_dict = _ensure_non_empty_assistant_message(
+                        msg_dict, fallback_text=fallback_text
                     )
+                if isinstance(msg_dict, dict):
+                    content = msg_dict.get("content")
+                    if not isinstance(content, str):
+                        extracted = _extract_text_from_message_content(content)
+                        content = extracted if isinstance(extracted, str) else ""
+                    else:
+                        content = content
+                    tool_calls = msg_dict.get("tool_calls")
+                    first = collected[0] if collected else None
+                    stream_id = getattr(first, "id", None) or "" if first else ""
+                    stream_created = getattr(first, "created", None) or 0 if first else 0
+                    stream_model = getattr(first, "model", None) if first else None
+                    _chunk_size = 64
+                    pieces = (
+                        [
+                            content[i : i + _chunk_size]
+                            for i in range(0, len(content), _chunk_size)
+                        ]
+                        if content
+                        else [""]
+                    )
+                    for i, piece in enumerate(pieces):
+                        is_last = i == len(pieces) - 1
+                        delta = Delta(
+                            content=piece or None,
+                            tool_calls=tool_calls if is_last else None,
+                        )
+                        choice = StreamingChoices(
+                            delta=delta,
+                            finish_reason="stop" if is_last else None,
+                            index=0,
+                        )
+                        out_chunk = ModelResponseStream(
+                            choices=[choice],
+                            id=stream_id,
+                            created=stream_created,
+                            model=stream_model,
+                        )
+                        yield out_chunk
+                return
+            if not apply_transform and full_content_parts:
+                _save_json(
+                    "post_call_success",
+                    {
+                        "response": {
+                            "content": "".join(full_content_parts),
+                            "role": "assistant",
+                            "tool_calls": None,
+                            "function_call": None,
+                            "provider_specific_fields": {},
+                            "annotations": [],
+                        }
+                    },
+                )
             return
 
         complete = await self.async_post_call_success_hook(
@@ -9981,12 +10162,19 @@ class MyCustomHandler(CustomLogger):
         msg_dict = canonical_complete.message
 
         if apply_transform and isinstance(msg_dict, dict):
-            # 用修改后的内容重放为流式：拆成多个小 chunk 逐个 yield，避免下游按字符拆导致显示异常
-            content = (
-                msg_dict.get("content")
-                if isinstance(msg_dict.get("content"), str)
-                else ""
+            fallback_text = os.getenv(
+                "ARBITEROS_EMPTY_ASSISTANT_FALLBACK",
+                "抱歉，我这次没有生成有效回复，请重试。",
             )
+            msg_dict = _ensure_non_empty_assistant_message(
+                msg_dict, fallback_text=fallback_text
+            )
+            # 用修改后的内容重放为流式：拆成多个小 chunk 逐个 yield，避免下游按字符拆导致显示异常
+            content = msg_dict.get("content")
+            if not isinstance(content, str):
+                content = _extract_text_from_message_content(content)
+            if not isinstance(content, str):
+                content = ""
             tool_calls = msg_dict.get("tool_calls")
             first = collected[0]
             stream_id = getattr(first, "id", None) or ""
