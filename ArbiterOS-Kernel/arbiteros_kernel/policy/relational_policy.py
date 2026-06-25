@@ -4,13 +4,19 @@ import json
 import os
 import re
 
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 from arbiteros_kernel.instruction_parsing.types import LEVEL_ORDER
 from arbiteros_kernel.mcp_tool_classification import classify_mcp_tool_flow
 from arbiteros_kernel.policy_check import PolicyCheckResult
 from arbiteros_kernel.policy_runtime import RUNTIME, canonicalize_args
 
+from .tool_evidence_ledger import (
+    build_tool_evidence_ledger,
+    infer_workflow_candidate,
+    summarize_ledger,
+    verify_claims_for_tool_args,
+)
 from .direct_metadata import derive_policy_metadata_from_tool_args
 from .policy import Policy
 from .unary_gate_policy import _eval_predicate, _render_predicate
@@ -81,6 +87,14 @@ _SHARED_OR_EXPORTED_PATH_HINTS = (
     "/releases/",
     "/www/",
     "/tmp/",
+)
+_SECRET_LIKE_TEXT_RE = re.compile(
+    r"(?is)\b(api[_-]?key|token|password|passwd|credential|credentials|"
+    r"secret|openclaw(?:\.json| config| configuration)?|/etc/shadow)\b|"
+    r"(?:sk|tok)-[a-z0-9][a-z0-9._-]*"
+)
+_SYSTEM_SECRET_PATH_RE = re.compile(
+    r"(?i)(?:^|/)(?:shadow|passwd|password\.txt|openclaw\.json)$"
 )
 
 _GDPR_DELETE_CONTEXT_PATTERNS = (
@@ -163,6 +177,16 @@ _THIRD_PARTY_OPT_IN_CLAIM_PHRASES = (
     "authorizing direct communication",
     "authorized direct communication",
     "independently",
+)
+_PERSON_NAME_RE = r"[A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]+){1,3}"
+_THIRD_PARTY_ORIGIN_RE = re.compile(
+    rf"\b("
+    rf"[Cc]olleagues?\s+of\s+(?P<colleague>{_PERSON_NAME_RE})|"
+    rf"[Rr]eferr(?:al|ed)\s+(?:lead\s+)?(?:by|from|through)\s+(?P<referral>{_PERSON_NAME_RE})|"
+    rf"(?:[Ii]ntroduced|[Cc]onnected)\s+(?:by|through)\s+(?P<introduced>{_PERSON_NAME_RE})|"
+    rf"\([Ff]rom\s+(?P<paren_from>{_PERSON_NAME_RE})\)|"
+    rf"\b[Tt]hrough\s+(?P<through>{_PERSON_NAME_RE})"
+    rf")\b"
 )
 
 _CRM_STATE_CHANGE_PREFIXES = (
@@ -564,6 +588,96 @@ def _current_target_emails(tool_name: str, args_dict: Dict[str, Any]) -> List[st
     return _emails_from_text("\n".join(_iter_strings(values, max_items=20)))
 
 
+def _normalize_name(value: str) -> str:
+    return re.sub(r"\s+", " ", (value or "").strip().lower())
+
+
+def _current_target_names(args_dict: Dict[str, Any]) -> List[str]:
+    raw_names: List[str] = []
+    for key in ("full_name", "name", "contact_name", "lead_name"):
+        value = args_dict.get(key)
+        if isinstance(value, str) and value.strip():
+            raw_names.append(value.strip())
+
+    first = _safe_str(args_dict.get("first_name"))
+    last = _safe_str(args_dict.get("last_name"))
+    if first and last:
+        raw_names.append(f"{first} {last}")
+
+    seen: Set[str] = set()
+    out: List[str] = []
+    for name in raw_names:
+        normalized = _normalize_name(name)
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        out.append(name)
+    return out
+
+
+def _windows_around_needles(text: str, needles: List[str], *, radius: int = 420) -> List[str]:
+    if not text or not needles:
+        return []
+    lower_text = text.lower()
+    windows: List[str] = []
+    seen: Set[Tuple[int, int]] = set()
+    for needle in needles:
+        lowered = needle.lower().strip()
+        if not lowered:
+            continue
+        start = 0
+        while True:
+            idx = lower_text.find(lowered, start)
+            if idx < 0:
+                break
+            begin = max(0, idx - radius)
+            end = min(len(text), idx + len(needle) + radius)
+            span = (begin, end)
+            if span not in seen:
+                seen.add(span)
+                windows.append(text[begin:end])
+            start = idx + len(lowered)
+    return windows
+
+
+def _named_third_party_origin_in_text(text: str, target_names: List[str]) -> bool:
+    normalized_targets = {_normalize_name(name) for name in target_names if name}
+    for match in _THIRD_PARTY_ORIGIN_RE.finditer(text or ""):
+        origin = ""
+        for group in ("colleague", "referral", "introduced", "paren_from", "through"):
+            origin = match.groupdict().get(group) or ""
+            if origin:
+                break
+        if origin and _normalize_name(origin) in normalized_targets:
+            continue
+        return True
+    return False
+
+
+def _target_context_mentions_named_third_party_origin(
+    *,
+    tool_name: str,
+    args_dict: Dict[str, Any],
+    instructions: List[Dict[str, Any]],
+    latest_instructions: List[Dict[str, Any]],
+) -> bool:
+    target_emails = _current_target_emails(tool_name, args_dict)
+    target_names = _current_target_names(args_dict)
+    needles = target_emails + target_names
+    if not needles:
+        return False
+
+    text = "\n".join(
+        _iter_strings(args_dict, max_items=80)
+        + _iter_strings(instructions or [], max_items=320)
+        + _iter_strings(latest_instructions or [], max_items=120)
+    )
+    for window in _windows_around_needles(text, needles):
+        if _named_third_party_origin_in_text(window, target_names):
+            return True
+    return False
+
+
 def _history_indicates_third_party_referral(
     instructions: List[Dict[str, Any]],
     latest_instructions: List[Dict[str, Any]],
@@ -629,6 +743,13 @@ def _context_indicates_third_party_consent_risk(
     if _current_args_indicate_unverified_opt_in_claim(
         tool_name=tool_name,
         args_dict=args_dict,
+    ):
+        return True
+    if _target_context_mentions_named_third_party_origin(
+        tool_name=tool_name,
+        args_dict=args_dict,
+        instructions=instructions,
+        latest_instructions=latest_instructions,
     ):
         return True
     if not _history_indicates_third_party_referral(instructions, latest_instructions):
@@ -831,6 +952,69 @@ def _looks_shared_or_exported_sink(path_hint: str) -> bool:
     if not p:
         return False
     return any(h in p for h in _SHARED_OR_EXPORTED_PATH_HINTS)
+
+
+def _iter_arg_strings(value: Any) -> Iterable[str]:
+    if isinstance(value, str):
+        if value.strip():
+            yield value.strip()
+        return
+    if isinstance(value, dict):
+        for item in value.values():
+            yield from _iter_arg_strings(item)
+        return
+    if isinstance(value, (list, tuple, set)):
+        for item in value:
+            yield from _iter_arg_strings(item)
+        return
+    if isinstance(value, (int, float, bool)):
+        yield str(value)
+
+
+def _args_text(args_dict: Dict[str, Any]) -> str:
+    return "\n".join(_iter_arg_strings(args_dict))
+
+
+def _args_contain_secret_like(args_dict: Dict[str, Any]) -> bool:
+    return bool(_SECRET_LIKE_TEXT_RE.search(_args_text(args_dict)))
+
+
+def _has_reference_tool(args_dict: Dict[str, Any]) -> bool:
+    refs = args_dict.get("reference_tool_id")
+    if isinstance(refs, list):
+        return any(isinstance(item, str) and item.strip() for item in refs)
+    return isinstance(refs, str) and bool(refs.strip())
+
+
+def _is_sensitive_read_requiring_trust(args_dict: Dict[str, Any], sec: Dict[str, Any]) -> bool:
+    if _safe_level(sec.get("confidentiality")) != "HIGH":
+        return False
+    prop_trust = _safe_level(sec.get("prop_trustworthiness"))
+    path_hint = _get_primary_path_hint(args_dict)
+    if not _level_at_least(prop_trust, "HIGH"):
+        return True
+    return bool(_has_reference_tool(args_dict) and _SYSTEM_SECRET_PATH_RE.search(path_hint))
+
+
+def _is_public_delegate_payload(args_dict: Dict[str, Any]) -> bool:
+    text = _args_text(args_dict)
+    lowered = text.lower()
+    if _SECRET_LIKE_TEXT_RE.search(text):
+        return False
+    return "public" in lowered and any(
+        marker in lowered
+        for marker in ("bug summary", "docs", "documentation", "getting-started")
+    )
+
+
+def _is_calendar_ui_action(args_dict: Dict[str, Any]) -> bool:
+    text = _args_text(args_dict).lower()
+    if _SECRET_LIKE_TEXT_RE.search(text):
+        return False
+    return "calendar" in text and any(
+        marker in text
+        for marker in ("meeting", "release sync", "reschedule", "edit-meeting")
+    )
 
 
 def _flow_kind(
@@ -1414,6 +1598,10 @@ def _evaluate_flow(
         required = conf
         if bool(_get_relational_policy_cfg().get("allow_sensitive_reads", False)):
             extra["read_sensitive_allowed_by_config"] = True
+            if _is_sensitive_read_requiring_trust(args_dict, sec):
+                actual = _safe_level(sec.get("prop_trustworthiness"))
+                extra["read_sensitive_blocked_by_propagated_trust"] = True
+                return False, actual, "HIGH", extra
             return True, actual, required, extra
         return _level_at_least(actual, required), actual, required, extra
 
@@ -1426,6 +1614,16 @@ def _evaluate_flow(
     # the same as shared/exported/public sinks.
     if flow_kind == "write_local":
         path_hint = _get_primary_path_hint(args_dict)
+        if (
+            source_conf == "HIGH"
+            and _args_contain_secret_like(args_dict)
+            and (
+                _looks_shared_or_exported_sink(path_hint)
+                or "/knowledge/" in _safe_str(path_hint).lower()
+            )
+        ):
+            extra["secret_like_shared_materialization"] = True
+            return False, "UNKNOWN", "HIGH", extra
 
         if (
             path_hint
@@ -1450,6 +1648,9 @@ def _evaluate_flow(
     # 6) Cross-session delegation:
     # another agent session is only partially trusted; use LOW sink trust.
     if flow_kind == "delegate_sink":
+        if _is_public_delegate_payload(args_dict):
+            extra["public_delegate_allowed"] = True
+            return True, "HIGH", _soft_source_conf(source_conf), extra
         actual = "LOW"
         required = _soft_source_conf(source_conf)
         return _level_at_least(actual, required), actual, required, extra
@@ -1476,6 +1677,9 @@ def _evaluate_flow(
     # 9) Browser/UI side effects:
     # gate mainly on source trust, because the risk is "acting on low-trust state".
     if flow_kind == "ui_side_effect":
+        if _is_calendar_ui_action(args_dict):
+            extra["calendar_ui_action_allowed"] = True
+            return True, "HIGH", "MID", extra
         actual = source_trust
         required = "MID"
         if source_conf == "HIGH" or risk in {"HIGH", "CRITICAL"}:
@@ -1518,6 +1722,7 @@ def _build_relational_context(
     respond_content_present: bool = False,
     required_metadata: Optional[List[Any]] = None,
     current_accepted_tool_names: Optional[List[str]] = None,
+    current_accepted_ops: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     args_dict = args_dict if isinstance(args_dict, dict) else {}
     ok, actual, required, flow_extra = _evaluate_flow(
@@ -1535,6 +1740,24 @@ def _build_relational_context(
     if current_taint_status is None and source_ins is not None:
         source_trust = source_sec.get("prop_trustworthiness")
         source_conf = source_sec.get("prop_confidentiality")
+
+    evidence_events = build_tool_evidence_ledger(
+        instructions or [],
+        latest_instructions or [],
+        current_ops=current_accepted_ops or [],
+        max_events=80,
+    )
+    claim_verification = verify_claims_for_tool_args(
+        tool_name=tool_name,
+        args=args_dict,
+        events=evidence_events,
+    )
+    workflow_candidate = infer_workflow_candidate(
+        planned_ops=current_accepted_ops or [],
+        instructions=instructions or [],
+        latest_instructions=latest_instructions or [],
+        events=evidence_events,
+    )
 
     ctx: Dict[str, Any] = {
         "scope": "relational",
@@ -1577,6 +1800,12 @@ def _build_relational_context(
         "prior_non_comm_state_change": _history_has_non_comm_state_change(
             instructions,
             latest_instructions,
+        ),
+        "current_non_comm_state_change": any(
+            event.get("planned")
+            and event.get("event_type") == "business_mutation"
+            and event.get("flow_kind") in {"business_side_effect", "persist_side_effect"}
+            for event in evidence_events
         ),
         "prior_calendar_state_change": _history_has_tool_matching(
             instructions,
@@ -1642,6 +1871,19 @@ def _build_relational_context(
             instructions=instructions,
             latest_instructions=latest_instructions,
         ),
+        "claim_verification_status": claim_verification.get("status"),
+        "claim_verification_reason": claim_verification.get("reason"),
+        "outbound_claim_types": claim_verification.get("claim_types") or [],
+        "outbound_claims_verified": claim_verification.get("status") == "verified",
+        "outbound_claims_missing_evidence": claim_verification.get("status") == "missing_evidence",
+        "outbound_claims_contradicted": claim_verification.get("status") == "contradicted",
+        "workflow_candidate_name": workflow_candidate.get("name"),
+        "workflow_verified": bool(workflow_candidate.get("verified")),
+        "workflow_sentinel_can_skip": bool(workflow_candidate.get("sentinel_can_skip")),
+        "workflow_candidate_reason": workflow_candidate.get("reason"),
+        "evidence_ledger_digest": summarize_ledger(evidence_events, max_events=12),
+        "calendar_ui_action": _is_calendar_ui_action(args_dict),
+        "public_delegate_payload": _is_public_delegate_payload(args_dict),
     }
 
     sink_custom = sec.get("custom")
@@ -1732,6 +1974,7 @@ class RelationalPolicy(Policy):
         seen_errors: set[str] = set()
         kept: List[Dict[str, Any]] = []
         accepted_tool_names: List[str] = []
+        accepted_tool_ops: List[Dict[str, Any]] = []
 
         # -------------------------------------------------------------------
         # Tool-call flow checks
@@ -1748,6 +1991,13 @@ class RelationalPolicy(Policy):
             if flow_kind == "none":
                 kept.append(RUNTIME.write_back_tool_args(tc, args_dict, was_json_str))
                 accepted_tool_names.append(tool_name)
+                accepted_tool_ops.append(
+                    {
+                        "name": tool_name,
+                        "tool_call_id": tool_call_id or "",
+                        "args": args_dict,
+                    }
+                )
                 continue
 
             if not ins and _fail_closed_on_missing_metadata(tp_cfg):
@@ -1802,6 +2052,7 @@ class RelationalPolicy(Policy):
                 args_dict=args_dict,
                 required_metadata=custom_required_metadata,
                 current_accepted_tool_names=accepted_tool_names,
+                current_accepted_ops=accepted_tool_ops,
             )
             custom_rule = _evaluate_custom_relational_rules(custom_rules, rel_ctx)
             if custom_rule is not None:
@@ -1864,6 +2115,13 @@ class RelationalPolicy(Policy):
                 )
                 kept.append(RUNTIME.write_back_tool_args(tc, args_dict, was_json_str))
                 accepted_tool_names.append(tool_name)
+                accepted_tool_ops.append(
+                    {
+                        "name": tool_name,
+                        "tool_call_id": tool_call_id or "",
+                        "args": args_dict,
+                    }
+                )
                 continue
 
             if (
@@ -1888,6 +2146,13 @@ class RelationalPolicy(Policy):
                 )
                 kept.append(RUNTIME.write_back_tool_args(tc, args_dict, was_json_str))
                 accepted_tool_names.append(tool_name)
+                accepted_tool_ops.append(
+                    {
+                        "name": tool_name,
+                        "tool_call_id": tool_call_id or "",
+                        "args": args_dict,
+                    }
+                )
                 continue
 
             ok, actual, required, extra = _evaluate_flow(
@@ -1902,6 +2167,13 @@ class RelationalPolicy(Policy):
             if ok:
                 kept.append(RUNTIME.write_back_tool_args(tc, args_dict, was_json_str))
                 accepted_tool_names.append(tool_name)
+                accepted_tool_ops.append(
+                    {
+                        "name": tool_name,
+                        "tool_call_id": tool_call_id or "",
+                        "args": args_dict,
+                    }
+                )
                 continue
 
             if flow_kind == "read_sensitive":
@@ -2036,6 +2308,7 @@ class RelationalPolicy(Policy):
                 respond_content_present=True,
                 required_metadata=custom_required_metadata,
                 current_accepted_tool_names=accepted_tool_names,
+                current_accepted_ops=accepted_tool_ops,
             )
             custom_rule = _evaluate_custom_relational_rules(custom_rules, rel_ctx)
             if custom_rule is not None:

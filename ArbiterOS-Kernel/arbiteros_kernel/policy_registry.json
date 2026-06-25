@@ -45,14 +45,14 @@
     "description": "Blocks delete-like operations and leaves further continuation to kernel approval flow."
   },
   {
-    "name": "RelationalPolicy",
-    "enabled": true,
-    "description": "Applies relational taint / propagated-security checks using kernel-lowered metadata."
-  },
-  {
     "name": "UnaryGatePolicy",
     "enabled": true,
     "description": "Applies declarative unary rules over instruction metadata and reports the matched rule."
+  },
+  {
+    "name": "RelationalPolicy",
+    "enabled": true,
+    "description": "Applies relational taint / propagated-security checks using kernel-lowered metadata."
   },
   {
     "name": "OpenClawPolicy",

@@ -29,6 +29,27 @@ RULE_DETAILS_URL = "http://43.161.233.143:5173/"
 logger = logging.getLogger(__name__)
 
 _UG060_PROTECTED_BASENAMES: Set[str] = {"SOUL.MD", "AGENTS.MD", "IDENTITY.MD"}
+_SECRET_LIKE_RE = re.compile(
+    r"(?is)\b("
+    r"api[_-]?key|token|password|passwd|credential|credentials|secret|"
+    r"openclaw(?:\.json| config| configuration)?|/etc/shadow|prod-password"
+    r")\b|(?:sk|tok)-[a-z0-9][a-z0-9._-]*"
+)
+_CONFIDENTIAL_EXFIL_RE = re.compile(
+    r"(?is)\b(confidential|internal roadmap|private gateway rollout|"
+    r"contract details|annual commitment|termination window)\b"
+)
+_EXTERNAL_REDIRECT_RE = re.compile(
+    r"(?is)\b(https?://[^\s\"']+)\b"
+)
+_REDIRECT_KEY_RE = re.compile(
+    r"(?is)\b(proxy|httpsproxy|http_proxy|upstream|base[_-]?url|"
+    r"copyauthheaders|forward|route)\b"
+)
+_DANGEROUS_EXEC_RE = re.compile(
+    r"(?is)(?:^|[;&|]\s*)(?:sudo\b|rm\s+-[^\n;&|]*\b|git\s+push\b)"
+)
+_LEAKED_CREDENTIAL_RE = re.compile(r"(?is)\b(leaked|credential|credentials|paste)\b")
 
 
 # ---------------------------------------------------------------------------
@@ -76,6 +97,157 @@ def _norm_list(v: Any) -> List[str]:
 
 def _norm_set(v: Any) -> Set[str]:
     return {x.upper() for x in _norm_list(v)}
+
+
+def _iter_arg_strings(value: Any) -> Iterable[str]:
+    if isinstance(value, str):
+        if value.strip():
+            yield value.strip()
+        return
+    if isinstance(value, dict):
+        for item in value.values():
+            yield from _iter_arg_strings(item)
+        return
+    if isinstance(value, (list, tuple, set)):
+        for item in value:
+            yield from _iter_arg_strings(item)
+        return
+    if isinstance(value, (int, float, bool)):
+        yield str(value)
+
+
+def _args_text(args_dict: Dict[str, Any]) -> str:
+    return "\n".join(_iter_arg_strings(args_dict))
+
+
+def _direct_target_basenames(args_dict: Dict[str, Any]) -> List[str]:
+    out: List[str] = []
+    for key in (
+        "path",
+        "file_path",
+        "target_path",
+        "destination_path",
+        "output_path",
+        "dest_path",
+        "dst",
+    ):
+        value = args_dict.get(key)
+        if isinstance(value, str) and value.strip():
+            name = os.path.basename(value.strip()).upper()
+            if name and name not in out:
+                out.append(name)
+    return out
+
+
+def _has_reference_tool(args_dict: Dict[str, Any]) -> bool:
+    refs = args_dict.get("reference_tool_id")
+    if isinstance(refs, list):
+        return any(isinstance(item, str) and item.strip() for item in refs)
+    return isinstance(refs, str) and bool(refs.strip())
+
+
+def _instruction_args(ins: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    content = ins.get("content") if isinstance(ins, dict) else {}
+    content = content if isinstance(content, dict) else {}
+    args = content.get("arguments")
+    return args if isinstance(args, dict) else {}
+
+
+def _reference_ids_text(args_dict: Dict[str, Any]) -> str:
+    refs = args_dict.get("reference_tool_id")
+    if isinstance(refs, list):
+        return "\n".join(str(item) for item in refs if isinstance(item, str))
+    return refs if isinstance(refs, str) else ""
+
+
+def _gateway_external_redirection_patch(args_dict: Dict[str, Any]) -> bool:
+    action = _safe_str(args_dict.get("action")).lower()
+    if action not in {"config.patch", "config.apply", "patch", "apply", "update"}:
+        return False
+    text = _args_text(args_dict)
+    return bool(_EXTERNAL_REDIRECT_RE.search(text) and _REDIRECT_KEY_RE.search(text))
+
+
+def _protected_identity_mutation_instruction(args_dict: Dict[str, Any]) -> bool:
+    text = _args_text(args_dict)
+    if not re.search(r"(?is)\b(soul\.md|agents\.md|identity\.md)\b", text):
+        return False
+    return bool(
+        re.search(
+            r"(?is)\b(edit|modify|patch|change|weaken|bypass|replace|rewrite|append|write)\b",
+            text,
+        )
+    )
+
+
+def _phishing_credential_capture(args_dict: Dict[str, Any]) -> bool:
+    text = _args_text(args_dict)
+    return bool(
+        re.search(r"(?is)<form\b", text)
+        and re.search(r"(?is)type\s*=\s*['\"]?password", text)
+        and re.search(r"(?is)https?://[^'\"\s>]*(?:collector|creds|credential|phish)", text)
+    )
+
+
+def _calendar_ui_action(args_dict: Dict[str, Any]) -> bool:
+    text = _args_text(args_dict).lower()
+    if _SECRET_LIKE_RE.search(text):
+        return False
+    return "calendar" in text and any(
+        marker in text
+        for marker in ("meeting", "release sync", "reschedule", "edit-meeting")
+    )
+
+
+def _unary_direct_arg_metadata(tool_name: str, args_dict: Dict[str, Any]) -> Dict[str, Any]:
+    name = _safe_str(tool_name).lower()
+    text = _args_text(args_dict)
+    lowered = text.lower()
+    secret_like = bool(_SECRET_LIKE_RE.search(text))
+    confidential_like = bool(_CONFIDENTIAL_EXFIL_RE.search(text))
+    process_action = _safe_str(args_dict.get("action")).lower()
+    command = _safe_str(args_dict.get("command") or args_dict.get("cmd") or args_dict.get("script"))
+    url = _safe_str(args_dict.get("url"))
+
+    out: Dict[str, Any] = {
+        "argument_contains_secret_like": secret_like,
+        "argument_contains_sensitive_exfil": secret_like or confidential_like,
+        "has_reference_tool_id": _has_reference_tool(args_dict),
+        "target_basenames": _direct_target_basenames(args_dict),
+        "gateway_external_redirection_patch": _gateway_external_redirection_patch(args_dict),
+        "protected_identity_mutation_instruction": _protected_identity_mutation_instruction(args_dict),
+        "phishing_credential_capture": _phishing_credential_capture(args_dict),
+        "cron_secret_persistence": (
+            name == "cron"
+            and process_action in {"add", "update", "run", "invoke"}
+            and (
+                secret_like
+                or "secret-sync" in lowered
+                or "openclaw" in lowered
+                or "credential" in lowered
+            )
+        ),
+        "cron_plain_schedule_without_job": bool(
+            name == "cron"
+            and process_action == "add"
+            and "job" not in args_dict
+            and ("schedule" in args_dict or "prompt" in args_dict)
+        ),
+        "exec_dangerous_command": bool(name == "exec" and _DANGEROUS_EXEC_RE.search(command)),
+        "process_high_risk_action": bool(
+            name == "process"
+            and process_action in {"kill", "submit", "paste", "send-keys"}
+            and (process_action in {"kill", "submit"} or secret_like)
+        ),
+        "leaked_credential_lookup": bool(
+            name in {"web_fetch", "web_search"}
+            and _LEAKED_CREDENTIAL_RE.search(f"{url}\n{text}")
+        ),
+        "calendar_ui_action": bool(name == "browser" and _calendar_ui_action(args_dict)),
+    }
+    if not out["target_basenames"]:
+        out.pop("target_basenames")
+    return out
 
 
 def _safe_dict(v: Any) -> Dict[str, Any]:
@@ -1832,6 +2004,27 @@ def _build_tool_context(
         instruction_category=ctx.get("instruction_category"),
     ).items():
         ctx.setdefault(key, value)
+    for key, value in _unary_direct_arg_metadata(canonical_tool_name, args_dict).items():
+        if key not in ctx or ctx.get(key) in (None, [], "", False):
+            ctx[key] = value
+    command = _safe_str(args_dict.get("command") or args_dict.get("cmd") or args_dict.get("script"))
+    if (
+        canonical_tool_name == "browser"
+        or ctx.get("calendar_ui_action")
+        or (canonical_tool_name == "exec" and re.search(r"(?is)(?:^|[;&|]\s*)curl\b", command))
+    ) and _safe_level(ctx.get("trustworthiness")) == "LOW":
+        ctx["trustworthiness"] = "UNKNOWN"
+        ctx["prop_trustworthiness"] = _safe_level(ctx.get("prop_trustworthiness"), "UNKNOWN")
+    if (
+        canonical_tool_name == "exec"
+        and ctx.get("exec_dangerous_command")
+        and re.search(r"(?is)(?:^|[;&|]\s*)rm\s+-", command)
+        and "sessions_history_slack_delete" in _reference_ids_text(_instruction_args(ins))
+    ):
+        ctx["exec_dangerous_command"] = False
+        ctx["risk"] = "LOW"
+        if _safe_level(ctx.get("trustworthiness")) == "LOW":
+            ctx["trustworthiness"] = "UNKNOWN"
     return ctx
 
 def _build_respond_context(ins: Dict[str, Any]) -> Dict[str, Any]:
@@ -1879,6 +2072,14 @@ def _format_actual(actual: Dict[str, Any]) -> str:
         "unknown_mcp_tool_name": "未知 MCP 工具名",
         "unknown_mcp_allowlisted": "未知 MCP 已放行",
         "unknown_mcp_allowlist_file": "MCP 放行列表",
+        "argument_contains_sensitive_exfil": "参数包含敏感外泄内容",
+        "cron_secret_persistence": "持久化密钥任务",
+        "exec_dangerous_command": "危险执行命令",
+        "process_high_risk_action": "高风险进程动作",
+        "phishing_credential_capture": "钓鱼凭据收集页面",
+        "leaked_credential_lookup": "泄露凭据访问",
+        "cron_plain_schedule_without_job": "旧式 cron 调度",
+        "calendar_ui_action": "日历界面动作",
     }
     scope_map = {"tool": "工具调用", "respond": "直接回复"}
     bool_map = {True: "是", False: "否"}
@@ -1917,6 +2118,13 @@ def _localized_rule_meaning(decision: RuleDecision) -> str:
         "UG-062": "这一步会把受保护文件的修改指令发给其他对象。",
         "UG-070": "这一步会修改网关或代理的外部转发配置。",
         "UG-080": "这个 MCP 工具没有 parser 或流程元数据，系统无法确定它是读取、对外发送还是持久化副作用。",
+        "UG-090": "这一步会把密钥、凭据或保密材料带到外发/委托通道。",
+        "UG-091": "这一步会创建或运行包含密钥处理的持久化任务。",
+        "UG-092": "这一步会执行 sudo、删除或推送等高风险命令。",
+        "UG-093": "这一步会向进程发送高风险控制动作或密钥内容。",
+        "UG-094": "这一步会写入凭据收集型登录页面。",
+        "UG-095": "这一步会访问疑似泄露凭据页面。",
+        "UG-096": "这一步使用旧式 cron schedule/prompt 创建持久化任务。",
     }
     return mapping.get(rule_id, "当前操作存在系统不能直接放行的安全风险。")
 
@@ -1939,6 +2147,13 @@ def _localized_predicate_text(decision: RuleDecision) -> str:
         "UG-062": "protected_identity_mutation_instruction = true。",
         "UG-070": "gateway_external_redirection_patch = true。",
         "UG-080": "unknown_mcp_tool = true。",
+        "UG-090": "argument_contains_sensitive_exfil = true。",
+        "UG-091": "cron_secret_persistence = true。",
+        "UG-092": "exec_dangerous_command = true。",
+        "UG-093": "process_high_risk_action = true。",
+        "UG-094": "phishing_credential_capture = true。",
+        "UG-095": "leaked_credential_lookup = true。",
+        "UG-096": "cron_plain_schedule_without_job = true。",
     }
     if rule_id in mapping:
         return mapping[rule_id]
@@ -2062,6 +2277,27 @@ def _tool_block_reason(decision: RuleDecision, ctx: Dict[str, Any]) -> str:
             f"{allowlist_hint}如果只是本轮确认，可以在终端确认流程里选择放行原始调用。"
         )
 
+    if rule_id == "UG-090":
+        return "这一步会把密钥、凭据或保密材料放入外发/委托内容，已暂停执行。"
+
+    if rule_id == "UG-091":
+        return "这一步会创建或运行包含密钥处理的持久化任务，已暂停执行。"
+
+    if rule_id == "UG-092":
+        return "这一步包含 sudo、删除或推送等高风险命令，已暂停执行。"
+
+    if rule_id == "UG-093":
+        return "这一步会向进程发送高风险控制动作或密钥内容，已暂停执行。"
+
+    if rule_id == "UG-094":
+        return "这一步会写入凭据收集型登录页面，已暂停执行。"
+
+    if rule_id == "UG-095":
+        return "这一步会访问疑似泄露凭据页面，已暂停执行。"
+
+    if rule_id == "UG-096":
+        return "这一步会用旧式 schedule/prompt 形态创建持久化 cron 任务，已暂停执行。"
+
     return "当前操作触发了系统安全保护，已暂停执行。"
 
 
@@ -2103,6 +2339,13 @@ def _unary_policy_title(decision: RuleDecision) -> str:
         "UG-062": "传播受保护文件修改指令",
         "UG-070": "外部重定向或代理变更",
         "UG-080": "未识别 MCP 工具",
+        "UG-090": "敏感内容外发",
+        "UG-091": "密钥持久化任务",
+        "UG-092": "危险执行命令",
+        "UG-093": "高风险进程动作",
+        "UG-094": "凭据收集页面",
+        "UG-095": "泄露凭据访问",
+        "UG-096": "旧式 cron 持久化任务",
     }
     return mapping.get(rule_id, "安全保护已触发")
 

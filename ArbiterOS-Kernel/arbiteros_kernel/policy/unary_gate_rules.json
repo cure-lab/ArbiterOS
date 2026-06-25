@@ -422,6 +422,135 @@
       "message": "gateway config patch or apply must not introduce external proxy or upstream redirection without stronger review."
     },
     {
+      "id": "UG-090",
+      "title": "sensitive material in outbound or delegated content",
+      "description": "block message/delegation content that directly carries secrets, credentials, or confidential internal material",
+      "scope": "tool",
+      "selector": {
+        "tool": [
+          "message",
+          "tts"
+        ]
+      },
+      "predicate": {
+        "truthy": {
+          "var": "argument_contains_sensitive_exfil"
+        }
+      },
+      "effect": "BLOCK",
+      "message": "outbound or delegated content contains secrets, credentials, or confidential internal material."
+    },
+    {
+      "id": "UG-091",
+      "title": "secret-bearing persistent job",
+      "description": "block cron/reminder jobs that persist or run secret handling",
+      "scope": "tool",
+      "selector": {
+        "tool": [
+          "cron"
+        ]
+      },
+      "predicate": {
+        "truthy": {
+          "var": "cron_secret_persistence"
+        }
+      },
+      "effect": "BLOCK",
+      "message": "persistent jobs must not store or run secret handling without stronger review."
+    },
+    {
+      "id": "UG-092",
+      "title": "dangerous shell command",
+      "description": "block sudo, destructive rm, and git push commands",
+      "scope": "tool",
+      "selector": {
+        "tool": [
+          "exec"
+        ]
+      },
+      "predicate": {
+        "truthy": {
+          "var": "exec_dangerous_command"
+        }
+      },
+      "effect": "BLOCK",
+      "message": "sudo, destructive delete, and git push commands require stronger review."
+    },
+    {
+      "id": "UG-093",
+      "title": "high-risk process control",
+      "description": "block process kill/submit and process injection of secret material",
+      "scope": "tool",
+      "selector": {
+        "tool": [
+          "process"
+        ]
+      },
+      "predicate": {
+        "truthy": {
+          "var": "process_high_risk_action"
+        }
+      },
+      "effect": "BLOCK",
+      "message": "process control action is high risk or carries secret material."
+    },
+    {
+      "id": "UG-094",
+      "title": "credential capture page write",
+      "description": "block writing login pages that post credentials to an external collector",
+      "scope": "tool",
+      "selector": {
+        "tool": [
+          "write",
+          "edit"
+        ]
+      },
+      "predicate": {
+        "truthy": {
+          "var": "phishing_credential_capture"
+        }
+      },
+      "effect": "BLOCK",
+      "message": "credential capture pages may not be written directly."
+    },
+    {
+      "id": "UG-095",
+      "title": "leaked credential lookup",
+      "description": "block fetching or searching pages that are explicitly about leaked credentials",
+      "scope": "tool",
+      "selector": {
+        "tool": [
+          "web_fetch",
+          "web_search"
+        ]
+      },
+      "predicate": {
+        "truthy": {
+          "var": "leaked_credential_lookup"
+        }
+      },
+      "effect": "BLOCK",
+      "message": "leaked credential lookup requires a separate approved security workflow."
+    },
+    {
+      "id": "UG-096",
+      "title": "legacy cron schedule prompt",
+      "description": "block legacy top-level cron schedule/prompt jobs that bypass structured job metadata",
+      "scope": "tool",
+      "selector": {
+        "tool": [
+          "cron"
+        ]
+      },
+      "predicate": {
+        "truthy": {
+          "var": "cron_plain_schedule_without_job"
+        }
+      },
+      "effect": "BLOCK",
+      "message": "legacy cron schedule/prompt jobs require stronger review."
+    },
+    {
       "id": "UG-050",
       "title": "respond prop confidentiality",
       "description": "RESPOND must keep propagated confidentiality <= UNKNOWN",

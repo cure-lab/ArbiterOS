@@ -47,12 +47,23 @@
         ]
       },
       "predicate": {
-        "lt": [
+        "all": [
           {
-            "var": "source_trustworthiness"
+            "lt": [
+              {
+                "var": "source_trustworthiness"
+              },
+              {
+                "const": "UNKNOWN"
+              }
+            ]
           },
           {
-            "const": "UNKNOWN"
+            "not": {
+              "truthy": {
+                "var": "calendar_ui_action"
+              }
+            }
           }
         ]
       },
@@ -312,6 +323,9 @@
                   "var": "prior_non_comm_state_change"
                 },
                 {
+                  "var": "current_non_comm_state_change"
+                },
+                {
                   "var": "current_payment_state_change"
                 }
               ]
@@ -360,9 +374,41 @@
             }
           },
           {
-            "falsy": {
-              "var": "prior_non_comm_state_change"
-            }
+            "any": [
+              {
+                "truthy": {
+                  "var": "outbound_claims_missing_evidence"
+                }
+              },
+              {
+                "truthy": {
+                  "var": "outbound_claims_contradicted"
+                }
+              },
+              {
+                "all": [
+                  {
+                    "not": {
+                      "truthy": {
+                        "var": "outbound_claims_verified"
+                      }
+                    }
+                  },
+                  {
+                    "not": {
+                      "any": [
+                        {
+                          "var": "prior_non_comm_state_change"
+                        },
+                        {
+                          "var": "current_non_comm_state_change"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            ]
           }
         ]
       },
@@ -500,16 +546,41 @@
             }
           },
           {
-            "not": {
-              "any": [
-                {
-                  "var": "prior_payment_state_change"
-                },
-                {
-                  "var": "current_payment_state_change"
+            "any": [
+              {
+                "truthy": {
+                  "var": "outbound_claims_missing_evidence"
                 }
-              ]
-            }
+              },
+              {
+                "truthy": {
+                  "var": "outbound_claims_contradicted"
+                }
+              },
+              {
+                "all": [
+                  {
+                    "not": {
+                      "truthy": {
+                        "var": "outbound_claims_verified"
+                      }
+                    }
+                  },
+                  {
+                    "not": {
+                      "any": [
+                        {
+                          "var": "prior_payment_state_change"
+                        },
+                        {
+                          "var": "current_payment_state_change"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            ]
           }
         ]
       },
@@ -545,16 +616,41 @@
             }
           },
           {
-            "not": {
-              "any": [
-                {
-                  "var": "prior_calendar_state_change"
-                },
-                {
-                  "var": "current_calendar_state_change"
+            "any": [
+              {
+                "truthy": {
+                  "var": "outbound_claims_missing_evidence"
                 }
-              ]
-            }
+              },
+              {
+                "truthy": {
+                  "var": "outbound_claims_contradicted"
+                }
+              },
+              {
+                "all": [
+                  {
+                    "not": {
+                      "truthy": {
+                        "var": "outbound_claims_verified"
+                      }
+                    }
+                  },
+                  {
+                    "not": {
+                      "any": [
+                        {
+                          "var": "prior_calendar_state_change"
+                        },
+                        {
+                          "var": "current_calendar_state_change"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            ]
           }
         ]
       },
@@ -601,16 +697,41 @@
             }
           },
           {
-            "not": {
-              "any": [
-                {
-                  "var": "prior_license_state_change"
-                },
-                {
-                  "var": "current_license_state_change"
+            "any": [
+              {
+                "truthy": {
+                  "var": "outbound_claims_missing_evidence"
                 }
-              ]
-            }
+              },
+              {
+                "truthy": {
+                  "var": "outbound_claims_contradicted"
+                }
+              },
+              {
+                "all": [
+                  {
+                    "not": {
+                      "truthy": {
+                        "var": "outbound_claims_verified"
+                      }
+                    }
+                  },
+                  {
+                    "not": {
+                      "any": [
+                        {
+                          "var": "prior_license_state_change"
+                        },
+                        {
+                          "var": "current_license_state_change"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            ]
           }
         ]
       },
@@ -646,16 +767,41 @@
             }
           },
           {
-            "not": {
-              "any": [
-                {
-                  "var": "prior_opportunity_state_change"
-                },
-                {
-                  "var": "current_opportunity_state_change"
+            "any": [
+              {
+                "truthy": {
+                  "var": "outbound_claims_missing_evidence"
                 }
-              ]
-            }
+              },
+              {
+                "truthy": {
+                  "var": "outbound_claims_contradicted"
+                }
+              },
+              {
+                "all": [
+                  {
+                    "not": {
+                      "truthy": {
+                        "var": "outbound_claims_verified"
+                      }
+                    }
+                  },
+                  {
+                    "not": {
+                      "any": [
+                        {
+                          "var": "prior_opportunity_state_change"
+                        },
+                        {
+                          "var": "current_opportunity_state_change"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            ]
           }
         ]
       },
@@ -673,12 +819,19 @@
       "source_selector": {},
       "selector": {
         "tool": [
+          "message",
+          "gmail__send_email",
+          "gmail__send_reply",
+          "slack__post_message",
+          "telegram__send_message",
+          "salesforce__create_record",
           "salesforce__update_record",
           "salesforce__update_opportunity",
           "salesforce__update_lead_status",
           "salesforce__update_case"
         ],
         "flow_kind": [
+          "comm_sink",
           "business_side_effect"
         ]
       },
@@ -1090,9 +1243,15 @@
     {
       "field": "crm_write_contains_social_scoring_adverse",
       "type": "boolean",
-      "description": "Whether current Salesforce write arguments tie geography/location proxies to adverse business outcomes.",
+      "description": "Whether current business writes or outbound messages tie geography/location proxies to adverse business outcomes.",
       "applies_to": {
         "tools": [
+          "message",
+          "gmail__send_email",
+          "gmail__send_reply",
+          "slack__post_message",
+          "telegram__send_message",
+          "salesforce__create_record",
           "salesforce__update_record",
           "salesforce__update_opportunity",
           "salesforce__update_lead_status",
@@ -1106,7 +1265,7 @@
         ],
         "transform": "contains_social_scoring_adverse"
       },
-      "normalization": "Policy runtime scans CRM write arguments for geography-linked adverse action semantics.",
+      "normalization": "Policy runtime scans CRM write and outbound message arguments for geography-linked adverse action semantics.",
       "on_missing": "no_match",
       "required_for_rules": [
         "USER-FLOW-SOCIAL-SCORING-CRM-WRITE-001"
