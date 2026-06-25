@@ -76,6 +76,12 @@ from arbiteros_kernel.protocol_adapter import (
     collect_responses_stream_text as _pa_collect_responses_stream_text,
 )
 from arbiteros_kernel.user_approval import apply_user_approval_preprocessing
+from arbiteros_kernel.depends_on_sidecar import (
+    invoke_depends_on_sidecar,
+    is_depends_on_sidecar_internal_request,
+    is_respond_text_instruction,
+    read_depends_on_sidecar_enabled,
+)
 from arbiteros_kernel.instruction_depends_on import (
     DEPENDS_ON_STATIC_SCHEMA_HINT,
     REF_KIND_LLMOUTPUT,
@@ -83,6 +89,7 @@ from arbiteros_kernel.instruction_depends_on import (
     REF_KIND_TOOLCALL,
     REF_KIND_TOOLRESULT,
     REF_KIND_USERINPUT,
+    SOURCE_SIDECAR,
     _dedupe_entries as dedupe_depends_on_entries,
     build_depends_on_entry_schema,
     build_depends_on_items_schema,
@@ -4146,6 +4153,7 @@ def _add_instructions_from_modified_response(
     modified_response: dict,
     *,
     resolve_text_depends_on: bool = True,
+    request_data: Optional[dict[str, Any]] = None,
 ) -> int:
     """
     根据 modified_response 追加 instructions（tool_calls 先，再 content）。
@@ -4190,6 +4198,7 @@ def _add_instructions_from_modified_response(
             content=content,
             trace_id=getattr(builder, "trace_id", None),
             resolve_text_depends_on=resolve_text_depends_on,
+            request_data=request_data,
         )
     count_after = len(getattr(builder, "instructions", []) or [])
     return count_after - count_before
@@ -4237,6 +4246,7 @@ def _commit_response_instructions_after_policy(
     instruction_start_index: int,
     policy_protected: Optional[str] = None,
     user_approved: bool = False,
+    request_data: Optional[dict[str, Any]] = None,
 ) -> None:
     """Replace staged instructions with ``response_dict`` and persist to trace file."""
     if InstructionBuilder is None or builder is None:
@@ -4246,6 +4256,7 @@ def _commit_response_instructions_after_policy(
     _add_instructions_from_modified_response(
         builder,
         response_dict,
+        request_data=request_data,
     )
     instrs = getattr(builder, "instructions", []) or []
     for instr in instrs[count_before:]:
@@ -4264,6 +4275,8 @@ def _replace_instructions_from_modified_response(
     builder: Any,
     modified_response: dict,
     instruction_start_index: int,
+    *,
+    request_data: Optional[dict[str, Any]] = None,
 ) -> None:
     """
     Policy 修改 response 后，用修改后的 response 重新生成 instructions 并替换。
@@ -4321,6 +4334,7 @@ def _replace_instructions_from_modified_response(
             content=content,
             trace_id=getattr(builder, "trace_id", None),
             resolve_text_depends_on=True,
+            request_data=request_data,
         )
 
 
@@ -6273,6 +6287,7 @@ def _set_instruction_depends_on(
     tool_depends_on_raw: Any = None,
     kernel_tool_call_id: Optional[str] = None,
     trace_id: Optional[str] = None,
+    depends_on_source: Optional[str] = None,
 ) -> None:
     if not isinstance(instr, dict) or builder is None:
         return
@@ -6304,6 +6319,11 @@ def _set_instruction_depends_on(
             kernel_depends_on_tool_call(instructions, kernel_tool_call_id)
         )
     instr["depends_on"] = _dedupe_depends_on_entries(entries)
+    if isinstance(depends_on_source, str) and depends_on_source.strip():
+        source = depends_on_source.strip()
+        for entry in instr["depends_on"]:
+            if isinstance(entry, dict):
+                entry["source"] = source
     _strip_depends_on_from_instruction_content(instr)
 
 
@@ -6366,6 +6386,129 @@ def _apply_text_instruction_depends_on(
         instr,
         text_depends_on_raw=raw,
         trace_id=trace_id,
+    )
+
+
+def _extract_model_from_request_data(request_data: Any) -> Optional[str]:
+    if not isinstance(request_data, dict):
+        return None
+    model = request_data.get("model")
+    if isinstance(model, str) and model.strip():
+        return model.strip()
+    metadata = request_data.get("metadata")
+    if isinstance(metadata, dict):
+        nested = metadata.get("model")
+        if isinstance(nested, str) and nested.strip():
+            return nested.strip()
+    proxy_server_request = request_data.get("proxy_server_request")
+    if isinstance(proxy_server_request, dict):
+        body = proxy_server_request.get("body")
+        if isinstance(body, dict):
+            body_model = body.get("model")
+            if isinstance(body_model, str) and body_model.strip():
+                return body_model.strip()
+    return None
+
+
+def _log_depends_on_sidecar_decision(
+    trace_id: Optional[str],
+    instr: dict[str, Any],
+    decision: str,
+    **extra: Any,
+) -> None:
+    payload: dict[str, Any] = {
+        "trace_id": trace_id,
+        "instruction_id": instr.get("id") if isinstance(instr, dict) else None,
+        "runtime_step": instr.get("runtime_step") if isinstance(instr, dict) else None,
+        "decision": decision,
+    }
+    payload.update(extra)
+    _save_json("depends_on_sidecar_decision", payload)
+
+
+def _apply_respond_text_depends_on(
+    builder: Any,
+    instr: dict[str, Any],
+    trace_id: Optional[str],
+    *,
+    request_data: Optional[dict[str, Any]] = None,
+    depends_on_raw: Any = _PENDING_TEXT_DEPENDS_ON_UNSET,
+) -> None:
+    """Apply depends_on for text RESPOND instructions; optional sidecar overrides model deps."""
+    if not isinstance(instr, dict):
+        return
+    if not is_respond_text_instruction(instr):
+        _log_depends_on_sidecar_decision(
+            trace_id, instr, "use_model_pending", reason="not_respond_text"
+        )
+        _apply_text_instruction_depends_on(
+            builder,
+            instr,
+            trace_id,
+            depends_on_raw=depends_on_raw,
+        )
+        return
+    if not read_depends_on_sidecar_enabled():
+        _log_depends_on_sidecar_decision(trace_id, instr, "use_model_pending", reason="disabled")
+        _apply_text_instruction_depends_on(
+            builder,
+            instr,
+            trace_id,
+            depends_on_raw=depends_on_raw,
+        )
+        return
+    if isinstance(request_data, dict) and _should_skip_depends_on_sidecar_for_request(
+        request_data
+    ):
+        skip_reason = _depends_on_sidecar_skip_reason(request_data)
+        _log_depends_on_sidecar_decision(
+            trace_id, instr, "skip_empty", reason=skip_reason
+        )
+        _ensure_instruction_depends_on_field(instr, force_empty=True)
+        return
+
+    respond_content = instr.get("content")
+    if not isinstance(respond_content, str) or not respond_content.strip():
+        _log_depends_on_sidecar_decision(trace_id, instr, "skip_empty", reason="empty_content")
+        _ensure_instruction_depends_on_field(instr, force_empty=True)
+        return
+
+    model = _extract_model_from_request_data(request_data)
+    if not model:
+        _log_depends_on_sidecar_decision(trace_id, instr, "skip_empty", reason="missing_model")
+        _ensure_instruction_depends_on_field(instr, force_empty=True)
+        return
+
+    _log_depends_on_sidecar_decision(
+        trace_id,
+        instr,
+        "invoke",
+        model=model,
+        respond_preview=respond_content[:160],
+    )
+    instructions = list(getattr(builder, "instructions", []) or [])
+    current_step = instr.get("runtime_step")
+    current_step_int = current_step if isinstance(current_step, int) else None
+    raw = invoke_depends_on_sidecar(
+        model=model,
+        instructions=instructions,
+        respond_content=respond_content,
+        current_runtime_step=current_step_int,
+        trace_id=trace_id,
+        log_hook=_save_json,
+    )
+    _set_instruction_depends_on(
+        builder,
+        instr,
+        text_depends_on_raw=raw,
+        trace_id=trace_id,
+        depends_on_source=SOURCE_SIDECAR,
+    )
+    _log_depends_on_sidecar_decision(
+        trace_id,
+        instr,
+        "applied",
+        resolved_count=len(instr.get("depends_on") or []),
     )
 
 
@@ -6724,6 +6867,70 @@ def _detect_policy_confirmation_reply(messages: list) -> Optional[bool]:
     return True
 
 
+def _depends_on_sidecar_skip_reason(request_data: Any) -> str:
+    """Return a specific skip reason for sidecar observability."""
+    if not isinstance(request_data, dict):
+        return "claude_aux"
+    messages = request_data.get("messages")
+    if not isinstance(messages, list) or not messages:
+        return "claude_aux"
+    latest_user = _extract_latest_message_text(messages, role="user")
+    if not isinstance(latest_user, str):
+        return "claude_aux"
+    text = latest_user.strip().lower()
+    if not text:
+        return "claude_aux"
+    if (
+        "the user stepped away and is coming back" in text
+        and "recap in under 40 words" in text
+    ):
+        return "claude_recap"
+    if (
+        "[suggestion mode:" in text
+        and "suggest what the user might naturally type next" in text
+    ):
+        return "claude_suggestion"
+    if "write the title in the language" in text:
+        return "claude_title"
+    return "claude_aux"
+
+
+def _should_skip_depends_on_sidecar_for_request(request_data: Any) -> bool:
+    """
+    Skip sidecar for Claude Code internal helper turns only.
+
+    Narrower than ``_is_claude_code_aux_request``: non-streaming proxy requests and
+    shadow dedupe markers must not suppress sidecar on the main committing request.
+    """
+    if _read_tool_agent_from_litellm_config() != "claude_code":
+        return False
+    if not isinstance(request_data, dict):
+        return False
+    messages = request_data.get("messages")
+    if not isinstance(messages, list) or not messages:
+        return False
+    latest_user = _extract_latest_message_text(messages, role="user")
+    if not isinstance(latest_user, str):
+        return False
+    text = latest_user.strip().lower()
+    if not text:
+        return False
+
+    if (
+        "the user stepped away and is coming back" in text
+        and "recap in under 40 words" in text
+    ):
+        return True
+    if (
+        "[suggestion mode:" in text
+        and "suggest what the user might naturally type next" in text
+    ):
+        return True
+    if "write the title in the language" in text:
+        return True
+    return False
+
+
 def _is_claude_code_aux_request(request_data: Any) -> bool:
     """
     Detect Claude Code internal helper turns (recap/suggestion/shadow duplicate).
@@ -6827,6 +7034,7 @@ def _add_instruction_for_non_strict(data: dict, content: str) -> None:
         builder=builder,
         content=content,
         trace_id=trace_id,
+        request_data=data,
     )
     _save_instructions_to_trace_file(
         trace_id, builder, token_usage_start_index=count_before
@@ -6995,6 +7203,7 @@ def _add_non_strict_content_instructions(
     content: str,
     trace_id: Optional[str],
     resolve_text_depends_on: bool = True,
+    request_data: Optional[dict[str, Any]] = None,
 ) -> None:
     if InstructionBuilder is None or builder is None:
         return
@@ -7012,7 +7221,12 @@ def _add_non_strict_content_instructions(
             )
             if isinstance(instr, dict):
                 if resolve_text_depends_on:
-                    _apply_text_instruction_depends_on(builder, instr, trace_id)
+                    _apply_respond_text_depends_on(
+                        builder,
+                        instr,
+                        trace_id,
+                        request_data=request_data,
+                    )
                 else:
                     _ensure_instruction_depends_on_field(instr)
         except Exception:
@@ -7062,7 +7276,12 @@ def _add_non_strict_content_instructions(
             )
             if isinstance(instr, dict):
                 if resolve_text_depends_on:
-                    _apply_text_instruction_depends_on(builder, instr, trace_id)
+                    _apply_respond_text_depends_on(
+                        builder,
+                        instr,
+                        trace_id,
+                        request_data=request_data,
+                    )
                 else:
                     _ensure_instruction_depends_on_field(instr)
         except Exception:
@@ -7074,7 +7293,12 @@ def _add_non_strict_content_instructions(
             )
             if isinstance(instr, dict):
                 if resolve_text_depends_on:
-                    _apply_text_instruction_depends_on(builder, instr, trace_id)
+                    _apply_respond_text_depends_on(
+                        builder,
+                        instr,
+                        trace_id,
+                        request_data=request_data,
+                    )
                 else:
                     _ensure_instruction_depends_on_field(instr)
         except Exception:
@@ -7389,11 +7613,11 @@ def _response_transform_content_only(data: dict, message_dict: dict) -> Optional
                             }
                         )
                         if isinstance(instr, dict):
-                            _set_instruction_depends_on(
+                            _apply_respond_text_depends_on(
                                 builder,
                                 instr,
-                                text_depends_on_raw=depends_on_raw,
-                                trace_id=trace_id,
+                                trace_id,
+                                request_data=data if isinstance(data, dict) else None,
                             )
                             _ensure_instruction_depends_on_field(instr)
                         _save_instructions_to_trace_file(
@@ -8597,6 +8821,8 @@ class MyCustomHandler(CustomLogger):
     ) -> Optional[
         Union[Exception, str, dict]
     ]:  # raise exception if invalid, return a str for the user to receive - if rejected, or return a modified dictionary for passing into litellm
+        if is_depends_on_sidecar_internal_request(data):
+            return data
         # Some upstreams (e.g. gpt-5.2-chat-latest) reject non-default temperature; clients often send 0.7.
         _m = data.get("model")
         parsed_model, parsed_role_name = split_model_and_role(_m)
@@ -8883,7 +9109,9 @@ class MyCustomHandler(CustomLogger):
                                             getattr(builder, "instructions", []) or []
                                         )
                                         _add_instructions_from_modified_response(
-                                            builder, protected
+                                            builder,
+                                            protected,
+                                            request_data=data if isinstance(data, dict) else None,
                                         )
                                         policy_reason = (
                                             pending.get("policy_reason") or ""
@@ -8998,6 +9226,8 @@ class MyCustomHandler(CustomLogger):
         user_api_key_dict: UserAPIKeyAuth,
         response: LLMResponseTypes,
     ) -> Any:
+        if is_depends_on_sidecar_internal_request(data):
+            return response
         # data is the original request data
         # response is the response from the LLM API
         canonical_response = _to_canonical_assistant_message(response)
@@ -9190,7 +9420,9 @@ class MyCustomHandler(CustomLogger):
                     protected = apply_info.get("protected_response")
                     if isinstance(protected, dict):
                         count_before = len(getattr(builder, "instructions", []) or [])
-                        _add_instructions_from_modified_response(builder, protected)
+                        _add_instructions_from_modified_response(
+                            builder, protected, request_data=data if isinstance(data, dict) else None
+                        )
                         for instr in builder.instructions[count_before:]:
                             instr["policy_protected"] = (
                                 policy_violation_reason_for_langfuse or ""
@@ -9214,6 +9446,7 @@ class MyCustomHandler(CustomLogger):
                     _add_instructions_from_modified_response(
                         builder,
                         final_msg_dict if isinstance(final_msg_dict, dict) else {},
+                        request_data=data if isinstance(data, dict) else None,
                     )
                     instrs = getattr(builder, "instructions", []) or []
                     for instr in instrs[count_before:]:
@@ -9338,6 +9571,7 @@ class MyCustomHandler(CustomLogger):
                                 )
                                 == "allow_original"
                             ),
+                            request_data=data if isinstance(data, dict) else None,
                         )
                 if policy_result.modified:
                     error_type_str = (policy_result.error_type or "").strip()
@@ -9381,6 +9615,7 @@ class MyCustomHandler(CustomLogger):
                                 final_msg_dict if isinstance(final_msg_dict, dict) else {},
                                 instruction_start_index=_policy_instruction_count_before,
                                 policy_protected=policy_violation_reason_for_langfuse,
+                                request_data=data if isinstance(data, dict) else None,
                             )
                         response = _apply_canonical_message_to_response(
                             response,
