@@ -15,6 +15,7 @@ REF_TYPE_TOOL_CALL_ID = "tool_call_id"
 REF_TYPE_INSTRUCTION_ID = "instruction_id"
 SOURCE_MODEL = "model"
 SOURCE_KERNEL = "kernel"
+SOURCE_SIDECAR = "sidecar"
 
 STEP_REF_PREFIX = "step:"
 
