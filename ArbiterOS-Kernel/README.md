@@ -5,7 +5,7 @@
 - **Request logging**: `pre_call` writes each request’s `model`, `messages`, and `tools` to `log/api_calls.jsonl`.
 - **Response logging**: `post_call_success` writes the **raw** response (full structure including `category` / `content`) to the same jsonl for later analysis.
 - **Response transform**: Before returning to the client, if the assistant `content` is a JSON string `{"category":"...","content":"..."}`, only the inner `content` is returned (same for streaming and non-streaming). Messages with `tool_calls` are left unchanged.
-- **Policy confirmation**: When a policy blocks a response (e.g. blocks a tool call), the kernel returns a confirmation message and waits for the user to reply **Yes** or **No**. On the next request, pre-call detects the reply and returns the protected response (Yes) or original response (No) without calling the LLM. See `docs/kernel.md`for details.
+- **Policy confirmation**: When a policy blocks a response (e.g. blocks a tool call), the kernel returns a confirmation message and waits for the user to reply **Yes** or **No**. On the next request, pre-call detects the reply and returns the protected response (Yes) or original response (No) without calling the LLM. See [`../assets/docs/kernel.md`](../assets/docs/kernel.md) for details.
 - **Live observability**: MLflow logging uses LiteLLM’s `mlflow` callbacks; Langfuse session tracing is emitted by `arbiteros_kernel.litellm_callback` when `LANGFUSE_PUBLIC_KEY` + `LANGFUSE_SECRET_KEY` are set (auto-loaded from `.env`). Langfuse nodes are also persisted to `log/langfuse_nodes.jsonl` for replay.
 - **Instruction parse & registry**: For each trace, the kernel generates `log/{trace_id}.json` to parse and register the original LLM input/output. The `InstructionBuilder` (from `arbiteros_kernel.instruction_parsing`) converts:
   - **LLM structured output**: When the assistant returns `{"category":"...","content":"..."}`, it is parsed into an instruction with `instruction_category`, `instruction_type`, and `content`.
@@ -14,6 +14,15 @@
   Each `log/{trace_id}.json` contains `trace_id`, `created_at`, and an `instructions` array. Instructions include `id`, `content`, `runtime_step`, `parent_id`, `source_message_id`, `security_type`, `rule_types`, `instruction_category`, and `instruction_type`. This enables downstream analysis and replay of the parsed instruction flow.
 
 Configured in `litellm_config.yaml` ; Kernel's key logic lives in `_response_transform_content_only` in `arbiteros_kernel/litellm_callback.py`.
+
+## Traces, sessions, and parallel runs
+
+Kernel traces are keyed by **session identity** (`device_key`), not by individual HTTP requests. Instructions land in `log/instruction/{trace_id}.json` according to that identity.
+
+- **Full agents** (Codex, Claude Code, OpenClaw, etc.) usually send session signals the kernel can read (e.g. Codex `prompt_cache_key`, Claude Code session metadata). One agent process → one trace; **run several agent sessions in parallel** → several traces.
+- **Bare API calls** (only `model` + `messages` / `input`, with no session metadata) cannot be split into “many parallel jobs” vs “one client sending many requests”. The kernel **defaults to merging them into one anonymous trace**. That is intentional for high-volume bare API traffic (avoid hundreds of one-off trace files).
+
+**If you parallelize from the command line:** start **multiple full agent sessions** (separate Codex/Claude Code/OpenClaw processes), not many parallel bare proxy calls. For custom clients, you may pass `metadata.arbiteros_device_key` or `metadata.arbiteros_trace_id` on each request to control grouping; see [`../assets/docs/kernel.md`](../assets/docs/kernel.md) for details.
 
 ## Setup and Run
 
