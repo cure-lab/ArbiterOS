@@ -250,7 +250,38 @@ Tool parsers (e.g. OpenClaw `read` / nanobot `read_file`) assign `security_type`
 
 ---
 
-## 8. Logging
+## 8. Traces, sessions, and parallel runs
+
+### How traces are chosen
+
+Each request is assigned to a trace via **`device_key`** (`channel:user_id`), persisted in `log/trace_state.json`. The kernel does **not** allocate one trace per HTTP request.
+
+Typical session signals (when present on the request):
+
+| Source | Signal | Effect |
+| ------ | ------ | ------ |
+| Codex / Responses API | `prompt_cache_key` | One Codex exec session → one trace |
+| Claude Code | Session id in request metadata / headers | One CLI session → one trace |
+| OpenClaw / others | Channel + conversation labels in messages, or `metadata.arbiteros_device_key` | Per-agent session when the client provides identity |
+| Bare API | None of the above | Falls back to a shared **anonymous** identity → requests merge into one trace |
+
+### Parallel workloads
+
+- **Supported pattern:** run **multiple full agent sessions** in parallel (e.g. several Codex or Claude Code processes). Each session carries its own identity → separate `trace_id` and `log/instruction/{trace_id}.json`.
+- **Unsupported / ambiguous pattern:** many parallel **bare** proxy calls (scripts, `curl`, load tests) with only `model` + `input`. The kernel cannot tell whether those are independent jobs or one client; **default behavior is to merge into one anonymous trace**. Alternatives (one trace per request) would explode trace file count and are not the default.
+
+### Explicit metadata (advanced)
+
+Custom clients may set LiteLLM request `metadata`:
+
+- `arbiteros_device_key` — stable session identity (`channel:user_id` form).
+- `arbiteros_trace_id` — continue an existing trace when valid for that device.
+
+Full agents normally do not need this; bare API integrators use it only when they must partition traces themselves.
+
+---
+
+## 9. Logging
 
 Various runtime information is recorded in the following files:
 
