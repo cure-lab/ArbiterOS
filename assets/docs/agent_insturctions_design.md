@@ -56,6 +56,14 @@ Perception instructions represent the agent as a receiver — reacting to events
 * **User Interaction**
     * `USER_MESSAGE`: **User Prompt.** New input from the user. Since the User is modeled as part of the Environment (see [System Roles & Definitions](#system-roles--definitions)), user messages are treated as a special category of environmental push event — they interrupt the agent's current process and require immediate attention.
 
+### 4. CONTEXT (Kernel-registered)
+
+These instruction types are recorded by the ArbiterOS Kernel from conversation context (not from a single LLM structured-output turn). They appear at the start of a trace and receive `[ARBITEROS_REF kind=SYSTEMPROMPT|USERINPUT]` watermarks so later steps can cite them in `depends_on`.
+
+* **Session Bootstrap**
+    * `SYSTEMPROMPT`: **System Instructions.** The agent's system prompt or harness-provided role definition.
+    * `USERINPUT`: **Initial / Turn User Text.** User messages synced from the request history (`context_key`: `user:0`, `user:1`, …). Distinct from `USER_MESSAGE` (perception push) in taxonomy intent; in persisted trajectories the kernel uses `USERINPUT` for synced user text.
+
 ---
 
 ## Instruction Metadata
@@ -81,6 +89,10 @@ This layer captures the **extrinsic** attributes of the message flow — immutab
     * `input_tokens`: Length of context.
     * `output_tokens`: Length of generated output.
   * `finish_reason`: Why the stream stopped (e.g., `stop`, `length`, `content_filter`).
+
+* **Ref markers** (Kernel-injected, API-only)
+  * `arbiteros_ref_kind`: One of `SYSTEMPROMPT`, `USERINPUT`, `TOOLCALL`, `TOOLRESULT`, `LLMOUTPUT`. Matches the `kind=` field in `[ARBITEROS_REF id=<uuid> kind=…]` prefixes injected into the conversation before each LLM call.
+  * `context_key`: Stable slot id for synced context messages (`system:0`, `user:0`, …).
 
 ### 2. Safety & Trust Metadata
 
@@ -162,3 +174,26 @@ The sole sanitization node in the taint model. When taint has accumulated — fr
 | `HUMAN_BLOCKED`   | A human operator has explicitly rejected this instruction.                                            |
 | `POLICY_BLOCKED`  | The instruction was blocked by automated policy (e.g. rate limit, path-protection, schema violation). |
 | `UNKNOWN`         | Authority has not yet been evaluated (default at parse time, before the policy engine runs).          |
+
+### 3. Causal Lineage (`depends_on`)
+
+This layer records **direct causal dependencies** between instructions — which prior steps materially shaped the current step's decision or action. It complements the taint model above: taint tracks *risk of data*, while `depends_on` tracks *why this step happened*.
+
+#### 3.1 `depends_on` entry
+
+Each instruction may carry a `depends_on` array. Each entry resolves to a prior instruction id and includes:
+
+| Field             | Description |
+| ----------------- | ----------- |
+| `instruction_id`  | UUID of a **prior** instruction in the same trace (from an `[ARBITEROS_REF id=…]` marker). |
+| `ref`             | Same as `instruction_id` after kernel normalization. |
+| `ref_type`        | `instruction_id` (resolved form). |
+| `source`          | Who declared the edge: `model` (structured output), `kernel` (e.g. tool result → tool call), or `sidecar` (optional follow-up LLM pass). |
+| `confidence`      | Float 0–1: how direct and necessary the causal link is. |
+| `counterfactual`  | One short sentence: if that predecessor had not occurred, how would this step likely change? |
+
+Use `[]` when no prior step directly caused this step. The model declares edges in structured output; the kernel validates ids against the injected allow-list and persists resolved entries in `log/instruction/{trace_id}.json`. See [kernel.md](kernel.md) §7.3 for the full inject → declare → resolve flow.
+
+#### 3.2 Optional sidecar
+
+When `arbiteros_config.depends_on_sidecar.enabled` is `true`, plain-text `RESPOND` instructions that omit model-declared `depends_on` may receive dependencies from an internal sidecar LLM pass (`source: "sidecar"`). Default is `false`.
