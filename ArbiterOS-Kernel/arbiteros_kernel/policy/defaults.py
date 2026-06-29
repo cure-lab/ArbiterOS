@@ -64,11 +64,10 @@ POLICY_CLASS_MAP: dict[str, type["Policy"]] = {
 
 def _default_registry_data() -> list[dict[str, object]]:
     """
-    Fallback registry when external file is missing or invalid.
+    Fallback registry when the policy file is missing or invalid.
 
-    Users can override this via:
-      1) ARBITEROS_POLICY_REGISTRY
-      2) arbiteros_kernel/policy_registry.json
+    An explicit empty array in policy_registry.json (``[]``) disables all
+    policies — see ``_load_registry_data_from_file``.
     """
     return [
         {
@@ -190,6 +189,12 @@ def _registry_config_path() -> Path:
 
 
 def _load_registry_data_from_file() -> list[dict[str, object]]:
+    """
+    Load registry rows from ``policy_registry.json``.
+
+    Missing/invalid file → built-in default list. A valid empty array (``[]``)
+    is returned as-is so no policies run (no block, no observe-only warnings).
+    """
     path = _registry_config_path()
     if not path.exists():
         return _default_registry_data()
@@ -219,7 +224,7 @@ def _load_registry_data_from_file() -> list[dict[str, object]]:
             }
         )
 
-    return cleaned or _default_registry_data()
+    return cleaned
 
 
 def _build_registry_from_data(data: list[dict[str, object]]) -> list[PolicyEntry]:
