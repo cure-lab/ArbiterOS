@@ -20,6 +20,20 @@ _MAIL_SERVICES = {"gmail", "email", "mail"}
 _CHAT_SERVICES = {"slack", "telegram"}
 _CRM_SERVICES = {"salesforce", "crm", "customer_service"}
 _SCHEDULING_SERVICES = {"calendar", "zoom"}
+_SUPPORT_SERVICES = {"zendesk", "intercom", "freshdesk", "servicenow"}
+_PAYMENT_SERVICES = {
+    "payment",
+    "payments",
+    "billing",
+    "invoice",
+    "invoices",
+    "stripe",
+    "paypal",
+    "bank",
+    "banking",
+    "quickbooks",
+}
+_ENTITLEMENT_SERVICES = {"license", "licensing", "licence", "entitlement", "entitlements"}
 _WORK_TRACKING_SERVICES = {"atlassian", "jira", "confluence"}
 _MODEL_REVIEW_SERVICES = {
     "claude_review",
@@ -415,13 +429,36 @@ def classify_mcp_tool_flow(tool_name: str) -> McpFlowKind:
             return "comm_sink"
         return "none"
 
-    if service in _CRM_SERVICES:
+    if service in _CRM_SERVICES or service in _SUPPORT_SERVICES:
         if _starts_with_any(action, _MUTATION_VERBS) or _contains_mutation_token(action):
             if not _starts_with_any(action, _DESTRUCTIVE_VERBS):
                 return "business_side_effect"
             return "persist_side_effect"
         if _starts_with_any(action, _READ_VERBS) or _contains_read_token(action):
             return "read_sensitive"
+        return "none"
+
+    if service in _PAYMENT_SERVICES:
+        if _starts_with_any(action, _READ_VERBS) or _contains_read_token(action):
+            return "read_sensitive"
+        if (
+            _starts_with_any(action, _SEND_VERBS)
+            or _contains_send_token(action)
+            or _starts_with_any(action, ("pay", "refund", "transfer", "charge", "withdraw", "deposit"))
+            or any(token in _tokens(action) for token in {"pay", "refund", "transfer", "charge"})
+        ):
+            return "persist_side_effect"
+        if _starts_with_any(action, _MUTATION_VERBS) or _contains_mutation_token(action):
+            return "business_side_effect"
+        return "none"
+
+    if service in _ENTITLEMENT_SERVICES:
+        if _starts_with_any(action, _READ_VERBS) or _contains_read_token(action):
+            return "read_sensitive"
+        if _starts_with_any(action, _MUTATION_VERBS) or _contains_mutation_token(action):
+            if _starts_with_any(action, _DESTRUCTIVE_VERBS):
+                return "persist_side_effect"
+            return "business_side_effect"
         return "none"
 
     if service in _SCHEDULING_SERVICES:

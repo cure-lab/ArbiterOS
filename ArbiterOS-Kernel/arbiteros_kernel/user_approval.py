@@ -7,6 +7,7 @@ before passing to policy check.
 from __future__ import annotations
 
 import copy
+import json
 from typing import Any, Dict, List, Optional
 
 from .instruction_parsing.types import (
@@ -25,10 +26,20 @@ def _get_tool_call_id(instr: Dict[str, Any]) -> Optional[str]:
 
 def _get_reference_tool_ids(instr: Dict[str, Any]) -> List[str]:
     """Extract reference_tool_id list from instruction content."""
+    if not isinstance(instr, dict):
+        return []
     content = instr.get("content")
     if not isinstance(content, dict):
         return []
     args = content.get("arguments") or {}
+    if isinstance(args, str):
+        try:
+            parsed_args = json.loads(args)
+        except (TypeError, ValueError):
+            return []
+        args = parsed_args if isinstance(parsed_args, dict) else {}
+    if not isinstance(args, dict):
+        return []
     ref_ids = args.get("reference_tool_id")
     if not isinstance(ref_ids, list):
         return []

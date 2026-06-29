@@ -114,6 +114,22 @@ _CRM_CONTACT_DELETE_TOOLS = {
     "salesforce__delete_contact",
     "salesforce__delete_record",
 }
+_BUSINESS_CONTEXT_READ_SERVICES = {
+    "atlassian",
+    "calendar",
+    "crm",
+    "customer_service",
+    "email",
+    "freshdesk",
+    "gmail",
+    "intercom",
+    "jira",
+    "mail",
+    "salesforce",
+    "servicenow",
+    "slack",
+    "zendesk",
+}
 
 _NO_CONSENT_PHRASES = (
     "do not contact",
@@ -986,8 +1002,19 @@ def _has_reference_tool(args_dict: Dict[str, Any]) -> bool:
     return isinstance(refs, str) and bool(refs.strip())
 
 
-def _is_sensitive_read_requiring_trust(args_dict: Dict[str, Any], sec: Dict[str, Any]) -> bool:
+def _is_business_context_read_tool(tool_name: str) -> bool:
+    service, sep, _ = _safe_str(tool_name).lower().partition("__")
+    return bool(sep and service in _BUSINESS_CONTEXT_READ_SERVICES)
+
+
+def _is_sensitive_read_requiring_trust(
+    tool_name: str,
+    args_dict: Dict[str, Any],
+    sec: Dict[str, Any],
+) -> bool:
     if _safe_level(sec.get("confidentiality")) != "HIGH":
+        return False
+    if _is_business_context_read_tool(tool_name):
         return False
     prop_trust = _safe_level(sec.get("prop_trustworthiness"))
     path_hint = _get_primary_path_hint(args_dict)
@@ -1555,6 +1582,7 @@ def _evaluate_flow(
     flow_kind: str,
     sec: Dict[str, Any],
     args_dict: Dict[str, Any],
+    tool_name: str = "",
     current_taint_status: Any = None,
 ) -> Tuple[bool, str, str, Dict[str, Any]]:
     """
@@ -1598,7 +1626,7 @@ def _evaluate_flow(
         required = conf
         if bool(_get_relational_policy_cfg().get("allow_sensitive_reads", False)):
             extra["read_sensitive_allowed_by_config"] = True
-            if _is_sensitive_read_requiring_trust(args_dict, sec):
+            if _is_sensitive_read_requiring_trust(tool_name, args_dict, sec):
                 actual = _safe_level(sec.get("prop_trustworthiness"))
                 extra["read_sensitive_blocked_by_propagated_trust"] = True
                 return False, actual, "HIGH", extra
@@ -1729,6 +1757,7 @@ def _build_relational_context(
         flow_kind,
         sec,
         args_dict,
+        tool_name=tool_name,
         current_taint_status=current_taint_status,
     )
     del ok
@@ -2159,6 +2188,7 @@ class RelationalPolicy(Policy):
                 flow_kind,
                 sec,
                 args_dict,
+                tool_name=tool_name,
                 current_taint_status=current_taint_status,
             )
             source_trust = extra["source_trustworthiness"]

@@ -4,6 +4,7 @@ Core types, schema constructors, and vocabulary for the instruction_parsing pack
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any, Callable, Dict, List, Literal, NamedTuple, Optional, cast
 
@@ -177,7 +178,16 @@ def compute_prop_taint_for_instruction(
 
     # Tool call: collect tool_call_ids to include (self + reference_tool_id)
     tc_id = content.get("tool_call_id")
-    ref_ids = content.get("arguments", {}).get("reference_tool_id") or []
+    args = content.get("arguments") or {}
+    if isinstance(args, str):
+        try:
+            parsed_args = json.loads(args)
+        except (TypeError, ValueError):
+            parsed_args = {}
+        args = parsed_args if isinstance(parsed_args, dict) else {}
+    if not isinstance(args, dict):
+        args = {}
+    ref_ids = args.get("reference_tool_id") or []
     ids_to_include: set[str] = set()
     if isinstance(tc_id, str) and tc_id.strip():
         ids_to_include.add(tc_id.strip())

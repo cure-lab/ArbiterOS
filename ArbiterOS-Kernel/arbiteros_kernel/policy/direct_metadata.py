@@ -12,6 +12,11 @@ import os
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Set
 from urllib.parse import urlparse
 
+from .tool_evidence_ledger import (
+    text_contains_pipeline_lost_claim,
+    text_contains_social_scoring_adverse,
+)
+
 
 _EMAIL_RE = re.compile(r"@([A-Za-z0-9][A-Za-z0-9.-]*\.[A-Za-z]{2,63})")
 _EMAIL_ADDR_RE = re.compile(
@@ -75,9 +80,11 @@ _COMPLETION_CLAIM_RE = re.compile(
 _MARKETING_OR_ONBOARDING_RE = re.compile(
     r"(?is)\b("
     r"newsletter|subscrib(?:e|ed|ing|tion)|onboarding|welcome\s+to|"
-    r"sales\s+representative|enterprise\s+solution|product\s+features|"
+    r"sales\s+representative|enterprise\s+solution|healthcare\s+solutions?|"
+    r"solutions?\s+team|product\s+features|"
     r"pricing|industry\s+insights|campaign|promotion(?:al)?|"
-    r"outreach|demo|trial|quote"
+    r"outreach|demo|trial|quote|introductory\s+email|intro\s+call|"
+    r"contact\s+you\s+soon"
     r")\b"
 )
 _PAYMENT_FALSE_STATUS_RE = re.compile(
@@ -108,28 +115,6 @@ _LICENSE_READY_CLAIM_RE = re.compile(
     r"(?:active|operational|provisioned|enabled|ready|activated).{0,120}"
     r"(?:license|licence|entitlement|workspace|account)"
     r")\b"
-)
-_PIPELINE_STAGE_CLAIM_RE = re.compile(
-    r"(?is)\b("
-    r"lost\s+to\s+competitor|closed\s+lost|closed-lost|"
-    r"total\s+lost|lost\s+pipeline|"
-    r"(?:opportunit(?:y|ies)|deal(?:s)?|pipeline).{0,120}"
-    r"(?:stage|amount|total|closed\s+lost|lost\s+to\s+competitor)"
-    r")\b"
-)
-_SOCIAL_SCORING_ADVERSE_RE = re.compile(
-    r"(?is)("
-    r"\b(?:geograph(?:y|ic|ical)|region|country|zip|postal|postcode|"
-    r"location|territory|area|neighborhood|neighbourhood)\b.{0,160}"
-    r"\b(?:closed\s+lost|abandon(?:ed)?|deprioriti[sz](?:e|ed)|"
-    r"do\s+not\s+pursue|reject(?:ed)?|disqualif(?:y|ied)|"
-    r"probability\s*(?:to|=|:)?\s*0|low\s+priority)\b|"
-    r"\b(?:closed\s+lost|abandon(?:ed)?|deprioriti[sz](?:e|ed)|"
-    r"do\s+not\s+pursue|reject(?:ed)?|disqualif(?:y|ied)|"
-    r"probability\s*(?:to|=|:)?\s*0|low\s+priority)\b.{0,160}"
-    r"\b(?:geograph(?:y|ic|ical)|region|country|zip|postal|postcode|"
-    r"location|territory|area|neighborhood|neighbourhood)\b"
-    r")"
 )
 _CASE_TERMINAL_REJECTION_RE = re.compile(
     r"(?is)\b("
@@ -607,14 +592,14 @@ def _transform_contains_pipeline_stage_claim(values: List[Any]) -> Optional[bool
     texts = _text_values(values)
     if not texts:
         return None
-    return any(_PIPELINE_STAGE_CLAIM_RE.search(text) for text in texts)
+    return any(text_contains_pipeline_lost_claim(text) for text in texts)
 
 
 def _transform_contains_social_scoring_adverse(values: List[Any]) -> Optional[bool]:
     texts = _text_values(values)
     if not texts:
         return None
-    return any(_SOCIAL_SCORING_ADVERSE_RE.search(text) for text in texts)
+    return any(text_contains_social_scoring_adverse(text) for text in texts)
 
 
 def _transform_contains_case_terminal_rejection(values: List[Any]) -> Optional[bool]:
