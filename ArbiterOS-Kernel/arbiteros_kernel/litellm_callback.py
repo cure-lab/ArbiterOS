@@ -4155,22 +4155,14 @@ def _record_policy_protected_tool_calls(
         by_trace[blocked_id] = reason
 
 
-def _add_instructions_from_modified_response(
+def _append_tool_call_instructions_from_response(
     builder: Any,
     modified_response: dict,
     *,
-    resolve_text_depends_on: bool = True,
-    request_data: Optional[dict[str, Any]] = None,
-) -> int:
-    """
-    根据 modified_response 追加 instructions（tool_calls 先，再 content）。
-    返回新增的 instruction 数量，供调用方标记 policy_protected。
-    """
-    if InstructionBuilder is None or builder is None:
-        return 0
-    count_before = len(getattr(builder, "instructions", []) or [])
+    trace_id: Optional[str],
+) -> None:
+    """Append TOOLCALL instructions from ``modified_response.tool_calls``."""
     tc_details = _extract_tool_call_details_from_response(modified_response)
-    trace_id = getattr(builder, "trace_id", None)
     for tc_detail in tc_details:
         try:
             tc_id = tc_detail.get("tool_call_id")
@@ -4198,15 +4190,37 @@ def _add_instructions_from_modified_response(
                 _ensure_instruction_depends_on_field(instr)
         except Exception:
             pass
+
+
+def _add_instructions_from_modified_response(
+    builder: Any,
+    modified_response: dict,
+    *,
+    resolve_text_depends_on: bool = True,
+    request_data: Optional[dict[str, Any]] = None,
+) -> int:
+    """
+    根据 modified_response 追加 instructions（content/RESPOND 先，再 tool_calls）。
+    返回新增的 instruction 数量，供调用方标记 policy_protected。
+    """
+    if InstructionBuilder is None or builder is None:
+        return 0
+    count_before = len(getattr(builder, "instructions", []) or [])
+    trace_id = getattr(builder, "trace_id", None)
     content = modified_response.get("content")
     if isinstance(content, str) and content.strip():
         _add_non_strict_content_instructions(
             builder=builder,
             content=content,
-            trace_id=getattr(builder, "trace_id", None),
+            trace_id=trace_id,
             resolve_text_depends_on=resolve_text_depends_on,
             request_data=request_data,
         )
+    _append_tool_call_instructions_from_response(
+        builder,
+        modified_response,
+        trace_id=trace_id,
+    )
     count_after = len(getattr(builder, "instructions", []) or [])
     return count_after - count_before
 
@@ -4303,46 +4317,12 @@ def _replace_instructions_from_modified_response(
     builder._runtime_step = len(instructions)
     builder._last_instruction_id = instructions[-1]["id"] if instructions else None
 
-    # 3. 根据 modified_response 重新添加 instructions（tool_calls 先，再 content）
-    tc_details = _extract_tool_call_details_from_response(modified_response)
-    trace_id = getattr(builder, "trace_id", None)
-    for tc_detail in tc_details:
-        try:
-            tc_id = tc_detail.get("tool_call_id")
-            args = _merge_model_tool_arguments_for_instruction(
-                tc_detail.get("arguments") or {},
-                trace_id,
-                tc_id,
-            )
-            instr = builder.add_from_tool_call(
-                tool_name=tc_detail["tool_name"],
-                tool_call_id=tc_detail["tool_call_id"],
-                arguments=args,
-                result=None,
-            )
-            if isinstance(instr, dict):
-                raw_deps = _resolve_tool_depends_on_raw_for_call(
-                    trace_id, tc_id, args
-                )
-                _set_instruction_depends_on(
-                    builder,
-                    instr,
-                    tool_depends_on_raw=raw_deps,
-                    trace_id=trace_id,
-                )
-                _ensure_instruction_depends_on_field(instr)
-        except Exception:
-            pass
-
-    content = modified_response.get("content")
-    if isinstance(content, str) and content.strip():
-        _add_non_strict_content_instructions(
-            builder=builder,
-            content=content,
-            trace_id=getattr(builder, "trace_id", None),
-            resolve_text_depends_on=True,
-            request_data=request_data,
-        )
+    # 3. 根据 modified_response 重新添加 instructions（content/RESPOND 先，再 tool_calls）
+    _add_instructions_from_modified_response(
+        builder,
+        modified_response,
+        request_data=request_data,
+    )
 
 
 def _extract_tool_call_details_from_response(
@@ -7242,6 +7222,25 @@ def _add_non_strict_content_instructions(
 
     text_part, tool_args_list = _extract_codex_suffix_json_objects(content)
     parsed_any_tool = False
+
+    if text_part.strip():
+        try:
+            instr = builder.add_from_structured_output(
+                structured={"intent": "RESPOND", "content": text_part},
+            )
+            if isinstance(instr, dict):
+                if resolve_text_depends_on:
+                    _apply_respond_text_depends_on(
+                        builder,
+                        instr,
+                        trace_id,
+                        request_data=request_data,
+                    )
+                else:
+                    _ensure_instruction_depends_on_field(instr)
+        except Exception:
+            pass
+
     for idx, args in enumerate(tool_args_list, start=1):
         if not isinstance(args, dict):
             continue
@@ -7276,24 +7275,7 @@ def _add_non_strict_content_instructions(
         except Exception:
             pass
 
-    if text_part.strip():
-        try:
-            instr = builder.add_from_structured_output(
-                structured={"intent": "RESPOND", "content": text_part},
-            )
-            if isinstance(instr, dict):
-                if resolve_text_depends_on:
-                    _apply_respond_text_depends_on(
-                        builder,
-                        instr,
-                        trace_id,
-                        request_data=request_data,
-                    )
-                else:
-                    _ensure_instruction_depends_on_field(instr)
-        except Exception:
-            pass
-    elif not parsed_any_tool:
+    if not text_part.strip() and not parsed_any_tool:
         try:
             instr = builder.add_from_structured_output(
                 structured={"intent": "RESPOND", "content": content},

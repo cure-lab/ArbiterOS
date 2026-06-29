@@ -1,12 +1,12 @@
-# api_key: sk-zk2982f60e8a30b35dde3206ab6ec954d926a195aea39a91
-# api_base: https://api.zhizengzeng.com/v1
+# Copy to litellm_config.yaml and fill api_key / api_base (or use os.environ/VAR).
+# litellm_config.yaml is gitignored — never commit real credentials.
 
 model_list:
-  - model_name: gpt-4o
+  - model_name: gpt-5.5
     litellm_params:
-      model: gpt-4o
-      api_key: sk-zk2982f60e8a30b35dde3206ab6ec954d926a195aea39a91
-      api_base: https://api.zhizengzeng.com/v1
+      model: gpt-5.5
+      api_key: os.environ/ARBITEROS_UPSTREAM_API_KEY
+      api_base: https://your-provider.example/v1
       response_format:
         type: json_schema
         json_schema:
@@ -61,63 +61,35 @@ model_list:
             additionalProperties: false
           strict: true
 
-# ArbiterOS kernel: which agent tool names to parse (instruction_parsing). 
-# Now support : openclaw, nanobot, hermes, codex, claude_code
-# depends_on_sidecar:
-# enabled: true only for claude_code
-# enabled: false for openclaw, nanobot, hermes and codex
-# upstream_compat: 
-# enabled: true only for claude_code and codex
-# enabled: false for openclaw, nanobot, and hermes
 arbiteros_config:
-  tool_agent: openclaw
+  tool_agent: codex
   depends_on_sidecar:
     enabled: false
   upstream_compat:
-    enabled: false
+    enabled: true
     rules:
       - match_model: "gpt-5.5"
         strip_metadata: true
         force_non_stream: true
 
-# When true, enforced policy modifications are confirmed locally in the kernel terminal:
-#   Y => keep blocked response
-#   N => allow original response
-# false (in-agent Yes/No confirmation) is no longer maintained; we strongly recommend
-# true and deciding each block in the ArbiterOS terminal whether to apply it.
 arbiteros_local_policy_confirm: true
-# Test mode (default false): only applies when arbiteros_local_policy_confirm is true.
-# When true, every block is auto-kept (same as pressing Y) without waiting at the terminal.
 arbiteros_local_policy_confirm_test_mode: false
-# When true, append each final pre-call payload to log/precall/{trace_id}.json.
 precall_log_enabled: true
 
 litellm_settings:
-  # Following settings for anthropics models
-  # modify_params: true
   drop_params: true
   callbacks: arbiteros_kernel.litellm_callback.proxy_handler_instance
-  # Langfuse tracing is emitted by arbiteros_kernel.litellm_callback
-  # so all OpenClaw steps can be grouped into one session trace.
   success_callback: ["mlflow"]
   failure_callback: ["mlflow"]
 
-# Skill trust (arbiteros_kernel.skill_trust): path to ``.../skills`` (OpenClaw
-# skill packages). Non-empty ARBITEROS_SKILLS_ROOT overrides ``skills_root`` here.
 arbiteros_skill_trust:
-  skills_root: /Users/ice/.openclaw/plugin-skills
+  skills_root: /path/to/your/skills
 
-# Used when running ``skill-scanner`` from the kernel. All three keys must be
-# non-empty for ``--use-llm``; otherwise scans use static + behavioral only.
 skill_scanner_llm:
-  model: 
-  api_base: 
-  api_key: sk-AwRIObIpiTpewcVm94GIvfZevL6c5Yz2Duj9CR6b3a8x0rmi
+  model:
+  api_base:
+  api_key: os.environ/ARBITEROS_SKILL_SCANNER_API_KEY
 
-
-# Run once per session: before the first pure-text assistant reply, scan these files.
-# If any file is judged BLOCK, append a notice at the end of that reply.
-# LLM transport/parse failures are treated as SAFE (fail-open).
 session_bootstrap_scan:
   enabled: false
   protected_paths:
@@ -125,8 +97,6 @@ session_bootstrap_scan:
     - "PATH/TO/YOUR/AGENTS.MD"
     - "PATH/TO/YOUR/IDENTITY.MD"
   max_content_chars_per_file: 12000
-  
-# Taint ablation: when true, policy evaluation sees prop_* equal to base
-# trustworthiness/confidentiality (no inheritance). Implemented in policy_check only.
+
 taint_ablation:
   disable_inheritance: false

@@ -4,6 +4,7 @@ import json
 
 from arbiteros_kernel.instruction_parsing.builder import InstructionBuilder
 from arbiteros_kernel.litellm_callback import (
+    _add_instructions_from_modified_response,
     _ensure_kernel_response_format,
     _extract_strict_topic_category_payload,
     _inject_depends_on_schema_into_response_format,
@@ -83,6 +84,40 @@ def test_inject_ref_markers_into_messages_adds_system_and_user_refs():
     assert user_content.startswith("[ARBITEROS_REF id=")
     assert "kind=USERINPUT]" in user_content
     assert len(builder.instructions) == 2
+
+
+def test_add_instructions_from_modified_response_orders_respond_before_toolcall():
+    """Post-transform payload: unwrapped text + tool_calls (policy commit path)."""
+    builder = InstructionBuilder(trace_id="order-test")
+    response = {
+        "content": "I will inspect the repository next.",
+        "tool_calls": [
+            {
+                "id": "call_order_test",
+                "type": "function",
+                "function": {
+                    "name": "terminal",
+                    "arguments": json.dumps(
+                        {
+                            "command": "pwd",
+                            "security_risk": "LOW",
+                            "summary": "Print working directory",
+                        }
+                    ),
+                },
+            }
+        ],
+    }
+    _add_instructions_from_modified_response(
+        builder,
+        response,
+        resolve_text_depends_on=False,
+    )
+    assert len(builder.instructions) == 2
+    assert builder.instructions[0]["arbiteros_ref_kind"] == "LLMOUTPUT"
+    assert builder.instructions[0]["instruction_type"] == "RESPOND"
+    assert builder.instructions[1]["arbiteros_ref_kind"] == "TOOLCALL"
+    assert builder.instructions[1]["parent_id"] == builder.instructions[0]["id"]
 
 
 def test_extract_strict_topic_category_payload_with_thinking_prefix():
