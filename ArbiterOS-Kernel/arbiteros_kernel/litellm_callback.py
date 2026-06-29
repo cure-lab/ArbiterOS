@@ -2221,6 +2221,56 @@ def _iter_anthropic_content_blocks(content: Any) -> list[dict[str, Any]]:
     return [block for block in content if isinstance(block, dict)]
 
 
+def _extract_text_from_anthropic_tool_result_content(content: Any) -> str:
+    """Extract audit text from an Anthropic ``tool_result`` block ``content`` field."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for part in content:
+            if isinstance(part, dict):
+                ptype = str(part.get("type") or "").strip()
+                if ptype == "text":
+                    text = part.get("text")
+                else:
+                    text = _extract_text_from_message_content(part)
+                if isinstance(text, str) and text.strip():
+                    parts.append(text)
+            elif isinstance(part, str) and part.strip():
+                parts.append(part)
+        return "\n".join(parts)
+    if content is not None:
+        return json.dumps(content, ensure_ascii=False, default=str)
+    return ""
+
+
+def _extract_anthropic_tool_results_from_messages(messages: list[Any]) -> list[dict]:
+    """Extract Claude Code tool results from ``user`` + ``tool_result`` content blocks."""
+    out: list[dict] = []
+    for idx, msg in enumerate(messages):
+        if not isinstance(msg, dict) or msg.get("role") != "user":
+            continue
+        for block in _iter_anthropic_content_blocks(msg.get("content")):
+            if str(block.get("type") or "").strip() != "tool_result":
+                continue
+            tool_use_id = block.get("tool_use_id")
+            if not isinstance(tool_use_id, str) or not tool_use_id.strip():
+                continue
+            text_content = _extract_text_from_anthropic_tool_result_content(
+                block.get("content")
+            )
+            if not text_content:
+                continue
+            out.append(
+                {
+                    "tool_call_id": tool_use_id.strip(),
+                    "content": text_content,
+                    "message_index": idx,
+                }
+            )
+    return out
+
+
 def _record_prior_tool_call_id(
     out: list[tuple[str, str]],
     seen: set[str],
@@ -4453,18 +4503,26 @@ def _extract_tool_call_details_from_responses_input(
 def _extract_tool_call_details_by_call_id(
     messages: list[Any],
 ) -> dict[str, dict[str, Any]]:
+    """Read-only metadata map for tool-result emit (Chat Completions + Anthropic tool_use)."""
     tool_call_details_by_call_id: dict[str, dict[str, Any]] = {}
     for msg in messages:
         if not isinstance(msg, dict):
             continue
-        tool_calls = msg.get("tool_calls")
-        if not isinstance(tool_calls, list):
-            continue
+        tool_calls: list[dict[str, Any]] = []
+        raw_tool_calls = msg.get("tool_calls")
+        if isinstance(raw_tool_calls, list):
+            tool_calls.extend(tc for tc in raw_tool_calls if isinstance(tc, dict))
+        if msg.get("role") == "assistant":
+            tool_calls.extend(
+                _extract_anthropic_tool_calls_from_content(msg.get("content"))
+            )
         for tool_call in tool_calls:
             if not isinstance(tool_call, dict):
                 continue
             tool_call_id = tool_call.get("id")
             if not isinstance(tool_call_id, str) or not tool_call_id:
+                continue
+            if tool_call_id in tool_call_details_by_call_id:
                 continue
             fn = tool_call.get("function")
             tool_name = (
@@ -4485,6 +4543,26 @@ def _extract_tool_call_details_by_call_id(
                 ),
             }
     return tool_call_details_by_call_id
+
+
+def _resolve_tool_name_for_tool_result_emit(
+    *,
+    trace_id: Optional[str],
+    tool_call_id: Optional[str],
+    tool_details: Optional[dict[str, Any]],
+) -> str:
+    tool_name = "unknown_tool"
+    if isinstance(tool_details, dict) and isinstance(tool_details.get("tool_name"), str):
+        tool_name = tool_details["tool_name"].strip() or "unknown_tool"
+    if tool_name != "unknown_tool":
+        return tool_name
+    if not isinstance(trace_id, str) or not trace_id.strip():
+        return tool_name
+    if not isinstance(tool_call_id, str) or not tool_call_id.strip():
+        return tool_name
+    meta = _lookup_tool_instruction_metadata_for_trace(trace_id.strip(), tool_call_id)
+    resolved = str(meta.get("tool_name") or "").strip()
+    return resolved or tool_name
 
 
 def _extract_json_dict_from_text(text: str) -> Optional[dict]:
@@ -4862,6 +4940,7 @@ def _emit_tool_result_nodes_if_needed(request_data: dict, state: _TraceState) ->
     messages = incoming.get("messages")
     if isinstance(messages, list):
         tool_results.extend(_extract_tool_results(messages))
+        tool_results.extend(_extract_anthropic_tool_results_from_messages(messages))
         tool_call_details_by_call_id.update(
             _extract_tool_call_details_by_call_id(messages)
         )
@@ -4887,13 +4966,11 @@ def _emit_tool_result_nodes_if_needed(request_data: dict, state: _TraceState) ->
             if isinstance(tool_call_id, str)
             else {}
         )
-        tool_name = (
-            tool_details.get("tool_name")
-            if isinstance(tool_details, dict)
-            and isinstance(tool_details.get("tool_name"), str)
-            else "unknown_tool"
+        tool_name = _resolve_tool_name_for_tool_result_emit(
+            trace_id=state.trace_id,
+            tool_call_id=tool_call_id if isinstance(tool_call_id, str) else None,
+            tool_details=tool_details if isinstance(tool_details, dict) else None,
         )
-        tool_name = tool_name.strip() or "unknown_tool"
         tool_arguments = (
             tool_details.get("tool_arguments")
             if isinstance(tool_details, dict)
@@ -6005,6 +6082,8 @@ def _lookup_tool_instruction_metadata_for_trace(
     tool_call_id: str,
 ) -> dict[str, Any]:
     builder = _peek_instruction_builder_for_trace(trace_id)
+    if builder is None and InstructionBuilder is not None:
+        builder = _get_instruction_builder_for_trace(trace_id)
     instructions = list(getattr(builder, "instructions", []) or []) if builder else []
     target = tool_call_id.strip() if isinstance(tool_call_id, str) else ""
     if not target:
