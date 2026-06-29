@@ -48,7 +48,11 @@ from arbiteros_kernel.langfuse_env import ensure_langfuse_env_compat
 from arbiteros_kernel.policy.alignment_trigger import (
     should_trigger_postexec_sentinel,
 )
-from arbiteros_kernel.policy.defaults import get_policy_descriptions, get_policy_enabled
+from arbiteros_kernel.policy.defaults import (
+    get_policy_descriptions,
+    get_policy_enabled,
+    get_policy_registry,
+)
 from arbiteros_kernel.policy_check import (
     check_response_policy,
     is_local_policy_confirm_enabled,
@@ -885,13 +889,16 @@ def _is_alignment_sentinel_policy_enabled(
     """
     Gate post-exec tool-result screening by policy_registry.json.
 
-    If registry lookup fails, keep screening enabled (fail-closed for safety).
+    An explicit empty registry (``[]``) disables screening. If registry lookup
+    fails, keep screening enabled (fail-closed for safety).
     """
     if isinstance(policy_enabled_override, dict):
         val = policy_enabled_override.get("AlignmentSentinelPolicy")
         if isinstance(val, bool):
             return val
     try:
+        if not list(get_policy_registry(force_reload=False)):
+            return False
         enabled = get_policy_enabled(force_reload=False)
         return bool(enabled.get("AlignmentSentinelPolicy", True))
     except Exception:
