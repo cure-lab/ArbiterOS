@@ -318,6 +318,87 @@ def extract_tool_calls_from_responses_output(response_dump: Any) -> list[dict[st
     return tool_calls
 
 
+def _tool_call_argument_strings_by_id(tool_calls: Any) -> dict[str, str]:
+    """Map tool call id -> arguments JSON string from canonical chat tool_calls."""
+    by_id: dict[str, str] = {}
+    if not isinstance(tool_calls, list):
+        return by_id
+    for tc in tool_calls:
+        if not isinstance(tc, dict):
+            continue
+        tc_id = tc.get("id") or tc.get("tool_call_id")
+        if not isinstance(tc_id, str) or not tc_id.strip():
+            continue
+        fn = tc.get("function")
+        if not isinstance(fn, dict):
+            continue
+        raw_args = fn.get("arguments")
+        if isinstance(raw_args, str):
+            by_id[tc_id.strip()] = raw_args
+        elif isinstance(raw_args, dict):
+            by_id[tc_id.strip()] = json.dumps(raw_args, ensure_ascii=False)
+        else:
+            by_id[tc_id.strip()] = "{}"
+    return by_id
+
+
+def _match_tool_call_arguments_for_responses_item(
+    item: dict[str, Any], by_id: dict[str, str]
+) -> Optional[str]:
+    candidates: list[str] = []
+    call_id = item.get("call_id")
+    if isinstance(call_id, str) and call_id.strip():
+        candidates.append(call_id.strip())
+    raw_id = item.get("id")
+    if isinstance(raw_id, str) and raw_id.strip():
+        rid = raw_id.strip()
+        candidates.append(rid)
+        if rid.startswith("fc_"):
+            candidates.append(rid[3:])
+    for key in candidates:
+        if key in by_id:
+            return by_id[key]
+    return None
+
+
+def apply_stripped_tool_calls_to_responses_dump(
+    response_dump: dict[str, Any], tool_calls: Any
+) -> dict[str, Any]:
+    """
+    Write canonical (stripped) tool_call arguments back onto Responses API
+    ``output[].function_call`` items so clients never see kernel-only depends_on.
+    """
+    if not isinstance(response_dump, dict):
+        return response_dump
+    by_id = _tool_call_argument_strings_by_id(tool_calls)
+    if not by_id:
+        return response_dump
+    output = response_dump.get("output")
+    if not isinstance(output, list):
+        return response_dump
+    updated_output: list[Any] = []
+    changed = False
+    for item in output:
+        if not isinstance(item, dict):
+            updated_output.append(item)
+            continue
+        if str(item.get("type") or "").strip() != "function_call":
+            updated_output.append(item)
+            continue
+        new_args = _match_tool_call_arguments_for_responses_item(item, by_id)
+        if new_args is None:
+            updated_output.append(item)
+            continue
+        item_copy = dict(item)
+        if item_copy.get("arguments") != new_args:
+            item_copy["arguments"] = new_args
+            changed = True
+        updated_output.append(item_copy)
+    if not changed:
+        return response_dump
+    return {**response_dump, "output": updated_output}
+
+
 def _system_field_contains_marker(system: Any, marker: str) -> bool:
     if not isinstance(marker, str) or not marker.strip():
         return False
@@ -647,6 +728,29 @@ def apply_canonical_message_to_response(
         if is_chat_completion:
             response.choices[0].message = Message(**msg_dict)
             return response
+
+        response_dump = _coerce_response_dump(response)
+        tool_calls = msg_dict.get("tool_calls")
+        if isinstance(tool_calls, list) and tool_calls:
+            updated_dump = apply_stripped_tool_calls_to_responses_dump(
+                response_dump, tool_calls
+            )
+            if updated_dump is not response_dump:
+                response_dump = updated_dump
+                if isinstance(response, dict):
+                    response = updated_dump
+                elif hasattr(response, "model_copy"):
+                    try:
+                        return response.model_copy(
+                            update={"output": updated_dump.get("output")}
+                        )
+                    except Exception:
+                        pass
+                elif hasattr(response, "output"):
+                    try:
+                        setattr(response, "output", updated_dump.get("output"))
+                    except Exception:
+                        pass
 
         new_content = msg_dict.get("content")
         if isinstance(new_content, str) and hasattr(response, "output_text"):

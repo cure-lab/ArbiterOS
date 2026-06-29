@@ -4,3 +4,11 @@ run-kernel.sh
 __pycache__/
 *.pyc
 demo
+ArbiterOS-Kernel/litellm_config.yaml
+
+log-*/
+arbiteros_kernel/policy_registry_bak.json
+
+ArbiterOS-Kernel/arbiteros_kernel/policy.json
+ArbiterOS-Kernel/arbiteros_kernel/policy_registry.json
+ArbiterOS-Kernel/arbiteros_kernel/policy_registry_bak.json

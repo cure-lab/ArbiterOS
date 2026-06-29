@@ -509,3 +509,91 @@ def test_wrap_responses_input_with_categories():
             _stripped_categories_by_trace.pop(trace_id, None)
             _stripped_topics_by_trace.pop(trace_id, None)
             _stripped_text_depends_on_by_trace.pop(trace_id, None)
+
+
+def test_strip_and_record_depends_on_from_responses_output():
+    trace_id = "trace-responses-output-strip"
+    with _stripped_categories_lock:
+        _stripped_reference_tool_ids_by_trace.pop(trace_id, None)
+    message = {
+        "id": "resp_123",
+        "output": [
+            {
+                "type": "function_call",
+                "call_id": "call_abc",
+                "id": "fc_call_abc",
+                "name": "terminal",
+                "arguments": json.dumps(
+                    {
+                        "command": "pwd",
+                        "depends_on": [
+                            {
+                                "instruction_id": "instr-prev",
+                                "confidence": 0.9,
+                                "counterfactual": "test",
+                            }
+                        ],
+                    }
+                ),
+            }
+        ],
+    }
+    request_data = {"metadata": {"arbiteros_trace_id": trace_id}}
+    _strip_and_record_tool_depends_on_from_message(message, request_data)
+    stripped_args = json.loads(message["output"][0]["arguments"])
+    assert "depends_on" not in stripped_args
+    assert stripped_args["command"] == "pwd"
+    with _stripped_categories_lock:
+        stored = _stripped_reference_tool_ids_by_trace[trace_id]["call_abc"]
+        assert stored[0]["instruction_id"] == "instr-prev"
+        _stripped_reference_tool_ids_by_trace.pop(trace_id, None)
+
+
+def test_apply_canonical_writes_stripped_tool_args_to_responses_output():
+    from arbiteros_kernel.protocol_adapter import apply_canonical_message_to_response
+
+    response = {
+        "id": "resp_1",
+        "object": "response",
+        "status": "completed",
+        "output": [
+            {
+                "type": "function_call",
+                "call_id": "call_abc",
+                "id": "fc_call_abc",
+                "name": "terminal",
+                "arguments": json.dumps(
+                    {
+                        "command": "pwd",
+                        "depends_on": [
+                            {
+                                "instruction_id": "instr-prev",
+                                "confidence": 0.9,
+                                "counterfactual": "test",
+                            }
+                        ],
+                    }
+                ),
+            }
+        ],
+    }
+    msg_dict = {
+        "role": "assistant",
+        "content": "running command",
+        "tool_calls": [
+            {
+                "id": "call_abc",
+                "type": "function",
+                "function": {
+                    "name": "terminal",
+                    "arguments": json.dumps({"command": "pwd"}),
+                },
+            }
+        ],
+    }
+    result = apply_canonical_message_to_response(
+        response, msg_dict, is_chat_completion=False
+    )
+    assert isinstance(result, dict)
+    stripped_args = json.loads(result["output"][0]["arguments"])
+    assert stripped_args == {"command": "pwd"}

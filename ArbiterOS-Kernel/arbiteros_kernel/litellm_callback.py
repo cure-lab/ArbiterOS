@@ -2221,6 +2221,56 @@ def _iter_anthropic_content_blocks(content: Any) -> list[dict[str, Any]]:
     return [block for block in content if isinstance(block, dict)]
 
 
+def _extract_text_from_anthropic_tool_result_content(content: Any) -> str:
+    """Extract audit text from an Anthropic ``tool_result`` block ``content`` field."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for part in content:
+            if isinstance(part, dict):
+                ptype = str(part.get("type") or "").strip()
+                if ptype == "text":
+                    text = part.get("text")
+                else:
+                    text = _extract_text_from_message_content(part)
+                if isinstance(text, str) and text.strip():
+                    parts.append(text)
+            elif isinstance(part, str) and part.strip():
+                parts.append(part)
+        return "\n".join(parts)
+    if content is not None:
+        return json.dumps(content, ensure_ascii=False, default=str)
+    return ""
+
+
+def _extract_anthropic_tool_results_from_messages(messages: list[Any]) -> list[dict]:
+    """Extract Claude Code tool results from ``user`` + ``tool_result`` content blocks."""
+    out: list[dict] = []
+    for idx, msg in enumerate(messages):
+        if not isinstance(msg, dict) or msg.get("role") != "user":
+            continue
+        for block in _iter_anthropic_content_blocks(msg.get("content")):
+            if str(block.get("type") or "").strip() != "tool_result":
+                continue
+            tool_use_id = block.get("tool_use_id")
+            if not isinstance(tool_use_id, str) or not tool_use_id.strip():
+                continue
+            text_content = _extract_text_from_anthropic_tool_result_content(
+                block.get("content")
+            )
+            if not text_content:
+                continue
+            out.append(
+                {
+                    "tool_call_id": tool_use_id.strip(),
+                    "content": text_content,
+                    "message_index": idx,
+                }
+            )
+    return out
+
+
 def _record_prior_tool_call_id(
     out: list[tuple[str, str]],
     seen: set[str],
@@ -4155,22 +4205,14 @@ def _record_policy_protected_tool_calls(
         by_trace[blocked_id] = reason
 
 
-def _add_instructions_from_modified_response(
+def _append_tool_call_instructions_from_response(
     builder: Any,
     modified_response: dict,
     *,
-    resolve_text_depends_on: bool = True,
-    request_data: Optional[dict[str, Any]] = None,
-) -> int:
-    """
-    根据 modified_response 追加 instructions（tool_calls 先，再 content）。
-    返回新增的 instruction 数量，供调用方标记 policy_protected。
-    """
-    if InstructionBuilder is None or builder is None:
-        return 0
-    count_before = len(getattr(builder, "instructions", []) or [])
+    trace_id: Optional[str],
+) -> None:
+    """Append TOOLCALL instructions from ``modified_response.tool_calls``."""
     tc_details = _extract_tool_call_details_from_response(modified_response)
-    trace_id = getattr(builder, "trace_id", None)
     for tc_detail in tc_details:
         try:
             tc_id = tc_detail.get("tool_call_id")
@@ -4198,15 +4240,37 @@ def _add_instructions_from_modified_response(
                 _ensure_instruction_depends_on_field(instr)
         except Exception:
             pass
+
+
+def _add_instructions_from_modified_response(
+    builder: Any,
+    modified_response: dict,
+    *,
+    resolve_text_depends_on: bool = True,
+    request_data: Optional[dict[str, Any]] = None,
+) -> int:
+    """
+    根据 modified_response 追加 instructions（content/RESPOND 先，再 tool_calls）。
+    返回新增的 instruction 数量，供调用方标记 policy_protected。
+    """
+    if InstructionBuilder is None or builder is None:
+        return 0
+    count_before = len(getattr(builder, "instructions", []) or [])
+    trace_id = getattr(builder, "trace_id", None)
     content = modified_response.get("content")
     if isinstance(content, str) and content.strip():
         _add_non_strict_content_instructions(
             builder=builder,
             content=content,
-            trace_id=getattr(builder, "trace_id", None),
+            trace_id=trace_id,
             resolve_text_depends_on=resolve_text_depends_on,
             request_data=request_data,
         )
+    _append_tool_call_instructions_from_response(
+        builder,
+        modified_response,
+        trace_id=trace_id,
+    )
     count_after = len(getattr(builder, "instructions", []) or [])
     return count_after - count_before
 
@@ -4303,46 +4367,12 @@ def _replace_instructions_from_modified_response(
     builder._runtime_step = len(instructions)
     builder._last_instruction_id = instructions[-1]["id"] if instructions else None
 
-    # 3. 根据 modified_response 重新添加 instructions（tool_calls 先，再 content）
-    tc_details = _extract_tool_call_details_from_response(modified_response)
-    trace_id = getattr(builder, "trace_id", None)
-    for tc_detail in tc_details:
-        try:
-            tc_id = tc_detail.get("tool_call_id")
-            args = _merge_model_tool_arguments_for_instruction(
-                tc_detail.get("arguments") or {},
-                trace_id,
-                tc_id,
-            )
-            instr = builder.add_from_tool_call(
-                tool_name=tc_detail["tool_name"],
-                tool_call_id=tc_detail["tool_call_id"],
-                arguments=args,
-                result=None,
-            )
-            if isinstance(instr, dict):
-                raw_deps = _resolve_tool_depends_on_raw_for_call(
-                    trace_id, tc_id, args
-                )
-                _set_instruction_depends_on(
-                    builder,
-                    instr,
-                    tool_depends_on_raw=raw_deps,
-                    trace_id=trace_id,
-                )
-                _ensure_instruction_depends_on_field(instr)
-        except Exception:
-            pass
-
-    content = modified_response.get("content")
-    if isinstance(content, str) and content.strip():
-        _add_non_strict_content_instructions(
-            builder=builder,
-            content=content,
-            trace_id=getattr(builder, "trace_id", None),
-            resolve_text_depends_on=True,
-            request_data=request_data,
-        )
+    # 3. 根据 modified_response 重新添加 instructions（content/RESPOND 先，再 tool_calls）
+    _add_instructions_from_modified_response(
+        builder,
+        modified_response,
+        request_data=request_data,
+    )
 
 
 def _extract_tool_call_details_from_response(
@@ -4473,18 +4503,26 @@ def _extract_tool_call_details_from_responses_input(
 def _extract_tool_call_details_by_call_id(
     messages: list[Any],
 ) -> dict[str, dict[str, Any]]:
+    """Read-only metadata map for tool-result emit (Chat Completions + Anthropic tool_use)."""
     tool_call_details_by_call_id: dict[str, dict[str, Any]] = {}
     for msg in messages:
         if not isinstance(msg, dict):
             continue
-        tool_calls = msg.get("tool_calls")
-        if not isinstance(tool_calls, list):
-            continue
+        tool_calls: list[dict[str, Any]] = []
+        raw_tool_calls = msg.get("tool_calls")
+        if isinstance(raw_tool_calls, list):
+            tool_calls.extend(tc for tc in raw_tool_calls if isinstance(tc, dict))
+        if msg.get("role") == "assistant":
+            tool_calls.extend(
+                _extract_anthropic_tool_calls_from_content(msg.get("content"))
+            )
         for tool_call in tool_calls:
             if not isinstance(tool_call, dict):
                 continue
             tool_call_id = tool_call.get("id")
             if not isinstance(tool_call_id, str) or not tool_call_id:
+                continue
+            if tool_call_id in tool_call_details_by_call_id:
                 continue
             fn = tool_call.get("function")
             tool_name = (
@@ -4505,6 +4543,26 @@ def _extract_tool_call_details_by_call_id(
                 ),
             }
     return tool_call_details_by_call_id
+
+
+def _resolve_tool_name_for_tool_result_emit(
+    *,
+    trace_id: Optional[str],
+    tool_call_id: Optional[str],
+    tool_details: Optional[dict[str, Any]],
+) -> str:
+    tool_name = "unknown_tool"
+    if isinstance(tool_details, dict) and isinstance(tool_details.get("tool_name"), str):
+        tool_name = tool_details["tool_name"].strip() or "unknown_tool"
+    if tool_name != "unknown_tool":
+        return tool_name
+    if not isinstance(trace_id, str) or not trace_id.strip():
+        return tool_name
+    if not isinstance(tool_call_id, str) or not tool_call_id.strip():
+        return tool_name
+    meta = _lookup_tool_instruction_metadata_for_trace(trace_id.strip(), tool_call_id)
+    resolved = str(meta.get("tool_name") or "").strip()
+    return resolved or tool_name
 
 
 def _extract_json_dict_from_text(text: str) -> Optional[dict]:
@@ -4882,6 +4940,7 @@ def _emit_tool_result_nodes_if_needed(request_data: dict, state: _TraceState) ->
     messages = incoming.get("messages")
     if isinstance(messages, list):
         tool_results.extend(_extract_tool_results(messages))
+        tool_results.extend(_extract_anthropic_tool_results_from_messages(messages))
         tool_call_details_by_call_id.update(
             _extract_tool_call_details_by_call_id(messages)
         )
@@ -4907,13 +4966,11 @@ def _emit_tool_result_nodes_if_needed(request_data: dict, state: _TraceState) ->
             if isinstance(tool_call_id, str)
             else {}
         )
-        tool_name = (
-            tool_details.get("tool_name")
-            if isinstance(tool_details, dict)
-            and isinstance(tool_details.get("tool_name"), str)
-            else "unknown_tool"
+        tool_name = _resolve_tool_name_for_tool_result_emit(
+            trace_id=state.trace_id,
+            tool_call_id=tool_call_id if isinstance(tool_call_id, str) else None,
+            tool_details=tool_details if isinstance(tool_details, dict) else None,
         )
-        tool_name = tool_name.strip() or "unknown_tool"
         tool_arguments = (
             tool_details.get("tool_arguments")
             if isinstance(tool_details, dict)
@@ -6025,6 +6082,8 @@ def _lookup_tool_instruction_metadata_for_trace(
     tool_call_id: str,
 ) -> dict[str, Any]:
     builder = _peek_instruction_builder_for_trace(trace_id)
+    if builder is None and InstructionBuilder is not None:
+        builder = _get_instruction_builder_for_trace(trace_id)
     instructions = list(getattr(builder, "instructions", []) or []) if builder else []
     target = tool_call_id.strip() if isinstance(tool_call_id, str) else ""
     if not target:
@@ -7242,6 +7301,25 @@ def _add_non_strict_content_instructions(
 
     text_part, tool_args_list = _extract_codex_suffix_json_objects(content)
     parsed_any_tool = False
+
+    if text_part.strip():
+        try:
+            instr = builder.add_from_structured_output(
+                structured={"intent": "RESPOND", "content": text_part},
+            )
+            if isinstance(instr, dict):
+                if resolve_text_depends_on:
+                    _apply_respond_text_depends_on(
+                        builder,
+                        instr,
+                        trace_id,
+                        request_data=request_data,
+                    )
+                else:
+                    _ensure_instruction_depends_on_field(instr)
+        except Exception:
+            pass
+
     for idx, args in enumerate(tool_args_list, start=1):
         if not isinstance(args, dict):
             continue
@@ -7276,24 +7354,7 @@ def _add_non_strict_content_instructions(
         except Exception:
             pass
 
-    if text_part.strip():
-        try:
-            instr = builder.add_from_structured_output(
-                structured={"intent": "RESPOND", "content": text_part},
-            )
-            if isinstance(instr, dict):
-                if resolve_text_depends_on:
-                    _apply_respond_text_depends_on(
-                        builder,
-                        instr,
-                        trace_id,
-                        request_data=request_data,
-                    )
-                else:
-                    _ensure_instruction_depends_on_field(instr)
-        except Exception:
-            pass
-    elif not parsed_any_tool:
+    if not text_part.strip() and not parsed_any_tool:
         try:
             instr = builder.add_from_structured_output(
                 structured={"intent": "RESPOND", "content": content},
@@ -7406,7 +7467,7 @@ def _normalize_reference_tool_id_list(value: Any) -> list[str]:
 def _strip_and_record_tool_depends_on_from_message(
     message_dict: dict, data: dict
 ) -> None:
-    """从 tool_calls 或 Anthropic tool_use input 中剥去 depends_on 并存入 trace 字典。"""
+    """从 tool_calls、Anthropic tool_use 或 Responses output 中剥去 depends_on 并存入 trace 字典。"""
     trace_id = _resolve_trace_id_from_hook_data(data) if isinstance(data, dict) else None
     if not isinstance(trace_id, str) or not trace_id.strip():
         return
@@ -7443,6 +7504,46 @@ def _strip_and_record_tool_depends_on_from_message(
             tc["function"] = fn_copy
         if modified:
             message_dict["tool_calls"] = tool_calls
+
+    output = message_dict.get("output")
+    if isinstance(output, list):
+        output_modified = False
+        new_output: list[Any] = []
+        for item in output:
+            if not isinstance(item, dict):
+                new_output.append(item)
+                continue
+            if str(item.get("type") or "").strip() != "function_call":
+                new_output.append(item)
+                continue
+            call_id = item.get("call_id") or item.get("id")
+            if not isinstance(call_id, str) or not call_id.strip():
+                new_output.append(item)
+                continue
+            tc_key = call_id.strip()
+            if tc_key.startswith("fc_"):
+                tc_key = tc_key[3:]
+            raw_args = item.get("arguments")
+            if isinstance(raw_args, str):
+                args = _safe_json_loads(raw_args)
+            elif isinstance(raw_args, dict):
+                args = dict(raw_args)
+            else:
+                args = {}
+            if not isinstance(args, dict):
+                new_output.append(item)
+                continue
+            cleaned = _strip_and_record_tool_depends_on_in_arguments(
+                args,
+                tool_call_id=tc_key,
+                trace_id=tid,
+            )
+            item_copy = dict(item)
+            item_copy["arguments"] = json.dumps(cleaned, ensure_ascii=False) if cleaned else "{}"
+            new_output.append(item_copy)
+            output_modified = True
+        if output_modified:
+            message_dict["output"] = new_output
 
     if message_dict.get("role") != "assistant":
         return
@@ -9715,13 +9816,10 @@ class MyCustomHandler(CustomLogger):
         final_msg_dict = _ensure_non_empty_assistant_message(
             final_msg_dict, fallback_text=fallback_text
         )
-        # If we injected fallback, keep the returned response object consistent.
-        if (
-            isinstance(final_msg_dict, dict)
-            and isinstance(final_msg_dict.get("content"), str)
-            and not (
-                final_msg_dict.get("tool_calls") or final_msg_dict.get("function_call")
-            )
+        if isinstance(final_msg_dict, dict) and (
+            isinstance(final_msg_dict.get("content"), str)
+            or final_msg_dict.get("tool_calls")
+            or final_msg_dict.get("function_call")
         ):
             response = _apply_canonical_message_to_response(
                 response,
@@ -9754,12 +9852,10 @@ class MyCustomHandler(CustomLogger):
             final_msg_dict,
             policy_confirmation_state=policy_confirmation_state_for_langfuse,
         )
-        if (
-            isinstance(final_msg_dict, dict)
-            and isinstance(final_msg_dict.get("content"), str)
-            and not (
-                final_msg_dict.get("tool_calls") or final_msg_dict.get("function_call")
-            )
+        if isinstance(final_msg_dict, dict) and (
+            isinstance(final_msg_dict.get("content"), str)
+            or final_msg_dict.get("tool_calls")
+            or final_msg_dict.get("function_call")
         ):
             response = _apply_canonical_message_to_response(
                 response,
