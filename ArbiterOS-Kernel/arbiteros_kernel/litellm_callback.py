@@ -7388,7 +7388,7 @@ def _normalize_reference_tool_id_list(value: Any) -> list[str]:
 def _strip_and_record_tool_depends_on_from_message(
     message_dict: dict, data: dict
 ) -> None:
-    """从 tool_calls 或 Anthropic tool_use input 中剥去 depends_on 并存入 trace 字典。"""
+    """从 tool_calls、Anthropic tool_use 或 Responses output 中剥去 depends_on 并存入 trace 字典。"""
     trace_id = _resolve_trace_id_from_hook_data(data) if isinstance(data, dict) else None
     if not isinstance(trace_id, str) or not trace_id.strip():
         return
@@ -7425,6 +7425,46 @@ def _strip_and_record_tool_depends_on_from_message(
             tc["function"] = fn_copy
         if modified:
             message_dict["tool_calls"] = tool_calls
+
+    output = message_dict.get("output")
+    if isinstance(output, list):
+        output_modified = False
+        new_output: list[Any] = []
+        for item in output:
+            if not isinstance(item, dict):
+                new_output.append(item)
+                continue
+            if str(item.get("type") or "").strip() != "function_call":
+                new_output.append(item)
+                continue
+            call_id = item.get("call_id") or item.get("id")
+            if not isinstance(call_id, str) or not call_id.strip():
+                new_output.append(item)
+                continue
+            tc_key = call_id.strip()
+            if tc_key.startswith("fc_"):
+                tc_key = tc_key[3:]
+            raw_args = item.get("arguments")
+            if isinstance(raw_args, str):
+                args = _safe_json_loads(raw_args)
+            elif isinstance(raw_args, dict):
+                args = dict(raw_args)
+            else:
+                args = {}
+            if not isinstance(args, dict):
+                new_output.append(item)
+                continue
+            cleaned = _strip_and_record_tool_depends_on_in_arguments(
+                args,
+                tool_call_id=tc_key,
+                trace_id=tid,
+            )
+            item_copy = dict(item)
+            item_copy["arguments"] = json.dumps(cleaned, ensure_ascii=False) if cleaned else "{}"
+            new_output.append(item_copy)
+            output_modified = True
+        if output_modified:
+            message_dict["output"] = new_output
 
     if message_dict.get("role") != "assistant":
         return
@@ -9697,13 +9737,10 @@ class MyCustomHandler(CustomLogger):
         final_msg_dict = _ensure_non_empty_assistant_message(
             final_msg_dict, fallback_text=fallback_text
         )
-        # If we injected fallback, keep the returned response object consistent.
-        if (
-            isinstance(final_msg_dict, dict)
-            and isinstance(final_msg_dict.get("content"), str)
-            and not (
-                final_msg_dict.get("tool_calls") or final_msg_dict.get("function_call")
-            )
+        if isinstance(final_msg_dict, dict) and (
+            isinstance(final_msg_dict.get("content"), str)
+            or final_msg_dict.get("tool_calls")
+            or final_msg_dict.get("function_call")
         ):
             response = _apply_canonical_message_to_response(
                 response,
@@ -9736,12 +9773,10 @@ class MyCustomHandler(CustomLogger):
             final_msg_dict,
             policy_confirmation_state=policy_confirmation_state_for_langfuse,
         )
-        if (
-            isinstance(final_msg_dict, dict)
-            and isinstance(final_msg_dict.get("content"), str)
-            and not (
-                final_msg_dict.get("tool_calls") or final_msg_dict.get("function_call")
-            )
+        if isinstance(final_msg_dict, dict) and (
+            isinstance(final_msg_dict.get("content"), str)
+            or final_msg_dict.get("tool_calls")
+            or final_msg_dict.get("function_call")
         ):
             response = _apply_canonical_message_to_response(
                 response,
