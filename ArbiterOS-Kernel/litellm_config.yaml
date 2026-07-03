@@ -2,12 +2,37 @@ model_list:
   - model_name: gpt-5.5
     litellm_params:
       model: openai/gpt-5.5
-      api_key:
+      api_key: os.environ/POLOAPI_API_KEY
       api_base: https://poloapi.top/v1
   - model_name: claude-sonnet-4-6
     litellm_params:
       model: openai/claude-sonnet-4-6
-      api_key:
+      api_key: os.environ/POLOAPI_API_KEY
+      api_base: https://poloapi.top/v1
+  - model_name: deepseek-v3
+    litellm_params:
+      model: openai/deepseek-v3
+      api_key: os.environ/POLOAPI_API_KEY
+      api_base: https://poloapi.top/v1
+  - model_name: gpt-4o
+    litellm_params:
+      model: openai/gpt-4o
+      api_key: os.environ/POLOAPI_API_KEY
+      api_base: https://poloapi.top/v1
+  - model_name: gpt-4o-mini
+    litellm_params:
+      model: openai/gpt-4o-mini
+      api_key: os.environ/POLOAPI_API_KEY
+      api_base: https://poloapi.top/v1
+  - model_name: claude-haiku-4-5
+    litellm_params:
+      model: openai/claude-haiku-4-5
+      api_key: os.environ/POLOAPI_API_KEY
+      api_base: https://poloapi.top/v1
+  - model_name: gemini-2.0-flash-exp
+    litellm_params:
+      model: openai/gemini-2.0-flash-exp
+      api_key: os.environ/POLOAPI_API_KEY
       api_base: https://poloapi.top/v1
       response_format:
         type: json_schema
@@ -43,7 +68,7 @@ model_list:
 # enabled: false for openclaw, nanobot, and hermes
 llm_routing:
   enabled: true
-  strategy: keyword_router
+  strategy: tag_router
 
 arbiteros_config:
   tool_agent: openclaw
