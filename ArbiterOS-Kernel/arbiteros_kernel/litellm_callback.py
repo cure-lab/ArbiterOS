@@ -2,6 +2,7 @@ import asyncio
 import copy
 import hashlib
 import json
+import logging
 import os
 import re
 import threading
@@ -13,6 +14,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, AsyncGenerator, Optional, Union
+
+logger = logging.getLogger(__name__)
 
 try:
     from arbiteros_kernel.instruction_parsing import InstructionBuilder
@@ -7195,6 +7198,15 @@ class MyCustomHandler(CustomLogger):
             logger.info(route_log)
             if routed_model != original_model:
                 data = {**data, "model": routed_model}
+
+            # 保存详细的路由信息到 metadata（供 feedback daemon 使用）
+            routing_result = _llm_router.get_last_routing_result()
+            if routing_result:
+                metadata = data.get("metadata", {})
+                if not isinstance(metadata, dict):
+                    metadata = {}
+                metadata["routing_info"] = routing_result
+                data = {**data, "metadata": metadata}
 
         _save_precall_to_log(data)
         return data
