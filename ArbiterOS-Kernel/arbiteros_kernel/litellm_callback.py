@@ -214,6 +214,10 @@ class _TraceState:
     backup_updated_at: Optional[str] = None
     # Ephemeral handle to the current turn observation, for in-process updates.
     current_turn_handle: Any = None
+    # Per-turn accumulator: tokens/cost/latency for the current round (reset on new turn)
+    pending_round_total_tokens: int = 0
+    pending_round_total_cost_usd: float = 0.0
+    pending_round_models: list[str] = field(default_factory=list)
 
 
 _trace_state_lock = threading.Lock()
@@ -1891,6 +1895,20 @@ def _record_trace_token_usage(
         return
 
     tid = trace_id.strip()
+
+    # Check if response has tool_calls
+    response_dict = _to_json(response_obj)
+    has_tool_calls = False
+    if isinstance(response_dict, dict):
+        choices = response_dict.get("choices")
+        if isinstance(choices, list) and len(choices) > 0:
+            first_choice = choices[0]
+            if isinstance(first_choice, dict):
+                message = first_choice.get("message")
+                if isinstance(message, dict):
+                    tool_calls = _extract_tool_calls(message)
+                    has_tool_calls = len(tool_calls) > 0
+
     round_record: Optional[dict[str, Any]] = None
     with _trace_state_lock:
         for state in _trace_state_by_device.values():
@@ -1924,22 +1942,40 @@ def _record_trace_token_usage(
             state.trace_total_cost_usd = round(
                 max(0.0, float(state.trace_total_cost_usd)) + round_cost, 10
             )
-            round_record = {
-                "recorded_at": datetime.now().isoformat(),
-                "turn_index": int(state.turn_index),
-                "model": model,
-                "source": source,
-                "usage": _normalized_usage,
-                "round_total_tokens": delta,
-                "trace_total_tokens_after": int(state.trace_total_tokens),
-                "cache_hit_tokens": cache_counts["cache_hit_tokens"],
-                "cache_miss_tokens": cache_counts["cache_miss_tokens"],
-                "uncached_input_tokens": cache_counts["uncached_input_tokens"],
-                "round_cost_usd": round_cost,
-                "trace_total_cost_usd_after": state.trace_total_cost_usd,
-            }
-            state.token_usage_rounds.append(round_record)
-            state.backup_updated_at = datetime.now().isoformat()
+
+            # Accumulate per-turn metrics
+            state.pending_round_total_tokens += delta
+            state.pending_round_total_cost_usd = round(
+                state.pending_round_total_cost_usd + round_cost, 10
+            )
+            if model:
+                state.pending_round_models.append(model)
+
+            # Only record and emit round if response has NO tool_calls
+            if not has_tool_calls:
+                round_record = {
+                    "recorded_at": datetime.now().isoformat(),
+                    "turn_index": int(state.turn_index),
+                    "model": model,
+                    "models_used": list(state.pending_round_models),
+                    "source": source,
+                    "usage": _normalized_usage,
+                    "round_total_tokens": state.pending_round_total_tokens,
+                    "trace_total_tokens_after": int(state.trace_total_tokens),
+                    "cache_hit_tokens": cache_counts["cache_hit_tokens"],
+                    "cache_miss_tokens": cache_counts["cache_miss_tokens"],
+                    "uncached_input_tokens": cache_counts["uncached_input_tokens"],
+                    "round_cost_usd": state.pending_round_total_cost_usd,
+                    "trace_total_cost_usd_after": state.trace_total_cost_usd,
+                }
+                state.token_usage_rounds.append(round_record)
+                state.backup_updated_at = datetime.now().isoformat()
+
+                # Reset per-turn accumulator
+                state.pending_round_total_tokens = 0
+                state.pending_round_total_cost_usd = 0.0
+                state.pending_round_models = []
+
             break
 
     if round_record is None:
@@ -4700,6 +4736,10 @@ def _ensure_turn_node_if_needed(context: _DeviceContext, state: _TraceState) -> 
             state.current_turn_observation_id = None
             state.turn_index += 1
             next_turn_index = state.turn_index
+            # Reset per-turn accumulator for the new round
+            state.pending_round_total_tokens = 0
+            state.pending_round_total_cost_usd = 0.0
+            state.pending_round_models = []
             should_emit = True
 
     if not should_emit:
