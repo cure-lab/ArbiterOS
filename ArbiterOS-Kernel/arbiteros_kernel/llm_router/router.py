@@ -79,6 +79,7 @@ class ArbiterOSRouter:
         self.strategy = config.get("strategy", "smallest_llm")
         self._router: Any = None  # 懒加载 LLMRouter 实例
         self._model_list: list = []
+        self._last_routing_result: Optional[dict] = None  # 保存最近一次路由结果
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> "ArbiterOSRouter":
@@ -115,7 +116,12 @@ class ArbiterOSRouter:
             self._router = self._load_router(self.strategy)
         if self._router is None:
             return fallback, f"router '{self.strategy}' unavailable → {fallback}"
+
         result = self._router.route_single({"query": query})
+
+        # 保存完整的路由结果（用于 feedback daemon）
+        self._last_routing_result = result
+
         target = result.get("model_name", fallback)
         score = result.get("score") or result.get("confidence") or result.get("predicted_llm")
         info = f"{self.strategy}"
@@ -123,6 +129,10 @@ class ArbiterOSRouter:
             info += f" score={score}"
         info += f" → {target}"
         return target, info
+
+    def get_last_routing_result(self) -> Optional[dict]:
+        """获取最近一次路由决策的完整结果，用于记录到日志。"""
+        return self._last_routing_result
 
     def _load_router(self, router_name: str) -> Optional[Any]:
         """从 llmrouter.models 或 arbiteros_kernel.llm_router 加载路由器实例。"""
@@ -192,6 +202,19 @@ class ArbiterOSRouter:
                 return instance
             except Exception as e:
                 logger.error(f"[LLMasRouter] 加载失败: {e}")
+                return None
+        elif router_name == "tag_router":
+            try:
+                from arbiteros_kernel.llm_router.tag_router import TagRouter
+                config_path = Path(__file__).parent / "configs" / "tag_router.yaml"
+                if not config_path.exists():
+                    logger.warning(f"[TagRouter] 配置文件不存在: {config_path}")
+                    return None
+                instance = TagRouter.from_yaml(str(config_path))
+                logger.info("[TagRouter] 加载成功")
+                return instance
+            except Exception as e:
+                logger.error(f"[TagRouter] 加载失败: {e}")
                 return None
         return None
 
