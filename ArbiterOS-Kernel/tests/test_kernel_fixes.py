@@ -9,6 +9,7 @@ from arbiteros_kernel.litellm_callback import (
     _extract_strict_topic_category_payload,
     _inject_depends_on_schema_into_response_format,
     _inject_ref_markers_into_messages,
+    _inject_ref_markers_into_responses_input,
     _lookup_response_format_from_litellm_config,
 )
 
@@ -84,6 +85,43 @@ def test_inject_ref_markers_into_messages_adds_system_and_user_refs():
     assert user_content.startswith("[ARBITEROS_REF id=")
     assert "kind=USERINPUT]" in user_content
     assert len(builder.instructions) == 2
+
+
+def test_inject_ref_markers_into_responses_input_adds_system_and_user_refs():
+    builder = InstructionBuilder(trace_id="trace-responses-ref-test")
+    data = {
+        "model": "gpt-5",
+        "instructions": "You are Codex, a coding agent.",
+        "input": [
+            {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "Hello"}],
+            },
+        ],
+    }
+    from arbiteros_kernel import litellm_callback as cb
+
+    original_get = cb._get_instruction_builder_for_trace
+    cb._get_instruction_builder_for_trace = lambda _tid: builder
+    try:
+        out = _inject_ref_markers_into_responses_input(
+            data, trace_id="trace-responses-ref-test"
+        )
+    finally:
+        cb._get_instruction_builder_for_trace = original_get
+
+    instructions_text = out["instructions"]
+    user_text = out["input"][0]["content"][0]["text"]
+    assert instructions_text.startswith("[ARBITEROS_REF id=")
+    assert "kind=SYSTEMPROMPT]" in instructions_text
+    assert "You are Codex, a coding agent." in instructions_text
+    assert user_text.startswith("[ARBITEROS_REF id=")
+    assert "kind=USERINPUT]" in user_text
+    assert len(builder.instructions) == 2
+    assert builder.instructions[0]["instruction_type"] == "SYSTEMPROMPT"
+    assert builder.instructions[0]["context_key"] == "system:0"
+    assert builder.instructions[1]["instruction_type"] == "USERINPUT"
 
 
 def test_add_instructions_from_modified_response_orders_respond_before_toolcall():
