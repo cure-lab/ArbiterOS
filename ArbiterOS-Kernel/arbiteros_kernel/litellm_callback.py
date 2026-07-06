@@ -8642,7 +8642,10 @@ def _extract_text_from_responses_content(content: Any) -> str:
 
 
 def _sync_context_instructions_from_responses_input(
-    trace_id: Optional[str], input_items: list[Any]
+    trace_id: Optional[str],
+    input_items: list[Any],
+    *,
+    responses_instructions: Optional[str] = None,
 ) -> None:
     if not isinstance(trace_id, str) or not trace_id.strip():
         return
@@ -8658,7 +8661,24 @@ def _sync_context_instructions_from_responses_input(
         list(getattr(builder, "instructions", []) or [])
     )
     count_before = len(getattr(builder, "instructions", []) or [])
+    system_idx = 0
     user_idx = 0
+
+    if isinstance(responses_instructions, str) and responses_instructions.strip():
+        text = strip_arbiteros_ref_markers(responses_instructions).strip()
+        if text and not _is_kernel_injected_message_text(text):
+            key = f"system:{system_idx}"
+            system_idx += 1
+            if key not in by_key:
+                try:
+                    instr = builder.add_from_context_message(
+                        ref_kind=REF_KIND_SYSTEMPROMPT,
+                        content=text,
+                        context_key=key,
+                    )
+                    by_key[key] = instr
+                except Exception:
+                    pass
 
     for item in input_items:
         if not isinstance(item, dict):
@@ -8711,7 +8731,14 @@ def _inject_ref_markers_into_responses_input(
     if InstructionBuilder is None:
         return data
 
-    _sync_context_instructions_from_responses_input(trace_id, input_items)
+    responses_instructions = data.get("instructions")
+    _sync_context_instructions_from_responses_input(
+        trace_id,
+        input_items,
+        responses_instructions=responses_instructions
+        if isinstance(responses_instructions, str)
+        else None,
+    )
     builder = _get_instruction_builder_for_trace(trace_id.strip())
     if builder is None:
         return data
@@ -8725,6 +8752,21 @@ def _inject_ref_markers_into_responses_input(
 
     new_input = list(input_items)
     modified = False
+    instructions_field_modified = False
+    new_instructions_field = responses_instructions
+    system_instr = by_context_key.get("system:0")
+    if isinstance(system_instr, dict) and isinstance(new_instructions_field, str):
+        system_text = new_instructions_field.strip()
+        if system_text and not _is_kernel_injected_message_text(system_text):
+            instr_id = system_instr.get("id")
+            kind = instruction_ref_kind(system_instr) or REF_KIND_SYSTEMPROMPT
+            if isinstance(instr_id, str) and instr_id.strip():
+                marker = format_arbiteros_ref_marker(instr_id.strip(), kind)
+                new_instructions_field = _prepend_arbiteros_ref_to_responses_text(
+                    new_instructions_field, marker
+                )
+                instructions_field_modified = True
+
     user_idx = 0
     llm_output_idx = 0
 
@@ -8833,7 +8875,14 @@ def _inject_ref_markers_into_responses_input(
                 }
                 modified = True
 
-    return {**data, "input": new_input} if modified else data
+    if not modified and not instructions_field_modified:
+        return data
+    out = dict(data)
+    if modified:
+        out["input"] = new_input
+    if instructions_field_modified:
+        out["instructions"] = new_instructions_field
+    return out
 
 
 def _inject_taint_watermarks_into_messages(
