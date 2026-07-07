@@ -59,6 +59,7 @@ from arbiteros_kernel.policy_check import (
     resolve_role_policy_enabled_override,
     split_model_and_role,
 )
+from arbiteros_kernel.precall_policy_check import check_precall_policy
 from arbiteros_kernel.protocol_adapter import (
     ResponsesStreamTracker as _ResponsesStreamTracker,
     apply_canonical_message_to_response as _apply_canonical_message_to_response,
@@ -9350,6 +9351,13 @@ class MyCustomHandler(CustomLogger):
             state.trace_id if state is not None else None,
             metadata=(metadata_for_backup if isinstance(metadata_for_backup, dict) else None),
         )
+        if isinstance(data, dict):
+            precall_policy_result = check_precall_policy(
+                trace_id=trace_id_for_cache or "",
+                current_request=data,
+                tool_agent=_read_tool_agent_from_litellm_config(),
+            )
+            data = precall_policy_result.request
         _save_precall_to_log(
             data,
             state.trace_id if state is not None else None,
