@@ -1998,6 +1998,1333 @@ def _extract_text_from_message_content(content: Any) -> str:
     return _pa_extract_text_from_message_content(content)
 
 
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_int(name: str, default: int = 0) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw.strip())
+    except (TypeError, ValueError):
+        return default
+    return value if value >= 0 else default
+
+
+def _env_str(name: str, default: str = "") -> str:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    value = raw.strip()
+    return value if value else default
+
+
+def _runtime_cost_down_enabled() -> bool:
+    return any(
+        (
+            _env_flag("ARBITEROS_COST_DOWN_COMPACT_TOOL_OUTPUTS"),
+            _env_flag("ARBITEROS_COST_DOWN_COMPACT_STALE_TOOL_OUTPUTS"),
+            _env_flag("ARBITEROS_COST_DOWN_COMPACT_STALE_ASSISTANT_OUTPUTS"),
+            _env_int("ARBITEROS_COST_DOWN_MAX_PROMPT_CHARS", 0) > 0,
+        )
+    )
+
+
+_PHASE3_LLM_COMPRESSOR_PROMPT = (
+    "You compress old coding-agent trajectory evidence. Preserve exact file paths, "
+    "test node ids, return codes, exception/error names, changed symbols, commands, "
+    "and final status. Omit repeated or irrelevant lines. Do not invent facts. "
+    "Return only the compact replacement text, not commentary."
+)
+_PHASE3_LLM_COMPRESSOR_CACHE_LOCK = threading.Lock()
+_PHASE3_LLM_COMPRESSOR_CACHE: dict[str, str] = {}
+_PHASE3_LLM_COMPRESSOR_CACHE_ORDER: list[str] = []
+
+
+def _phase3_llm_compressor_cache_key(
+    *,
+    model: str,
+    role: str,
+    target_chars: int,
+    submitted_text: str,
+) -> str:
+    raw = json.dumps(
+        {
+            "v": 1,
+            "model": model,
+            "role": role,
+            "target_chars": target_chars,
+            "submitted_text": submitted_text,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(raw.encode("utf-8", errors="ignore")).hexdigest()
+
+
+def _phase3_llm_compressor_cache_get(key: str) -> Optional[str]:
+    with _PHASE3_LLM_COMPRESSOR_CACHE_LOCK:
+        return _PHASE3_LLM_COMPRESSOR_CACHE.get(key)
+
+
+def _phase3_llm_compressor_cache_put(key: str, value: str, *, max_entries: int) -> None:
+    if max_entries <= 0:
+        return
+    with _PHASE3_LLM_COMPRESSOR_CACHE_LOCK:
+        if key not in _PHASE3_LLM_COMPRESSOR_CACHE:
+            _PHASE3_LLM_COMPRESSOR_CACHE_ORDER.append(key)
+        _PHASE3_LLM_COMPRESSOR_CACHE[key] = value
+        while len(_PHASE3_LLM_COMPRESSOR_CACHE_ORDER) > max_entries:
+            old_key = _PHASE3_LLM_COMPRESSOR_CACHE_ORDER.pop(0)
+            _PHASE3_LLM_COMPRESSOR_CACHE.pop(old_key, None)
+
+
+def _resolve_config_secret(value: Any) -> str:
+    if not isinstance(value, str):
+        return ""
+    raw = value.strip()
+    if not raw:
+        return ""
+    prefixes = ("os.environ/", "env/")
+    for prefix in prefixes:
+        if raw.startswith(prefix):
+            return os.getenv(raw[len(prefix) :].strip(), "").strip()
+    if raw.startswith("$"):
+        return os.getenv(raw[1:].strip(), "").strip()
+    return raw
+
+
+def _read_phase3_llm_compressor_triple() -> tuple[Optional[str], Optional[str], Optional[str]]:
+    env_model = _env_str("ARBITEROS_COST_DOWN_PHASE3_LLM_COMPRESSOR_MODEL")
+    env_api_base = _env_str("ARBITEROS_COST_DOWN_PHASE3_LLM_COMPRESSOR_API_BASE")
+    env_api_key = _env_str("ARBITEROS_COST_DOWN_PHASE3_LLM_COMPRESSOR_API_KEY")
+    if env_model and env_api_base and env_api_key:
+        return env_model, env_api_base, env_api_key
+
+    cfg = _read_litellm_config_yaml()
+    if not isinstance(cfg, dict):
+        return None, None, None
+
+    for key in ("phase3_llm_compressor", "skill_scanner_llm"):
+        block = cfg.get(key)
+        if not isinstance(block, dict):
+            continue
+        model = str(block.get("model") or "").strip()
+        api_base = str(block.get("api_base") or "").strip()
+        api_key = _resolve_config_secret(block.get("api_key"))
+        model = env_model or model
+        api_base = env_api_base or api_base
+        api_key = env_api_key or api_key
+        if model and api_base and api_key:
+            return model, api_base, api_key
+
+    model_list = cfg.get("model_list")
+    if isinstance(model_list, list):
+        for entry in model_list:
+            if not isinstance(entry, dict):
+                continue
+            params = entry.get("litellm_params")
+            if not isinstance(params, dict):
+                continue
+            model = env_model or str(params.get("model") or entry.get("model_name") or "").strip()
+            api_base = env_api_base or str(params.get("api_base") or "").strip()
+            api_key = env_api_key or _resolve_config_secret(params.get("api_key"))
+            if model and api_base and api_key:
+                return model, api_base, api_key
+    return None, None, None
+
+
+def _build_phase3_llm_compressor() -> Optional[cost_down.LLMCompressor]:
+    model, api_base, api_key = _read_phase3_llm_compressor_triple()
+    if not model or not api_base or not api_key:
+        return None
+
+    api_model = _upstream_model_name_for_chat_api(model)
+    url = _chat_completions_url(api_base)
+    if not api_model or not url:
+        return None
+
+    timeout_seconds = max(
+        1,
+        _env_int("ARBITEROS_COST_DOWN_PHASE3_LLM_COMPRESSOR_TIMEOUT_SECONDS", 45),
+    )
+    max_input_chars = max(
+        1200,
+        _env_int("ARBITEROS_COST_DOWN_PHASE3_LLM_COMPRESSOR_MAX_INPUT_CHARS", 12000),
+    )
+    max_calls = max(
+        0,
+        _env_int("ARBITEROS_COST_DOWN_PHASE3_LLM_COMPRESSOR_MAX_CALLS_PER_REQUEST", 2),
+    )
+    max_output_tokens = max(
+        64,
+        _env_int("ARBITEROS_COST_DOWN_PHASE3_LLM_COMPRESSOR_MAX_OUTPUT_TOKENS", 1024),
+    )
+    max_cache_entries = max(
+        0,
+        _env_int("ARBITEROS_COST_DOWN_PHASE3_LLM_COMPRESSOR_CACHE_MAX_ENTRIES", 512),
+    )
+    calls = 0
+
+    def _clip_for_compressor(text: str) -> str:
+        if len(text) <= max_input_chars:
+            return text
+        head = max_input_chars // 2
+        tail = max_input_chars - head
+        return (
+            text[:head].rstrip()
+            + "\n\n[... middle omitted before LLM compression ...]\n\n"
+            + text[-tail:].lstrip()
+        )
+
+    def _compress(**kwargs: Any) -> Optional[str]:
+        nonlocal calls
+        text = str(kwargs.get("text") or "")
+        target_chars = int(kwargs.get("target_chars") or 0)
+        role = str(kwargs.get("role") or "")
+        reason = str(kwargs.get("reason") or "")
+        payload = {
+            "role": role,
+            "target_chars": target_chars,
+            "reason": reason[:1000],
+            "text": _clip_for_compressor(text),
+        }
+        cache_key = _phase3_llm_compressor_cache_key(
+            model=api_model,
+            role=role,
+            target_chars=target_chars,
+            submitted_text=str(payload["text"]),
+        )
+        cached = _phase3_llm_compressor_cache_get(cache_key)
+        if isinstance(cached, str) and cached.strip():
+            try:
+                _save_json(
+                    "phase3_llm_compressor_cache_hit",
+                    {
+                        "model": api_model,
+                        "role": role,
+                        "target_chars": target_chars,
+                        "input_chars": len(text),
+                        "submitted_input_chars": len(str(payload["text"])),
+                        "output_chars": len(cached),
+                    },
+                )
+            except Exception:
+                pass
+            return cached
+        if max_calls <= 0 or calls >= max_calls:
+            return None
+        calls += 1
+        trajectory_window = kwargs.get("trajectory_window")
+        if isinstance(trajectory_window, list) and trajectory_window:
+            payload["trajectory_window"] = trajectory_window[:8]
+        body_json: dict[str, Any] = {
+            "model": api_model,
+            "messages": [
+                {"role": "system", "content": _PHASE3_LLM_COMPRESSOR_PROMPT},
+                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+            ],
+        }
+        if any(x in api_model.lower() for x in ("gpt-5", "o1", "o3")):
+            body_json["max_completion_tokens"] = max_output_tokens
+        else:
+            body_json["max_tokens"] = max_output_tokens
+            body_json["temperature"] = 0
+
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(body_json, ensure_ascii=False).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=timeout_seconds) as resp:
+                raw_payload = json.loads(
+                    resp.read().decode("utf-8", errors="replace")
+                )
+        except Exception as exc:
+            try:
+                _save_json(
+                    "phase3_llm_compressor_failure",
+                    {
+                        "exception_type": type(exc).__name__,
+                        "exception_message": str(exc)[:1000],
+                    },
+                )
+            except Exception:
+                pass
+            return None
+
+        try:
+            choice0 = (raw_payload.get("choices") or [{}])[0]
+            message = choice0.get("message") or {}
+            content = message.get("content")
+        except Exception:
+            content = None
+        if not isinstance(content, str):
+            return None
+        content = content.strip()
+        if target_chars > 0 and len(content) > max(target_chars * 2, target_chars + 800):
+            content = content[: max(0, target_chars)].rstrip()
+        if content:
+            _phase3_llm_compressor_cache_put(
+                cache_key,
+                content,
+                max_entries=max_cache_entries,
+            )
+        try:
+            _save_json(
+                "phase3_llm_compressor",
+                {
+                    "model": api_model,
+                    "role": role,
+                    "target_chars": target_chars,
+                    "input_chars": len(text),
+                    "submitted_input_chars": len(str(payload["text"])),
+                    "output_chars": len(content),
+                    "usage": raw_payload.get("usage") or {},
+                },
+            )
+        except Exception:
+            pass
+        return content or None
+
+    return _compress
+
+
+def _content_mode_and_text(message: dict[str, Any]) -> tuple[Optional[str], str]:
+    content = message.get("content")
+    if isinstance(content, str):
+        return "str", content
+    if isinstance(content, dict) and isinstance(content.get("content"), str):
+        return "dict_content", str(content.get("content") or "")
+    if (
+        isinstance(content, list)
+        and len(content) == 1
+        and isinstance(content[0], dict)
+    ):
+        item = content[0]
+        for key in ("text", "content"):
+            if isinstance(item.get(key), str):
+                return f"list_0_{key}", str(item.get(key) or "")
+    return None, ""
+
+
+def _set_message_text_content(
+    message: dict[str, Any], mode: Optional[str], text: str
+) -> None:
+    if mode == "str":
+        message["content"] = text
+        return
+    if mode == "dict_content":
+        content = message.get("content")
+        if isinstance(content, dict):
+            new_content = dict(content)
+            new_content["content"] = text
+            message["content"] = new_content
+        return
+    if mode and mode.startswith("list_0_"):
+        content = message.get("content")
+        key = mode.removeprefix("list_0_")
+        if isinstance(content, list) and content and isinstance(content[0], dict):
+            new_item = dict(content[0])
+            new_item[key] = text
+            message["content"] = [new_item, *content[1:]]
+
+
+def _fold_repeated_adjacent_lines(text: str) -> str:
+    lines = text.splitlines()
+    if len(lines) < 3:
+        return text
+    out: list[str] = []
+    previous: Optional[str] = None
+    repeats = 0
+
+    def flush_repeats() -> None:
+        nonlocal repeats
+        if repeats > 0:
+            out.append(f"[omitted {repeats} repeated identical line(s)]")
+            repeats = 0
+
+    for line in lines:
+        if previous is not None and line == previous:
+            repeats += 1
+            continue
+        flush_repeats()
+        out.append(line)
+        previous = line
+    flush_repeats()
+    folded = "\n".join(out)
+    if text.endswith("\n"):
+        folded += "\n"
+    return folded
+
+
+_RUNTIME_COMPACTION_ANCHOR_RE = re.compile(
+    r"(\b(?:passed|failed|errors?|failures?|skipped)\b|"
+    r"\bpytest\b|\bunittest\b|\.py::|nodeid|traceback|assert)",
+    re.IGNORECASE,
+)
+
+_RUNTIME_NOISY_TOOL_OUTPUT_RE = re.compile(
+    r"("
+    r"\btraceback\b|"
+    r"\bpytest\b|"
+    r"\b(?:failed|passed|errors?|failures?|skipped)\b|"
+    r"\bassert(?:ion)?\b|"
+    r"\bwarning\b|"
+    r"\bexception\b|"
+    r"\breturncode>[1-9]|"
+    r"<warning>|"
+    r"\bomitted .* repeated"
+    r")",
+    re.IGNORECASE,
+)
+
+_RUNTIME_HIGH_CONFIDENCE_NOISY_TOOL_OUTPUT_RE = re.compile(
+    r"("
+    r"\btraceback \(most recent call last\)|"
+    r"=+\s*(?:failures?|errors?|warnings?)\s*=+|"
+    r"\b(?:failed|error)\s+[\w./:-]+\.py::|"
+    r"\bshort test summary info\b|"
+    r"<returncode>\s*[1-9]\d*\s*</returncode>|"
+    r"<warning>|"
+    r"\bomitted .* repeated"
+    r")",
+    re.IGNORECASE,
+)
+
+_RUNTIME_HIGH_SIGNAL_TOOL_OUTPUT_RE = re.compile(
+    r"("
+    r"<returncode>\s*[1-9]\d*\s*</returncode>|"
+    r"\btraceback \(most recent call last\)|"
+    r"\bassertionerror\b|"
+    r"\b(?:failed|error)\s+[\w./:-]+\.py::|"
+    r"\bshort test summary info\b|"
+    r"=+\s*(?:failures?|errors?)\s*=+|"
+    r"\b(?:command not found|no such file or directory|pattern not found|not found)\b|"
+    r"\bapply_patch:\s+command not found\b"
+    r")",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+_RUNTIME_TOOL_FEEDBACK_MARKER = "[arbiteros_runtime_tool_feedback]"
+_MAX_RUNTIME_TOOL_FEEDBACK_TRACES = 256
+_RUNTIME_TOOL_FEEDBACK_EARLY_REASONS = {
+    "required_test_passed_submit",
+    "tool_unavailable",
+    "replacement_missed",
+    "test_command_misconfigured",
+}
+_runtime_tool_feedback_reasons_by_trace: dict[str, set[str]] = {}
+_runtime_tool_feedback_lock = threading.Lock()
+
+_RUNTIME_TOOL_UNAVAILABLE_RE = re.compile(
+    r"\b(?:command not found|No such file or directory)\b",
+    re.IGNORECASE,
+)
+
+_RUNTIME_TOOL_TOO_BROAD_RE = re.compile(
+    r"("
+    r"The output of your last command was too long|"
+    r"<warning>\s*The output of your last command was too long|"
+    r"<elided_chars>\s*[1-9]\d*"
+    r")",
+    re.IGNORECASE | re.DOTALL,
+)
+
+_RUNTIME_TOOL_REPLACEMENT_MISS_RE = re.compile(
+    r"\b(?:target .* not found|pattern not found|No changes made)\b",
+    re.IGNORECASE,
+)
+
+_RUNTIME_TEST_COMMAND_MISCONFIG_RE = re.compile(
+    r"("
+    r"unittest\.loader\._FailedTest|"
+    r"ModuleNotFoundError:\s+No module named|"
+    r"AttributeError:\s+module .* has no attribute|"
+    r"Requested setting .* but settings are not configured|"
+    r"ImproperlyConfigured:"
+    r")",
+    re.IGNORECASE | re.DOTALL,
+)
+
+_RUNTIME_DEFINITION_CANDIDATE_RE = re.compile(
+    r"(?:^|[:\s])def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(",
+    re.MULTILINE,
+)
+
+_RUNTIME_TEST_PASS_RE = re.compile(
+    r"(^|\b)(?:PASS|PASSED)\b|=+\s*\d+\s+passed\b",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+_RUNTIME_TEST_FAIL_RE = re.compile(
+    r"<returncode>\s*[1-9]\d*\s*</returncode>|\b(?:FAILED|FAIL|ERROR|Traceback)\b",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+_RUNTIME_RETURN_ZERO_RE = re.compile(
+    r"<returncode>\s*0\s*</returncode>|[\"']?returncode[\"']?\s*:\s*0\b",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+_RUNTIME_SOURCE_LIKE_LINE_RE = re.compile(
+    r"("
+    r"^\s*(?:def|class|import|from|if|elif|else:|for|while|try:|except|with|"
+    r"return|raise|yield|async\s+def)\b|"
+    r"^[\w./-]+\.(?:py|pyi|js|ts|tsx|jsx|go|rs|java|c|cc|cpp|h|hpp|md|rst|"
+    r"toml|yaml|yml|json|ini|cfg):\d*:|"
+    r"^(?:diff --git|@@ |--- |\+\+\+ )"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_runtime_source_or_search_output(text: str) -> bool:
+    source_like_lines = 0
+    nonempty_lines = 0
+    for raw_line in text.splitlines()[:240]:
+        line = raw_line.rstrip()
+        if not line:
+            continue
+        nonempty_lines += 1
+        if _RUNTIME_SOURCE_LIKE_LINE_RE.search(line):
+            source_like_lines += 1
+        if source_like_lines >= 4:
+            return True
+    return nonempty_lines >= 8 and source_like_lines >= 2
+
+
+def _should_compact_runtime_tool_output(
+    text: str, *, allow_source_like: bool = False
+) -> bool:
+    if _env_flag("ARBITEROS_COST_DOWN_COMPACT_SOURCE_LIKE_TOOL_OUTPUTS"):
+        return True
+    source_like = _looks_like_runtime_source_or_search_output(text)
+    if source_like and allow_source_like:
+        return True
+    high_confidence_noise = _RUNTIME_HIGH_CONFIDENCE_NOISY_TOOL_OUTPUT_RE.search(text)
+    if source_like and not high_confidence_noise:
+        return False
+    if high_confidence_noise or _RUNTIME_NOISY_TOOL_OUTPUT_RE.search(text):
+        return True
+    folded = _fold_repeated_adjacent_lines(text)
+    return not source_like and len(folded) <= int(len(text) * 0.75)
+
+
+def _extract_runtime_compaction_anchors(text: str, *, max_lines: int = 16) -> str:
+    anchors: list[str] = []
+    seen: set[str] = set()
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line in seen:
+            continue
+        if _RUNTIME_COMPACTION_ANCHOR_RE.search(
+            line
+        ) or _RUNTIME_SOURCE_LIKE_LINE_RE.search(line):
+            seen.add(line)
+            anchors.append(line[:240])
+        if len(anchors) >= max_lines:
+            break
+    return "\n".join(anchors)
+
+
+def _is_high_signal_runtime_tool_output(text: str) -> bool:
+    return bool(_RUNTIME_HIGH_SIGNAL_TOOL_OUTPUT_RE.search(text))
+
+
+def _should_defer_runtime_stale_tool_output_before_min(
+    message: dict[str, Any],
+) -> bool:
+    mode, text = _content_mode_and_text(message)
+    if mode is None or not text:
+        return False
+    if _is_high_signal_runtime_tool_output(text):
+        return True
+    if _env_flag(
+        "ARBITEROS_COST_DOWN_DEFER_SOURCE_LIKE_STALE_TOOL_OUTPUTS_UNTIL_MIN",
+        False,
+    ):
+        return _looks_like_runtime_source_or_search_output(text)
+    return False
+
+
+def _runtime_tool_call_id(message: dict[str, Any]) -> Optional[str]:
+    for key in ("tool_call_id", "id"):
+        value = message.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _reference_tool_ids_from_tool_call(tool_call: dict[str, Any]) -> set[str]:
+    fn = tool_call.get("function")
+    if not isinstance(fn, dict):
+        return set()
+    raw_args = fn.get("arguments")
+    if isinstance(raw_args, str):
+        args = _safe_json_loads(raw_args) or {}
+    elif isinstance(raw_args, dict):
+        args = raw_args
+    else:
+        args = {}
+    if not isinstance(args, dict):
+        return set()
+    raw_refs = args.get("reference_tool_id")
+    if isinstance(raw_refs, str):
+        refs = [raw_refs]
+    elif isinstance(raw_refs, list):
+        refs = raw_refs
+    else:
+        refs = []
+    return {str(ref).strip() for ref in refs if str(ref).strip()}
+
+
+def _runtime_dependency_protected_tool_call_ids(messages: list[Any]) -> set[str]:
+    if not _env_flag("ARBITEROS_COST_DOWN_DEPENDENCY_PROTECT_TOOL_OUTPUTS", True):
+        return set()
+    referenced_in_order: list[str] = []
+    for message in messages:
+        if not isinstance(message, dict) or message.get("role") != "assistant":
+            continue
+        tool_calls = message.get("tool_calls")
+        if not isinstance(tool_calls, list):
+            continue
+        for tool_call in tool_calls:
+            if isinstance(tool_call, dict):
+                referenced_in_order.extend(
+                    sorted(_reference_tool_ids_from_tool_call(tool_call))
+                )
+    keep_recent = _env_int(
+        "ARBITEROS_COST_DOWN_DEPENDENCY_PROTECTED_KEEP_RECENT",
+        2,
+    )
+    if keep_recent <= 0:
+        return set(referenced_in_order)
+    protected: set[str] = set()
+    for tool_call_id in reversed(referenced_in_order):
+        if tool_call_id in protected:
+            continue
+        protected.add(tool_call_id)
+        if len(protected) >= keep_recent:
+            break
+    return protected
+
+
+def _runtime_dependency_protected_tool_indexes(
+    messages: list[Any],
+    tool_indexes: list[int],
+) -> tuple[set[int], list[str], list[str]]:
+    protected_call_ids = _runtime_dependency_protected_tool_call_ids(messages)
+    if not protected_call_ids:
+        return set(), [], []
+
+    high_signal_only = _env_flag(
+        "ARBITEROS_COST_DOWN_DEPENDENCY_PROTECT_HIGH_SIGNAL_ONLY",
+        True,
+    )
+    protected_indexes: set[int] = set()
+    protected_ids: list[str] = []
+    skipped_ids: list[str] = []
+    for idx in tool_indexes:
+        message = messages[idx]
+        if not isinstance(message, dict):
+            continue
+        tool_call_id = _runtime_tool_call_id(message)
+        if not tool_call_id or tool_call_id not in protected_call_ids:
+            continue
+        _mode, text = _content_mode_and_text(message)
+        if high_signal_only and not _is_high_signal_runtime_tool_output(text):
+            skipped_ids.append(tool_call_id)
+            continue
+        protected_indexes.add(idx)
+        protected_ids.append(tool_call_id)
+    return protected_indexes, sorted(protected_ids), sorted(skipped_ids)
+
+
+def _should_emit_runtime_tool_feedback(
+    trace_id: Optional[str],
+    reasons: list[str],
+) -> bool:
+    if not _env_flag("ARBITEROS_COST_DOWN_TOOL_FEEDBACK_DEDUPE", False):
+        return True
+
+    reason_set = {str(reason) for reason in reasons if reason}
+    if not trace_id or not reason_set:
+        return True
+
+    with _runtime_tool_feedback_lock:
+        existing_reasons = _runtime_tool_feedback_reasons_by_trace.get(trace_id)
+        if existing_reasons is None:
+            if (
+                len(_runtime_tool_feedback_reasons_by_trace)
+                >= _MAX_RUNTIME_TOOL_FEEDBACK_TRACES
+            ):
+                oldest_trace_id = next(iter(_runtime_tool_feedback_reasons_by_trace))
+                _runtime_tool_feedback_reasons_by_trace.pop(oldest_trace_id, None)
+            _runtime_tool_feedback_reasons_by_trace[trace_id] = set(reason_set)
+            return True
+
+        if reason_set.issubset(existing_reasons):
+            return False
+        existing_reasons.update(reason_set)
+        return True
+
+
+def _runtime_has_multiple_candidate_definitions(text: str) -> bool:
+    names = _RUNTIME_DEFINITION_CANDIDATE_RE.findall(text or "")
+    if len(names) >= 5:
+        return True
+    counts: dict[str, int] = {}
+    for name in names:
+        counts[name] = int(counts.get(name, 0) or 0) + 1
+        if counts[name] >= 3:
+            return True
+    return False
+
+
+def _build_runtime_tool_feedback_hint(
+    data: dict[str, Any],
+    *,
+    trace_id: Optional[str] = None,
+) -> Optional[dict[str, Any]]:
+    if not _env_flag("ARBITEROS_COST_DOWN_TOOL_FEEDBACK_HINTS", False):
+        return None
+    messages = data.get("messages") if isinstance(data, dict) else None
+    if not isinstance(messages, list):
+        return None
+    try:
+        online_guard = cost_down.phase3_online_activation_guard(data)
+    except Exception:
+        online_guard = {"enabled": False, "met": True}
+
+    recent_tool_texts: list[str] = []
+    for message in reversed(messages):
+        if not isinstance(message, dict):
+            continue
+        if message.get("role") != "tool":
+            continue
+        _mode, text = _content_mode_and_text(message)
+        if text:
+            recent_tool_texts.append(text)
+        if len(recent_tool_texts) >= 4:
+            break
+    if not recent_tool_texts:
+        initial_tool_hints = _env_flag(
+            "ARBITEROS_COST_DOWN_INITIAL_TOOL_HINTS", False
+        )
+        initial_workflow_hints = _env_flag(
+            "ARBITEROS_COST_DOWN_INITIAL_WORKFLOW_HINTS", False
+        )
+        if not initial_tool_hints and not initial_workflow_hints:
+            return None
+        guard_waiting = bool(online_guard.get("enabled") and not online_guard.get("met"))
+        # Tool hygiene is an environment fact, not a budget-pressure hint. It is
+        # safe to emit before the Phase 3 online guard so the agent does not
+        # waste early calls on missing shell helpers.
+        effective_initial_tool_hints = initial_tool_hints
+        effective_initial_workflow_hints = initial_workflow_hints and not guard_waiting
+        if not effective_initial_tool_hints and not effective_initial_workflow_hints:
+            return None
+        reasons = []
+        hint_lines = [f"{_RUNTIME_TOOL_FEEDBACK_MARKER}"]
+        if effective_initial_tool_hints:
+            reasons.append("initial_tool_hygiene")
+            hint_lines.append(
+                os.getenv(
+                    "ARBITEROS_COST_DOWN_INITIAL_TOOL_HINT_TEXT",
+                    "Shell hygiene: use portable commands likely present in the "
+                    "container. Prefer targeted grep/sed/python; use find only "
+                    "with narrow path or name filters. Avoid optional helpers "
+                    "such as rg or apply_patch unless verified.",
+                )
+            )
+        if effective_initial_workflow_hints:
+            reasons.append("initial_workflow_budget")
+            hint_lines.append(
+                "Lean workflow: identify the relevant source and test files from "
+                "the task, inspect narrow snippets, edit only the necessary "
+                "source file(s), run the smallest relevant project test command, "
+                "and submit after sufficient validation. Avoid broad dumps, "
+                "extra repro scripts, optional edge tests, and repeated file "
+                "reads unless the required test fails or the task is ambiguous."
+            )
+        if not _should_emit_runtime_tool_feedback(trace_id, reasons):
+            return None
+        hint = "\n".join(hint_lines)
+        max_chars = _env_int(
+            "ARBITEROS_COST_DOWN_TOOL_FEEDBACK_HINT_MAX_CHARS", 420
+        )
+        if max_chars > 0 and len(hint) > max_chars:
+            hint = hint[: max(0, max_chars - 3)].rstrip() + "..."
+        return {
+            "marker": _RUNTIME_TOOL_FEEDBACK_MARKER,
+            "hint": hint,
+            "reasons": reasons,
+        }
+
+    latest_tool_text = recent_tool_texts[0] if recent_tool_texts else ""
+    joined = "\n".join(recent_tool_texts)
+    feedback_items: list[tuple[str, str]] = []
+    has_submit_marker = any(
+        isinstance(message, dict)
+        and "COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT" in str(message.get("content") or "")
+        for message in messages
+    )
+    if (
+        _env_flag("ARBITEROS_COST_DOWN_SUBMIT_AFTER_PASS_HINTS", False)
+        and _RUNTIME_TEST_PASS_RE.search(latest_tool_text)
+        and _RUNTIME_RETURN_ZERO_RE.search(latest_tool_text)
+        and not _RUNTIME_TEST_FAIL_RE.search(latest_tool_text)
+        and has_submit_marker
+    ):
+        feedback_items.append(
+            (
+                "required_test_passed_submit",
+                "the required test passed; submit now with `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT` unless code changed after that test",
+            )
+        )
+    if _RUNTIME_TOOL_UNAVAILABLE_RE.search(joined):
+        feedback_items.append(
+            (
+                "tool_unavailable",
+                "use targeted grep/sed/python; use find only with narrow path/name filters; do not rely on rg or apply_patch in benchmark containers",
+            )
+        )
+    if _RUNTIME_TOOL_TOO_BROAD_RE.search(joined):
+        feedback_items.append(
+            (
+                "tool_output_too_broad",
+                "avoid broad file/log dumps; locate symbols first and print about 120 targeted lines or less",
+            )
+        )
+    if _RUNTIME_TOOL_REPLACEMENT_MISS_RE.search(joined):
+        feedback_items.append(
+            (
+                "replacement_missed",
+                "before retrying scripted edits, inspect the exact nearby block first",
+            )
+        )
+    if _RUNTIME_TEST_COMMAND_MISCONFIG_RE.search(joined):
+        feedback_items.append(
+            (
+                "test_command_misconfigured",
+                "the test runner or test label is misconfigured; inspect the repo's existing test command format and run one narrow module path instead of retrying label variants",
+            )
+        )
+    if _runtime_has_multiple_candidate_definitions(joined):
+        feedback_items.append(
+            (
+                "multiple_candidate_definitions",
+                "when search output lists multiple definitions, inspect the task-specific owner or subclass before editing a generic base implementation",
+            )
+        )
+    if (
+        online_guard.get("enabled")
+        and not online_guard.get("met")
+        and _env_flag("ARBITEROS_COST_DOWN_TOOL_FEEDBACK_EARLY_CORRECTIONS", True)
+    ):
+        feedback_items = [
+            item
+            for item in feedback_items
+            if item[0] in _RUNTIME_TOOL_FEEDBACK_EARLY_REASONS
+        ]
+    elif online_guard.get("enabled") and not online_guard.get("met"):
+        return None
+
+    if not feedback_items:
+        return None
+
+    reasons = [reason for reason, _guidance in feedback_items]
+    if not _should_emit_runtime_tool_feedback(trace_id, reasons):
+        return None
+
+    seen: set[str] = set()
+    deduped_guidance = []
+    for _reason, item in feedback_items:
+        if item in seen:
+            continue
+        seen.add(item)
+        deduped_guidance.append(item)
+
+    hint = (
+        f"{_RUNTIME_TOOL_FEEDBACK_MARKER}\n"
+        "Recent tool feedback indicates wasted context. Next shell step: "
+        + "; ".join(deduped_guidance)
+        + ". Make one narrow correctness-preserving command."
+    )
+    max_chars = _env_int("ARBITEROS_COST_DOWN_TOOL_FEEDBACK_HINT_MAX_CHARS", 420)
+    if max_chars > 0 and len(hint) > max_chars:
+        hint = hint[: max(0, max_chars - 3)].rstrip() + "..."
+    return {
+        "marker": _RUNTIME_TOOL_FEEDBACK_MARKER,
+        "hint": hint,
+        "reasons": reasons,
+    }
+
+
+def _compact_text_for_runtime_cost_down(
+    text: str,
+    *,
+    max_chars: int,
+    label: str,
+    reason: str,
+    include_anchors: bool = False,
+) -> tuple[str, bool]:
+    if max_chars <= 0 or len(text) <= max_chars:
+        return text, False
+
+    folded = _fold_repeated_adjacent_lines(text)
+    source = folded if len(folded) < len(text) else text
+    anchors = (
+        _extract_runtime_compaction_anchors(text)
+        if include_anchors and len(text) > max_chars
+        else ""
+    )
+    header_lines = [
+        f"[arbiteros_runtime_cost_down compacted {label}]",
+        f"reason: {reason}",
+        f"original_chars: {len(text)}",
+    ]
+    if anchors:
+        header_lines.extend(["anchors:", anchors])
+    header = "\n".join(header_lines).rstrip() + "\n\n"
+    target = max(max_chars, 160)
+    available = target - len(header) - len("\n\n[... omitted middle ...]\n\n")
+    if available <= 80:
+        compacted = header + source[: max(40, target - len(header))].rstrip()
+    else:
+        head_chars = max(40, int(available * 0.62))
+        tail_chars = max(40, available - head_chars)
+        compacted = (
+            header
+            + source[:head_chars].rstrip()
+            + "\n\n[... omitted middle ...]\n\n"
+            + source[-tail_chars:].lstrip()
+        )
+    return compacted, compacted != text
+
+
+def _compact_assistant_text_for_runtime_cost_down(
+    text: str,
+    *,
+    max_chars: int,
+    reason: str,
+) -> tuple[str, bool]:
+    wrapper: Optional[dict[str, Any]] = None
+    try:
+        parsed = json.loads(text)
+    except Exception:
+        parsed = None
+    if isinstance(parsed, dict) and isinstance(parsed.get("content"), str):
+        wrapper = dict(parsed)
+
+    if wrapper is None:
+        return _compact_text_for_runtime_cost_down(
+            text,
+            max_chars=max_chars,
+            label="assistant_history",
+            reason=reason,
+            include_anchors=True,
+        )
+
+    inner = str(wrapper.get("content") or "")
+    compacted_inner, changed = _compact_text_for_runtime_cost_down(
+        inner,
+        max_chars=max_chars,
+        label="assistant_history",
+        reason=reason,
+        include_anchors=True,
+    )
+    if not changed:
+        return text, False
+    wrapper["content"] = compacted_inner
+    return json.dumps(wrapper, ensure_ascii=False, separators=(",", ":")), True
+
+
+def _estimate_runtime_request_chars(data: dict[str, Any]) -> int:
+    try:
+        return len(json.dumps(data, ensure_ascii=False, default=str))
+    except Exception:
+        return len(str(data))
+
+
+def _add_runtime_compaction_action(
+    stats: dict[str, Any],
+    *,
+    action: str,
+    role: str,
+    before_chars: int,
+    after_chars: int,
+) -> None:
+    actions = stats.setdefault("actions", {})
+    current = actions.get(action)
+    if not isinstance(current, dict):
+        current = {
+            "messages": 0,
+            "source_roles": {},
+            "original_chars": 0,
+            "compacted_chars": 0,
+            "saved_chars": 0,
+        }
+        actions[action] = current
+    current["messages"] = int(current.get("messages", 0) or 0) + 1
+    roles = current.setdefault("source_roles", {})
+    if isinstance(roles, dict):
+        roles[role] = int(roles.get(role, 0) or 0) + 1
+    current["original_chars"] = (
+        int(current.get("original_chars", 0) or 0) + before_chars
+    )
+    current["compacted_chars"] = (
+        int(current.get("compacted_chars", 0) or 0) + after_chars
+    )
+    current["saved_chars"] = int(current.get("saved_chars", 0) or 0) + max(
+        0, before_chars - after_chars
+    )
+
+
+def _compact_runtime_message_content(
+    message: dict[str, Any],
+    *,
+    max_chars: int,
+    action: str,
+    reason: str,
+    stats: dict[str, Any],
+) -> bool:
+    mode, text = _content_mode_and_text(message)
+    if mode is None or not text:
+        return False
+    role = str(message.get("role") or "unknown")
+    if role == "tool":
+        allow_source_like = (
+            action == "stale_tool_output"
+            or action.startswith("prompt_budget_tool")
+        )
+        if not _should_compact_runtime_tool_output(
+            text, allow_source_like=allow_source_like
+        ):
+            return False
+        if (
+            action == "stale_tool_output"
+            and _env_flag(
+                "ARBITEROS_COST_DOWN_PRESERVE_HIGH_SIGNAL_TOOL_OUTPUTS",
+                False,
+            )
+        ):
+            high_signal = _is_high_signal_runtime_tool_output(text)
+            source_like = _looks_like_runtime_source_or_search_output(text)
+            if high_signal:
+                high_signal_max_chars = _env_int(
+                    "ARBITEROS_COST_DOWN_HIGH_SIGNAL_TOOL_MAX_CHARS", 2500
+                )
+                if high_signal_max_chars <= 0:
+                    return False
+                if high_signal_max_chars > max_chars:
+                    max_chars = high_signal_max_chars
+                    action = "stale_high_signal_tool_output"
+            elif source_like and _env_flag(
+                "ARBITEROS_COST_DOWN_PRESERVE_SOURCE_LIKE_STALE_TOOL_OUTPUTS",
+                False,
+            ):
+                source_like_max_chars = _env_int(
+                    "ARBITEROS_COST_DOWN_SOURCE_LIKE_STALE_TOOL_MAX_CHARS", 3000
+                )
+                if source_like_max_chars <= 0:
+                    return False
+                if source_like_max_chars > max_chars:
+                    max_chars = source_like_max_chars
+                    action = "stale_source_like_tool_output"
+    if role == "assistant":
+        compacted, changed = _compact_assistant_text_for_runtime_cost_down(
+            text,
+            max_chars=max_chars,
+            reason=reason,
+        )
+    else:
+        compacted, changed = _compact_text_for_runtime_cost_down(
+            text,
+            max_chars=max_chars,
+            label=f"{role}_output",
+            reason=reason,
+            include_anchors=role == "tool",
+        )
+    if not changed:
+        return False
+    _set_message_text_content(message, mode, compacted)
+    _add_runtime_compaction_action(
+        stats,
+        action=action,
+        role=role,
+        before_chars=len(text),
+        after_chars=len(compacted),
+    )
+    return True
+
+
+def _is_compactable_stale_assistant_message(message: dict[str, Any]) -> bool:
+    if message.get("role") != "assistant":
+        return False
+    if message.get("tool_calls") or message.get("function_call"):
+        return False
+    mode, text = _content_mode_and_text(message)
+    return mode is not None and bool(text)
+
+
+def _apply_prompt_char_budget_for_runtime_cost_down(
+    data: dict[str, Any],
+    messages: list[Any],
+    stats: dict[str, Any],
+    *,
+    budget_chars: int,
+    dependency_protected_tool_indexes: Optional[set[int]] = None,
+) -> None:
+    if budget_chars <= 0:
+        return
+    budget_item_max_chars = _env_int(
+        "ARBITEROS_COST_DOWN_BUDGET_ITEM_MAX_CHARS", 360
+    )
+    budget_item_max_chars = max(160, budget_item_max_chars)
+    current_chars = _estimate_runtime_request_chars(data)
+    if current_chars <= budget_chars:
+        return
+
+    protected_tool_indexes = dependency_protected_tool_indexes or set()
+    protect_dependencies = _env_flag(
+        "ARBITEROS_COST_DOWN_BUDGET_PROTECT_DEPENDENCIES",
+        True,
+    )
+    candidates: list[tuple[int, int]] = []
+    for idx, message in enumerate(messages):
+        if not isinstance(message, dict):
+            continue
+        role = message.get("role")
+        if protect_dependencies and role == "tool" and idx in protected_tool_indexes:
+            continue
+        if role == "tool" or _is_compactable_stale_assistant_message(message):
+            _mode, text = _content_mode_and_text(message)
+            if len(text) > budget_item_max_chars:
+                candidates.append((len(text), idx))
+    for _text_len, idx in sorted(candidates, reverse=True):
+        message = messages[idx]
+        if not isinstance(message, dict):
+            continue
+        role = str(message.get("role") or "unknown")
+        changed = _compact_runtime_message_content(
+            message,
+            max_chars=budget_item_max_chars,
+            action=f"prompt_budget_{role}_output",
+            reason=f"request payload exceeded {budget_chars} chars",
+            stats=stats,
+        )
+        if changed:
+            current_chars = _estimate_runtime_request_chars(data)
+        if current_chars <= budget_chars:
+            return
+
+
+def _apply_runtime_cost_down_compaction(
+    data: dict[str, Any], *, trace_id: Optional[str]
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    stats: dict[str, Any] = {
+        "enabled": _runtime_cost_down_enabled(),
+        "trace_id": trace_id,
+        "changed": False,
+        "original_estimated_input_tokens": (
+            cost_down.estimate_request_input_tokens(data)
+            if isinstance(data, dict)
+            else 0
+        ),
+    }
+    if not stats["enabled"] or not isinstance(data, dict):
+        stats["optimized_estimated_input_tokens"] = stats[
+            "original_estimated_input_tokens"
+        ]
+        stats["estimated_input_tokens_saved"] = 0
+        return data, stats
+
+    messages = data.get("messages")
+    if not isinstance(messages, list):
+        stats["optimized_estimated_input_tokens"] = stats[
+            "original_estimated_input_tokens"
+        ]
+        stats["estimated_input_tokens_saved"] = 0
+        return data, stats
+
+    compacted_data = copy.deepcopy(data)
+    compacted_messages = compacted_data.get("messages")
+    if not isinstance(compacted_messages, list):
+        return data, stats
+
+    changed = False
+    tool_indexes = [
+        idx
+        for idx, message in enumerate(compacted_messages)
+        if isinstance(message, dict) and message.get("role") == "tool"
+    ]
+    (
+        dependency_protected_tool_indexes,
+        dependency_protected_tool_call_ids,
+        skipped_dependency_tool_call_ids,
+    ) = _runtime_dependency_protected_tool_indexes(compacted_messages, tool_indexes)
+    if dependency_protected_tool_indexes:
+        stats["dependency_protected_tool_outputs"] = {
+            "messages": len(dependency_protected_tool_indexes),
+            "tool_call_ids": dependency_protected_tool_call_ids,
+            "high_signal_only": _env_flag(
+                "ARBITEROS_COST_DOWN_DEPENDENCY_PROTECT_HIGH_SIGNAL_ONLY",
+                True,
+            ),
+        }
+    if skipped_dependency_tool_call_ids:
+        stats["dependency_protected_tool_outputs_skipped"] = {
+            "reason": "referenced_tool_output_without_high_signal",
+            "tool_call_ids": skipped_dependency_tool_call_ids,
+        }
+    stale_tool_indexes: set[int] = set()
+    if _env_flag("ARBITEROS_COST_DOWN_COMPACT_STALE_TOOL_OUTPUTS"):
+        keep_recent = _env_int("ARBITEROS_COST_DOWN_STALE_TOOL_KEEP_RECENT", 1)
+        min_tool_results = _env_int(
+            "ARBITEROS_COST_DOWN_STALE_TOOL_MIN_RESULTS", 0
+        )
+        stale_tool_candidates = tool_indexes[: max(0, len(tool_indexes) - keep_recent)]
+        deferred_stale_tool_indexes: set[int] = set()
+        if min_tool_results > 0 and len(tool_indexes) < min_tool_results:
+            for idx in stale_tool_candidates:
+                message = compacted_messages[idx]
+                if isinstance(
+                    message, dict
+                ) and _should_defer_runtime_stale_tool_output_before_min(message):
+                    deferred_stale_tool_indexes.add(idx)
+                else:
+                    stale_tool_indexes.add(idx)
+            if deferred_stale_tool_indexes:
+                stats["stale_tool_deferred"] = {
+                    "tool_results": len(tool_indexes),
+                    "min_tool_results": min_tool_results,
+                    "messages": len(deferred_stale_tool_indexes),
+                }
+        else:
+            stale_tool_indexes = set(stale_tool_candidates)
+        stale_max_chars = _env_int("ARBITEROS_COST_DOWN_STALE_TOOL_MAX_CHARS", 500)
+        for idx in sorted(stale_tool_indexes):
+            message = compacted_messages[idx]
+            if isinstance(message, dict):
+                max_chars = stale_max_chars
+                action = "stale_tool_output"
+                reason = f"older than last {keep_recent} tool result(s)"
+                if idx in dependency_protected_tool_indexes:
+                    dependency_max_chars = _env_int(
+                        "ARBITEROS_COST_DOWN_DEPENDENCY_PROTECTED_TOOL_MAX_CHARS",
+                        2400,
+                    )
+                    dependency_min_chars = _env_int(
+                        "ARBITEROS_COST_DOWN_DEPENDENCY_PROTECTED_TOOL_MIN_CHARS",
+                        800,
+                    )
+                    _mode, text = _content_mode_and_text(message)
+                    if dependency_max_chars <= 0 or len(text) <= dependency_min_chars:
+                        continue
+                    max_chars = max(stale_max_chars, dependency_max_chars)
+                    action = "dependency_protected_tool_output"
+                    reason = (
+                        f"{reason}; referenced by later tool call reference_tool_id"
+                    )
+                changed = (
+                    _compact_runtime_message_content(
+                        message,
+                        max_chars=max_chars,
+                        action=action,
+                        reason=reason,
+                        stats=stats,
+                    )
+                    or changed
+                )
+
+    if _env_flag("ARBITEROS_COST_DOWN_COMPACT_TOOL_OUTPUTS"):
+        long_max_chars = _env_int("ARBITEROS_COST_DOWN_TOOL_OUTPUT_MAX_CHARS", 1200)
+        for idx in tool_indexes:
+            if idx in stale_tool_indexes:
+                continue
+            message = compacted_messages[idx]
+            if isinstance(message, dict):
+                changed = (
+                    _compact_runtime_message_content(
+                        message,
+                        max_chars=long_max_chars,
+                        action="long_tool_output",
+                        reason=f"tool content exceeded {long_max_chars} chars",
+                        stats=stats,
+                    )
+                    or changed
+                )
+
+    if _env_flag("ARBITEROS_COST_DOWN_COMPACT_STALE_ASSISTANT_OUTPUTS"):
+        assistant_indexes = [
+            idx
+            for idx, message in enumerate(compacted_messages)
+            if isinstance(message, dict)
+            and _is_compactable_stale_assistant_message(message)
+        ]
+        keep_recent = _env_int("ARBITEROS_COST_DOWN_STALE_ASSISTANT_KEEP_RECENT", 1)
+        stale_assistant_indexes = assistant_indexes[
+            : max(0, len(assistant_indexes) - keep_recent)
+        ]
+        stale_max_chars = _env_int(
+            "ARBITEROS_COST_DOWN_STALE_ASSISTANT_MAX_CHARS", 900
+        )
+        for idx in stale_assistant_indexes:
+            message = compacted_messages[idx]
+            if isinstance(message, dict):
+                changed = (
+                    _compact_runtime_message_content(
+                        message,
+                        max_chars=stale_max_chars,
+                        action="stale_assistant_output",
+                        reason=(
+                            f"older than last {keep_recent} assistant text message(s)"
+                        ),
+                        stats=stats,
+                    )
+                    or changed
+                )
+
+    _apply_prompt_char_budget_for_runtime_cost_down(
+        compacted_data,
+        compacted_messages,
+        stats,
+        budget_chars=_env_int("ARBITEROS_COST_DOWN_MAX_PROMPT_CHARS", 0),
+        dependency_protected_tool_indexes=dependency_protected_tool_indexes,
+    )
+
+    optimized_tokens = cost_down.estimate_request_input_tokens(compacted_data)
+    stats["optimized_estimated_input_tokens"] = optimized_tokens
+    stats["estimated_input_tokens_saved"] = max(
+        0, int(stats["original_estimated_input_tokens"] or 0) - optimized_tokens
+    )
+    stats["changed"] = bool(changed or stats.get("actions"))
+    if not stats["changed"]:
+        return data, stats
+
+    metadata = compacted_data.get("metadata")
+    if not isinstance(metadata, dict):
+        metadata = {}
+    else:
+        metadata = dict(metadata)
+    metadata["arbiteros_runtime_cost_down"] = stats
+    compacted_data["metadata"] = metadata
+    return compacted_data, stats
+
+
 def _extract_text_from_responses_output(response_obj: Any) -> str:
     """Best-effort text extraction from OpenAI Responses API payload (dict)."""
     return _pa_extract_text_from_responses_output(response_obj)
@@ -3419,6 +4746,143 @@ def _extract_tool_call_map_by_id(message_dict: Optional[dict]) -> dict[str, dict
         if isinstance(tc_id, str) and tc_id.strip():
             out[tc_id.strip()] = tool_call
     return out
+
+
+_APPLY_PATCH_HEREDOC_RE = re.compile(
+    r"(?s)^(?P<prefix>.*?\b)apply_patch\s*<<[\"']?(?P<tag>[A-Za-z0-9_]+)[\"']?\n"
+    r"(?P<patch>.*?)\n(?P=tag)[ \t]*(?P<suffix>(?:\n.*)?)$"
+)
+
+
+def _parse_simple_apply_patch_ops(patch_text: str) -> list[tuple[str, str, str]]:
+    lines = patch_text.splitlines()
+    if not lines or lines[0].strip() != "*** Begin Patch":
+        return []
+    ops: list[tuple[str, str, str]] = []
+    current_file: Optional[str] = None
+    hunk: list[str] = []
+
+    def flush_hunk() -> bool:
+        nonlocal hunk
+        if current_file is None or not hunk:
+            hunk = []
+            return True
+        old_lines: list[str] = []
+        new_lines: list[str] = []
+        saw_change = False
+        for line in hunk:
+            if not line:
+                return False
+            tag, body = line[0], line[1:]
+            if tag == " ":
+                old_lines.append(body)
+                new_lines.append(body)
+            elif tag == "-":
+                old_lines.append(body)
+                saw_change = True
+            elif tag == "+":
+                new_lines.append(body)
+                saw_change = True
+            else:
+                return False
+        if saw_change:
+            ops.append(
+                (
+                    current_file,
+                    "\n".join(old_lines) + "\n",
+                    "\n".join(new_lines) + "\n",
+                )
+            )
+        hunk = []
+        return True
+
+    idx = 1
+    while idx < len(lines):
+        line = lines[idx]
+        if line.strip() == "*** End Patch":
+            return ops if flush_hunk() else []
+        if line.startswith("*** Update File: "):
+            if not flush_hunk():
+                return []
+            current_file = line.removeprefix("*** Update File: ").strip()
+            if not current_file:
+                return []
+            idx += 1
+            continue
+        if line.startswith("*** "):
+            return []
+        if line.startswith("@@"):
+            if not flush_hunk():
+                return []
+            idx += 1
+            continue
+        if current_file is None:
+            return []
+        hunk.append(line)
+        idx += 1
+    return []
+
+
+def _build_python_replace_command(
+    prefix: str,
+    ops: list[tuple[str, str, str]],
+    suffix: str = "",
+) -> str:
+    script = (
+        "from pathlib import Path\n"
+        f"ops = {ops!r}\n"
+        "for path, old, new in ops:\n"
+        "    p = Path(path)\n"
+        "    s = p.read_text()\n"
+        "    if old in s:\n"
+        "        s = s.replace(old, new, 1)\n"
+        "    elif old.rstrip('\\n') in s:\n"
+        "        s = s.replace(old.rstrip('\\n'), new.rstrip('\\n'), 1)\n"
+        "    else:\n"
+        "        raise SystemExit(f'apply_patch context not found: {path}')\n"
+        "    p.write_text(s)\n"
+    )
+    return f"{prefix}python - <<'PY'\n{script}PY{suffix}"
+
+
+def _lower_apply_patch_command(command: str) -> Optional[str]:
+    match = _APPLY_PATCH_HEREDOC_RE.match(command)
+    if not match:
+        return None
+    ops = _parse_simple_apply_patch_ops(match.group("patch"))
+    if not ops:
+        return None
+    return _build_python_replace_command(match.group("prefix"), ops, match.group("suffix") or "")
+
+
+def _lower_apply_patch_tool_calls_in_message(message_dict: dict[str, Any]) -> int:
+    if not _env_flag("ARBITEROS_COST_DOWN_LOWER_APPLY_PATCH_TOOL_CALLS", False):
+        return 0
+    lowered = 0
+    tool_calls = message_dict.get("tool_calls")
+    if not isinstance(tool_calls, list):
+        return 0
+    for tool_call in tool_calls:
+        if not isinstance(tool_call, dict):
+            continue
+        fn = tool_call.get("function")
+        if not isinstance(fn, dict):
+            continue
+        raw_args = fn.get("arguments")
+        args = _safe_json_loads(raw_args) if isinstance(raw_args, str) else None
+        if not isinstance(args, dict):
+            continue
+        command_key = "command" if isinstance(args.get("command"), str) else "cmd"
+        command = args.get(command_key)
+        if not isinstance(command, str) or "apply_patch" not in command:
+            continue
+        lowered_command = _lower_apply_patch_command(command)
+        if not lowered_command:
+            continue
+        args[command_key] = lowered_command
+        fn["arguments"] = json.dumps(args, ensure_ascii=False)
+        lowered += 1
+    return lowered
 
 
 def _normalize_policy_violation_reason(reason: str, *, max_chars: int = 450) -> str:
@@ -6635,6 +8099,64 @@ class MyCustomHandler(CustomLogger):
         _emit_tool_result_nodes_if_needed(data, state)
         data = _inject_trace_metadata(data, state)
 
+        runtime_cost_down_trace_id = (
+            state.trace_id
+            if state is not None and isinstance(state.trace_id, str)
+            else None
+        )
+        builder_for_cost_down = (
+            _peek_instruction_builder_for_trace(runtime_cost_down_trace_id)
+            if runtime_cost_down_trace_id
+            else None
+        )
+        instructions_for_cost_down = (
+            list(getattr(builder_for_cost_down, "instructions", []) or [])
+            if builder_for_cost_down is not None
+            else []
+        )
+        data, prompt_compaction_stats = cost_down.apply_agent_scaffold_compaction_to_request(
+            data,
+            trace_id=runtime_cost_down_trace_id,
+        )
+        if prompt_compaction_stats.get("changed"):
+            _save_json("prompt_compaction", prompt_compaction_stats)
+
+        phase3_llm_compressor = _build_phase3_llm_compressor()
+        data, runtime_cost_down_stats = cost_down.apply_phase3_runtime_policy_to_request(
+            data,
+            trace_id=runtime_cost_down_trace_id,
+            llm_compressor=phase3_llm_compressor,
+            global_instructions=instructions_for_cost_down,
+        )
+        if not runtime_cost_down_stats.get("enabled"):
+            data, runtime_cost_down_stats = _apply_runtime_cost_down_compaction(
+                data,
+                trace_id=runtime_cost_down_trace_id,
+            )
+        if runtime_cost_down_stats.get("changed"):
+            _save_json("runtime_cost_down", runtime_cost_down_stats)
+
+        runtime_tool_feedback = _build_runtime_tool_feedback_hint(
+            data,
+            trace_id=runtime_cost_down_trace_id,
+        )
+        if runtime_tool_feedback is not None:
+            data = _pa_inject_system_hint_into_request(
+                data,
+                hint_content=str(runtime_tool_feedback.get("hint") or ""),
+                marker=str(
+                    runtime_tool_feedback.get("marker")
+                    or _RUNTIME_TOOL_FEEDBACK_MARKER
+                ),
+            )
+            _save_json(
+                "runtime_tool_feedback",
+                {
+                    "trace_id": runtime_cost_down_trace_id,
+                    "reasons": runtime_tool_feedback.get("reasons") or [],
+                },
+            )
+
         if state is not None and isinstance(state.trace_id, str) and state.trace_id:
             builder_for_cost_down = _peek_instruction_builder_for_trace(state.trace_id)
             instructions_for_cost_down = (
@@ -6908,6 +8430,24 @@ class MyCustomHandler(CustomLogger):
 
         raw_msg_dict = msg if isinstance(msg, dict) else None
         final_msg_dict = raw_msg_dict
+        if isinstance(final_msg_dict, dict):
+            lowered_apply_patch_calls = _lower_apply_patch_tool_calls_in_message(
+                final_msg_dict
+            )
+            if lowered_apply_patch_calls:
+                response = _apply_canonical_message_to_response(
+                    response,
+                    final_msg_dict,
+                    is_chat_completion=is_chat_completion,
+                )
+                _save_json(
+                    "cost_down_tool_call_lowering",
+                    {
+                        "trace_id": _trace_id,
+                        "action": "lower_apply_patch",
+                        "tool_calls": lowered_apply_patch_calls,
+                    },
+                )
 
         # 记录 instruction 数量，供 policy 保护时标记本次添加的 instructions
         _policy_instruction_count_before = 0

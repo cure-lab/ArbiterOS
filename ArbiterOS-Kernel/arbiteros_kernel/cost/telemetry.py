@@ -410,28 +410,50 @@ def record_llm_call(
     ):
         return {"usage": usage, "cost": cost, "trace_totals": trace_totals}
 
-    _write_entry(
-        {
-            "ts": datetime.now().isoformat(),
-            "trace_id": trace_id.strip(),
-            "request_model": cost.get("request_model"),
-            "response_model": cost.get("response_model"),
-            "pricing_model": cost.get("pricing_model"),
-            "usage": {
-                "prompt_tokens": int(usage.get("prompt_tokens", 0) or 0),
-                "completion_tokens": int(usage.get("completion_tokens", 0) or 0),
-                "total_tokens": int(usage.get("total_tokens", 0) or 0),
-                "reasoning_tokens": int(usage.get("reasoning_tokens", 0) or 0),
-                "cached_tokens": int(usage.get("cached_tokens", 0) or 0),
-            },
-            "estimated_cost": {
-                "priced": bool(cost.get("priced", False)),
-                "currency": cost.get("currency", "USD"),
-                "input_cost_usd": cost.get("input_cost_usd", 0.0),
-                "output_cost_usd": cost.get("output_cost_usd", 0.0),
-                "total_cost_usd": cost.get("total_cost_usd", 0.0),
-            },
-            "trace_totals": trace_totals,
-        }
+    metadata = request_data.get("metadata") if isinstance(request_data, dict) else None
+    runtime_cost_down = (
+        metadata.get("arbiteros_runtime_cost_down")
+        if isinstance(metadata, dict)
+        else None
     )
+    prompt_compaction = (
+        metadata.get("arbiteros_prompt_compaction")
+        if isinstance(metadata, dict)
+        else None
+    )
+    cost_down_hint = (
+        metadata.get("arbiteros_cost_down_hint")
+        if isinstance(metadata, dict)
+        else None
+    )
+    entry = {
+        "ts": datetime.now().isoformat(),
+        "trace_id": trace_id.strip(),
+        "request_model": cost.get("request_model"),
+        "response_model": cost.get("response_model"),
+        "pricing_model": cost.get("pricing_model"),
+        "usage": {
+            "prompt_tokens": int(usage.get("prompt_tokens", 0) or 0),
+            "completion_tokens": int(usage.get("completion_tokens", 0) or 0),
+            "total_tokens": int(usage.get("total_tokens", 0) or 0),
+            "reasoning_tokens": int(usage.get("reasoning_tokens", 0) or 0),
+            "cached_tokens": int(usage.get("cached_tokens", 0) or 0),
+        },
+        "estimated_cost": {
+            "priced": bool(cost.get("priced", False)),
+            "currency": cost.get("currency", "USD"),
+            "input_cost_usd": cost.get("input_cost_usd", 0.0),
+            "output_cost_usd": cost.get("output_cost_usd", 0.0),
+            "total_cost_usd": cost.get("total_cost_usd", 0.0),
+        },
+        "trace_totals": trace_totals,
+    }
+    if isinstance(runtime_cost_down, dict):
+        entry["runtime_cost_down"] = runtime_cost_down
+    if isinstance(prompt_compaction, dict):
+        entry["prompt_compaction"] = prompt_compaction
+    if isinstance(cost_down_hint, dict):
+        entry["cost_down_hint"] = cost_down_hint
+
+    _write_entry(entry)
     return {"usage": usage, "cost": cost, "trace_totals": trace_totals}

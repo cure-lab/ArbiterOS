@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable, Optional
 
+from arbiteros_kernel.cost.prompt_compaction import apply_agent_scaffold_compaction_to_request
 from arbiteros_kernel.policy_runtime import get_runtime
 
 
@@ -18,6 +21,9 @@ class CostDownDecision:
     hint: str
     metrics: dict[str, Any]
     max_completion_tokens_applied: Optional[int] = None
+
+
+LLMCompressor = Callable[..., Optional[str]]
 
 
 def _cfg() -> dict[str, Any]:
@@ -56,6 +62,152 @@ def _to_int(value: Any, default: int = 0) -> int:
     except (TypeError, ValueError):
         return default
     return v if v >= 0 else default
+
+
+def _to_bool(value: Any, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        raw = value.strip().lower()
+        if raw in {"1", "true", "yes", "on"}:
+            return True
+        if raw in {"0", "false", "no", "off"}:
+            return False
+    return default
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    return _to_bool(raw, default) if raw is not None else default
+
+
+def _phase3_policy_from_cfg(cost_down_cfg: dict[str, Any]) -> dict[str, Any]:
+    phase3 = cost_down_cfg.get("phase3_runtime")
+    phase3 = phase3 if isinstance(phase3, dict) else {}
+    for key in ("policy", "runtime_policy", "phase3_policy"):
+        value = phase3.get(key)
+        if isinstance(value, dict):
+            return value
+
+    path_raw = (
+        os.getenv("ARBITEROS_COST_DOWN_PHASE3_POLICY_PATH")
+        or str(
+            phase3.get("policy_path")
+            or phase3.get("runtime_policy_path")
+            or phase3.get("phase3_policy_path")
+            or ""
+        )
+    ).strip()
+    if not path_raw:
+        return {}
+    try:
+        with Path(os.path.expandvars(os.path.expanduser(path_raw))).open(
+            "r", encoding="utf-8"
+        ) as handle:
+            loaded = json.load(handle)
+    except Exception:
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def _phase3_runtime_defaults_from_policy(
+    cost_down_cfg: dict[str, Any],
+) -> dict[str, Any]:
+    policy = _phase3_policy_from_cfg(cost_down_cfg)
+    execution = policy.get("execution")
+    execution = execution if isinstance(execution, dict) else {}
+    runtime_defaults = execution.get("runtime_defaults")
+    return dict(runtime_defaults) if isinstance(runtime_defaults, dict) else {}
+
+
+def _phase3_budget_hints_from_policy(cost_down_cfg: dict[str, Any]) -> dict[str, Any]:
+    runtime_defaults = _phase3_runtime_defaults_from_policy(cost_down_cfg)
+    hints = runtime_defaults.get("budget_hints")
+    return dict(hints) if isinstance(hints, dict) else {}
+
+
+def _phase3_runtime_enabled(cost_down_cfg: dict[str, Any]) -> bool:
+    phase3 = cost_down_cfg.get("phase3_runtime")
+    phase3 = phase3 if isinstance(phase3, dict) else {}
+    return _env_bool(
+        "ARBITEROS_COST_DOWN_PHASE3_RUNTIME",
+        _to_bool(phase3.get("enabled"), False),
+    )
+
+
+def _effective_cfg(request_data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+    """Merge Cost Doctor Phase 3 budget hints into the existing budget path.
+
+    Explicit `cost_down` config still wins.  Phase 3 policy defaults only fill in
+    the non-compression budget-hint channel when the exported policy opts in.
+    """
+
+    cfg = dict(_cfg())
+    hints = _phase3_budget_hints_from_policy(cfg)
+    hints_enabled = _env_bool(
+        "ARBITEROS_COST_DOWN_PHASE3_BUDGET_HINTS",
+        _to_bool(hints.get("enabled"), False),
+    )
+    if not hints_enabled:
+        return cfg
+
+    cfg_was_enabled = _to_bool(cfg.get("enabled"), True)
+    if request_data is not None and not cfg_was_enabled:
+        guard = phase3_online_activation_guard(request_data, cost_down_cfg=cfg)
+        if guard.get("enabled") and not guard.get("met"):
+            cfg["_phase3_budget_hints"] = {
+                "enabled": False,
+                "deferred": True,
+                "source": hints.get("source") or "phase3_runtime_policy",
+                "reason": "phase3_deferred_early_trajectory",
+                "online_activation_guard": guard,
+            }
+            return cfg
+
+    if not cfg_was_enabled:
+        cfg["enabled"] = True
+
+    fill_values = {
+        "max_request_input_tokens": _to_int(
+            hints.get("max_request_input_tokens"), 0
+        ),
+        "warn_ratio": _to_float(hints.get("warn_ratio"), 0.0),
+        "critical_ratio": _to_float(hints.get("critical_ratio"), 0.0),
+        "critical_max_completion_tokens": _to_int(
+            hints.get("critical_max_completion_tokens"), 0
+        ),
+        "hint_max_chars": _to_int(hints.get("hint_max_chars"), 0),
+    }
+    for key, value in fill_values.items():
+        if value <= 0:
+            continue
+        current = cfg.get(key)
+        if not cfg_was_enabled:
+            cfg[key] = value
+            continue
+        if key == "critical_max_completion_tokens" and key in cfg:
+            # For completion caps, an explicit 0 means "do not cap the model's
+            # next answer". Phase 3 may still inject budget hints, but it must
+            # not convert that explicit opt-out into a hidden output cap.
+            continue
+        if _to_float(current, 0.0) <= 0:
+            cfg[key] = value
+
+    hint_style = str(hints.get("hint_style") or "").strip()
+    if hint_style and (not cfg_was_enabled or not str(cfg.get("hint_style") or "").strip()):
+        cfg["hint_style"] = hint_style
+
+    cfg["_phase3_budget_hints"] = {
+        "enabled": True,
+        "source": hints.get("source") or "phase3_runtime_policy",
+        "max_request_input_tokens": cfg.get("max_request_input_tokens"),
+        "selection": hints.get("selection") if isinstance(hints.get("selection"), dict) else {},
+    }
+    return cfg
 
 
 def _stringify_for_budget(value: Any) -> str:
@@ -99,6 +251,150 @@ def estimate_request_input_tokens(request_data: dict[str, Any]) -> int:
             char_count += len(_stringify_for_budget(request_data.get(key)))
 
     return max(0, (char_count + 3) // 4)
+
+
+def count_request_tool_results(request_data: dict[str, Any]) -> int:
+    if not isinstance(request_data, dict):
+        return 0
+    messages = request_data.get("messages")
+    if not isinstance(messages, list):
+        return 0
+    return sum(
+        1
+        for message in messages
+        if isinstance(message, dict) and message.get("role") == "tool"
+    )
+
+
+def _phase3_activation_guard(
+    request_data: dict[str, Any],
+    *,
+    cost_down_cfg: Optional[dict[str, Any]] = None,
+    env_key_prefix: str,
+    cfg_key_prefix: str,
+    default_min_input_tokens: int,
+    default_min_tool_results: int,
+    deferred_reason: str,
+) -> dict[str, Any]:
+    cfg = dict(cost_down_cfg) if isinstance(cost_down_cfg, dict) else dict(_cfg())
+    phase3 = cfg.get("phase3_runtime")
+    phase3 = phase3 if isinstance(phase3, dict) else {}
+    runtime_enabled = _phase3_runtime_enabled(cfg)
+    runtime_defaults = _phase3_runtime_defaults_from_policy(cfg)
+    guard_key = f"{cfg_key_prefix}_guard"
+    min_input_key = f"{cfg_key_prefix}_min_input_tokens"
+    min_tool_key = f"{cfg_key_prefix}_min_tool_results"
+    guard_enabled = _env_bool(
+        f"{env_key_prefix}_GUARD",
+        _to_bool(
+            phase3.get(guard_key),
+            _to_bool(runtime_defaults.get(guard_key), False),
+        ),
+    )
+    estimated_input_tokens = estimate_request_input_tokens(request_data)
+    tool_results = count_request_tool_results(request_data)
+    min_input_tokens = _to_int(
+        os.getenv(f"{env_key_prefix}_MIN_INPUT_TOKENS"),
+        _to_int(
+            phase3.get(min_input_key),
+            _to_int(runtime_defaults.get(min_input_key), default_min_input_tokens),
+        ),
+    )
+    min_tool_results = _to_int(
+        os.getenv(f"{env_key_prefix}_MIN_TOOL_RESULTS"),
+        _to_int(
+            phase3.get(min_tool_key),
+            _to_int(runtime_defaults.get(min_tool_key), default_min_tool_results),
+        ),
+    )
+
+    enabled = bool(runtime_enabled and guard_enabled)
+    if not enabled:
+        met = True
+        reason = "disabled"
+    else:
+        token_met = min_input_tokens > 0 and estimated_input_tokens >= min_input_tokens
+        tool_met = min_tool_results > 0 and tool_results >= min_tool_results
+        met = token_met or tool_met or (
+            min_input_tokens <= 0 and min_tool_results <= 0
+        )
+        reason = "activated" if met else deferred_reason
+
+    return {
+        "enabled": enabled,
+        "met": met,
+        "reason": reason,
+        "estimated_input_tokens": estimated_input_tokens,
+        "tool_results": tool_results,
+        "min_input_tokens": min_input_tokens,
+        "min_tool_results": min_tool_results,
+    }
+
+
+def phase3_online_activation_guard(
+    request_data: dict[str, Any],
+    *,
+    cost_down_cfg: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    """Decide whether Phase 3 online hints have enough trajectory to act.
+
+    Short coding tasks are very sensitive to early prompts. This guard lets
+    budget/tool feedback wait until the agent has enough evidence for the hint
+    to be worth the behavioral risk.
+    """
+
+    return _phase3_activation_guard(
+        request_data,
+        cost_down_cfg=cost_down_cfg,
+        env_key_prefix="ARBITEROS_COST_DOWN_PHASE3_ONLINE_ACTIVATION",
+        cfg_key_prefix="online_activation",
+        default_min_input_tokens=16000,
+        default_min_tool_results=8,
+        deferred_reason="phase3_deferred_early_trajectory",
+    )
+
+
+def phase3_compression_activation_guard(
+    request_data: dict[str, Any],
+    *,
+    cost_down_cfg: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    """Decide whether Phase 3 compression has enough trajectory to act.
+
+    Compression can safely start earlier than budget/tool feedback because it
+    changes evidence length, not the agent's next-step instructions.
+    """
+
+    return _phase3_activation_guard(
+        request_data,
+        cost_down_cfg=cost_down_cfg,
+        env_key_prefix="ARBITEROS_COST_DOWN_PHASE3_COMPRESSION_ACTIVATION",
+        cfg_key_prefix="compression_activation",
+        default_min_input_tokens=9000,
+        default_min_tool_results=5,
+        deferred_reason="phase3_deferred_early_compression",
+    )
+
+
+def apply_phase3_runtime_policy_to_request(
+    request_data: dict[str, Any],
+    *,
+    trace_id: Optional[str],
+    llm_compressor: LLMCompressor | None = None,
+    global_instructions: Optional[list[dict[str, Any]]] = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Apply Cost Doctor Phase 3 runtime compression to an outgoing request."""
+
+    from arbiteros_kernel.cost.phase3_compression import (
+        apply_phase3_runtime_compression,
+    )
+
+    return apply_phase3_runtime_compression(
+        request_data,
+        trace_id=trace_id,
+        llm_compressor=llm_compressor,
+        global_instructions=global_instructions,
+    )
 
 
 def _ratio(observed: float, threshold: float) -> float:
@@ -153,6 +449,9 @@ def _build_metrics(
         "trace_instruction_bytes": instruction_bytes,
         "trace_instruction_count": instruction_count,
     }
+    phase3_budget_hints = cfg.get("_phase3_budget_hints")
+    if isinstance(phase3_budget_hints, dict):
+        metrics["phase3_budget_hints"] = dict(phase3_budget_hints)
     _metric(
         metrics,
         key="token_budget",
@@ -216,6 +515,83 @@ def _fmt_usd(value: Any) -> str:
     return f"${_to_float(value):.6f}"
 
 
+def _metric_ratio(metrics: dict[str, Any], name: str) -> float:
+    value = metrics.get(name)
+    if not isinstance(value, dict):
+        return 0.0
+    return _to_float(value.get("ratio"))
+
+
+def _build_compact_cost_down_hint(
+    *,
+    level: str,
+    reason: str,
+    metrics: dict[str, Any],
+    max_chars: int,
+) -> str:
+    request_tokens = _fmt_int(metrics.get("request_estimated_input_tokens"))
+    token_ratio = _metric_ratio(metrics, "token_budget")
+    request_ratio = _metric_ratio(metrics, "request_input_budget")
+    pressure = max(token_ratio, request_ratio)
+    pressure_text = f"{pressure:.2f}x" if pressure > 0 else "n/a"
+    lines = [
+        _MARKER,
+        (
+            f"Budget pressure {level}: {reason}; request~{request_tokens} "
+            f"input tokens; pressure={pressure_text}."
+        ),
+        (
+            "Act cost-aware: if evidence is sufficient, finish now; otherwise "
+            "make exactly one narrow tool call and avoid broad logs/retries."
+        ),
+    ]
+    if level == "critical":
+        lines.append(
+            "Critical: prefer final patch/answer over more exploration unless blocked."
+        )
+    hint = "\n".join(lines)
+    if max_chars > 0 and len(hint) > max_chars:
+        return hint[: max_chars - 3].rstrip() + "..."
+    return hint
+
+
+def _build_focused_cost_down_hint(
+    *,
+    level: str,
+    reason: str,
+    metrics: dict[str, Any],
+    max_chars: int,
+) -> str:
+    request_tokens = _fmt_int(metrics.get("request_estimated_input_tokens"))
+    token_ratio = _metric_ratio(metrics, "token_budget")
+    request_ratio = _metric_ratio(metrics, "request_input_budget")
+    pressure = max(token_ratio, request_ratio)
+    pressure_text = f"{pressure:.2f}x" if pressure > 0 else "n/a"
+    lines = [
+        _MARKER,
+        (
+            f"Budget pressure {level}: {reason}; request~{request_tokens} "
+            f"input tokens; pressure={pressure_text}."
+        ),
+        (
+            "Correctness first. Reduce cost by batching related cheap checks, "
+            "reading only targeted files/log slices, and avoiding repeated probes."
+        ),
+        (
+            "When patch plus focused verification is enough, stop exploring and "
+            "submit/finalize with concise evidence."
+        ),
+    ]
+    if level == "critical":
+        lines.append(
+            "Critical: do only the next highest-value check, then decide."
+        )
+    hint = "\n".join(lines)
+    if max_chars > 0 and len(hint) > max_chars:
+        return hint[: max_chars - 3].rstrip() + "..."
+    return hint
+
+
 def build_cost_down_hint(
     *,
     trace_id: Optional[str],
@@ -223,7 +599,24 @@ def build_cost_down_hint(
     reason: str,
     metrics: dict[str, Any],
     max_chars: int,
+    style: str = "standard",
 ) -> str:
+    normalized_style = style.strip().lower()
+    if normalized_style in {"compact", "short", "brief"}:
+        return _build_compact_cost_down_hint(
+            level=level,
+            reason=reason,
+            metrics=metrics,
+            max_chars=max_chars,
+        )
+    if normalized_style in {"focused", "balanced"}:
+        return _build_focused_cost_down_hint(
+            level=level,
+            reason=reason,
+            metrics=metrics,
+            max_chars=max_chars,
+        )
+
     token_budget = metrics.get("token_budget")
     cost_budget = metrics.get("cost_budget")
     bytes_budget = metrics.get("instruction_bytes_budget")
@@ -299,11 +692,32 @@ def apply_cost_down_to_request(
     policy_runtime_context: dict[str, Any],
     inject_system_hint: Callable[[dict[str, Any], str, str], dict[str, Any]],
 ) -> tuple[dict[str, Any], CostDownDecision]:
-    cfg = _cfg()
+    cfg = _effective_cfg(request_data)
     if not bool(cfg.get("enabled", True)):
         return request_data, CostDownDecision(False, "disabled", "", "", {})
 
     metrics = _build_metrics(request_data, policy_runtime_context, cfg)
+    phase3_budget_hints = metrics.get("phase3_budget_hints")
+    if (
+        isinstance(phase3_budget_hints, dict)
+        and _to_bool(phase3_budget_hints.get("enabled"), False)
+    ):
+        guard = phase3_online_activation_guard(request_data, cost_down_cfg=cfg)
+        if guard.get("enabled") and not guard.get("met"):
+            metrics = dict(metrics)
+            deferred_hints = dict(phase3_budget_hints)
+            deferred_hints["deferred"] = True
+            deferred_hints["reason"] = guard.get("reason")
+            deferred_hints["online_activation_guard"] = guard
+            metrics["phase3_budget_hints"] = deferred_hints
+            return request_data, CostDownDecision(
+                False,
+                "deferred",
+                str(guard.get("reason") or "phase3_deferred_early_trajectory"),
+                "",
+                metrics,
+            )
+
     should_apply, level, reason = _should_apply(metrics)
     if not should_apply:
         return request_data, CostDownDecision(False, level, reason, "", metrics)
@@ -314,12 +728,27 @@ def apply_cost_down_to_request(
         reason=reason,
         metrics=metrics,
         max_chars=_to_int(cfg.get("hint_max_chars"), 900),
+        style=str(cfg.get("hint_style") or "standard"),
     )
     data = inject_system_hint(request_data, hint, _MARKER)
     cap_applied: Optional[int] = None
     if level == "critical":
         cap = _to_int(cfg.get("critical_max_completion_tokens"), 0)
         data, cap_applied = _apply_completion_cap(data, cap)
+    metadata = data.get("metadata") if isinstance(data, dict) else None
+    metadata = dict(metadata) if isinstance(metadata, dict) else {}
+    metadata["arbiteros_cost_down_hint"] = {
+        "level": level,
+        "reason": reason,
+        "trace_id": trace_id,
+        "max_completion_tokens_applied": cap_applied,
+        "metrics": {
+            "request_estimated_input_tokens": metrics.get("request_estimated_input_tokens"),
+            "phase3_budget_hints": metrics.get("phase3_budget_hints"),
+            "request_input_budget": metrics.get("request_input_budget"),
+        },
+    }
+    data["metadata"] = metadata
 
     return data, CostDownDecision(
         True,
@@ -333,7 +762,12 @@ def apply_cost_down_to_request(
 
 __all__ = [
     "CostDownDecision",
+    "apply_agent_scaffold_compaction_to_request",
+    "apply_phase3_runtime_policy_to_request",
     "apply_cost_down_to_request",
     "build_cost_down_hint",
+    "count_request_tool_results",
     "estimate_request_input_tokens",
+    "phase3_compression_activation_guard",
+    "phase3_online_activation_guard",
 ]
