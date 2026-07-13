@@ -4,8 +4,7 @@ Registries are loaded from YAML definitions in the dsl/ subdirectory via the
 DSL engine.  The three agent-specific registries are built at import time and
 exposed for backwards-compatible access.
 
-Agent selection: ``arbiteros_config.tool_agent`` in ``litellm_config.yaml``
-(``openclaw`` | ``nanobot`` | ``hermes`` | ``codex`` | ``claude_code``), or env ``ARBITEROS_TOOL_AGENT``. Default: openclaw.
+Agent selection: request ``route_model;agent_name;role`` and ``agents/*.yaml``.
 """
 
 import logging
