@@ -11,6 +11,7 @@ This folder contains the core technical documentation for ArbiterOS Kernel desig
 | `registry_usage.md` | Registry YAML model (`exe_registry`, `exe_risk`, `file_trustworthiness`, `file_confidentiality`), lookup order, and automatic taint tracking. |
 | `agent_insturctions_design.md` | Canonical instruction taxonomy (COGNITIVE/ACTUATION/PERCEPTION) and safety metadata model (trust, risk, confidentiality, authority). |
 | `add_new_agent.md` | Practical guide for adding a new agent tool parser/registry and wiring runtime selection + policy aliases. |
+| `multi_agent_routing.md` | Multi-agent setup: `litellm_config.yaml`, `agents/*.yaml`, and `route_model;agent_name;role` request format. |
 | `visualization.md` | Langfuse governance UI guide: Home/Tracing/Analysis/Summary/Policy/Settings pages and policy refinement workflows. |
 
 ## Suggested Reading Paths
@@ -30,6 +31,10 @@ This folder contains the core technical documentation for ArbiterOS Kernel desig
 2. `agent_insturctions_design.md`
 3. `kernel-policy_interface.md`
 
-### 4) Operate and Inspect Governance in UI
+### 4) Run Multiple Agent Types on One Kernel
+1. `multi_agent_routing.md`
+2. `ArbiterOS-Kernel/README.md`
+
+### 5) Operate and Inspect Governance in UI
 1. `visualization.md`
 2. `kernel.md`
