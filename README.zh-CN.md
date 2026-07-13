@@ -42,20 +42,20 @@ ArbiterOS 不是另一个 Agent Framework。它是一个面向 Agent 系统的�
 
 ## 支持的接入方式
 
-ArbiterOS Kernel 当前最适合接入能够按请求或按配置覆盖模型端点的 Agent 运行时。
+ArbiterOS Kernel 最适合接入能够按请求覆盖模型端点和 **model 名称** 的 Agent 运行时。
 
-- 当前仓库内已覆盖或显式支持的方向：`OpenClaw`、`Nanobot`、`Hermes Agent`，以及 Kernel 代码中已映射的其他 parser 形态。
+- 支持的 agent 类型：`openclaw`、`nanobot`、`hermes`、`codex`、`claude_code`（一个 Kernel 可同时服务多种）。
 - 兼容的服务形态：OpenAI-compatible / LiteLLM-compatible routing。
 - Kernel 启动后的默认本地端点：`http://127.0.0.1:4000/v1`
 
 ## 快速看到价值
 
-最快的体验路径是：
-
 1. 安装并启动 `ArbiterOS-Kernel`。
-2. 在 `ArbiterOS-Kernel/litellm_config.yaml` 中配置一个上游模型。
-3. 将 Agent 运行时指向 `http://127.0.0.1:4000/v1`。
-4. 运行一个会调用工具的任务，查看生成的轨迹、策略决策和运行时日志。
+2. 将 `ArbiterOS-Kernel/litellm_config.yaml.example` 复制为 `litellm_config.yaml` 并填写上游模型。
+3. 将 Agent 指向 `http://127.0.0.1:4000/v1`，`model` 设为 `{route_model};{agent_name}`（例如 `gpt-5.5;codex`）。
+4. 运行会调用工具的任务，在 `ArbiterOS-Kernel/log/` 下查看轨迹。
+
+多 Agent 配置详见 [ArbiterOS-Kernel/README.md](./ArbiterOS-Kernel/README.md) 与 [assets/docs/multi_agent_routing.md](./assets/docs/multi_agent_routing.md)。
 
 ## 基准结果
 
@@ -121,11 +121,11 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 
 ### 接入你的 Agent 运行时
 
-Kernel 启动后，会自动：
+1. 将 `ArbiterOS-Kernel/litellm_config.yaml.example` 复制为 `litellm_config.yaml` 并添加模型。
+2. 将 Agent 指向 `http://127.0.0.1:4000/v1`。
+3. 将 `model` 设为 `{route_model};{agent_name}`（例如 `gpt-5.5;codex`、`claude-sonnet-4-5-20250929;claude_code`）。
 
-1. 编辑 `ArbiterOS-Kernel/litellm_config.yaml`，填写上游模型、API Key 和 base URL。
-2. 将 Agent 运行时或 provider profile 指向 `http://127.0.0.1:4000/v1`。
-3. 运行一个会调用工具的任务，并在运行时日志或 Langfuse 中查看治理结果。
+配置细节见 [ArbiterOS-Kernel/README.md](./ArbiterOS-Kernel/README.md) 与 [多 Agent 路由](./assets/docs/multi_agent_routing.md)。
 
 ## 可选：Langfuse UI
 
@@ -137,10 +137,12 @@ docker compose -f docker-compose.yml up -d --build
 
 ## 文档
 
+- Kernel 安装与运行：`ArbiterOS-Kernel/README.md`
+- 多 Agent 路由：`assets/docs/multi_agent_routing.md`
 - Kernel 架构：`assets/docs/kernel.md`
 - 策略接口：`assets/docs/kernel-policy_interface.md`
 - Registry 与污点标签：`assets/docs/registry_usage.md`
-- 新 Agent 接入：`assets/docs/add_new_agent.md`
+- 新 Agent parser 接入：`assets/docs/add_new_agent.md`
 - 可视化说明：`assets/docs/visualization.md`
 - 文档索引：`assets/docs/README.md`
 
