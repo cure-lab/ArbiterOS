@@ -89,7 +89,7 @@ def test_is_chat_gateway_tool_agent():
 def test_build_device_context_uses_message_id_for_openclaw(monkeypatch):
     from arbiteros_kernel import litellm_callback as lc
 
-    monkeypatch.setattr(lc, "_read_tool_agent_from_litellm_config", lambda: "openclaw")
+    monkeypatch.setattr(lc, "_get_request_agent_name", lambda incoming=None: "openclaw")
     monkeypatch.setattr(lc, "_sync_trace_state_from_disk", lambda: None)
 
     incoming = {
@@ -116,7 +116,7 @@ def test_build_device_context_uses_message_id_for_openclaw(monkeypatch):
 def test_build_device_context_distinguishes_two_openclaw_sessions(monkeypatch):
     from arbiteros_kernel import litellm_callback as lc
 
-    monkeypatch.setattr(lc, "_read_tool_agent_from_litellm_config", lambda: "openclaw")
+    monkeypatch.setattr(lc, "_get_request_agent_name", lambda incoming=None: "openclaw")
     monkeypatch.setattr(lc, "_sync_trace_state_from_disk", lambda: None)
 
     first = lc._build_device_context(
