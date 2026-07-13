@@ -44,6 +44,12 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.pretty import Pretty
 
+from arbiteros_kernel.chat_agent_session import (
+    build_user_id_from_session_anchor,
+    extract_runtime_channel_from_messages,
+    extract_session_anchor_from_messages,
+    is_chat_gateway_tool_agent,
+)
 from arbiteros_kernel.langfuse_env import ensure_langfuse_env_compat
 from arbiteros_kernel.policy.alignment_trigger import (
     should_trigger_postexec_sentinel,
@@ -3147,6 +3153,16 @@ def _build_device_context(incoming: dict) -> _DeviceContext:
         has_explicit_user_id = True
         if channel == "unknown-channel":
             channel = "claude_code"
+    elif is_chat_gateway_tool_agent(tool_agent):
+        if channel == "unknown-channel":
+            runtime_channel = extract_runtime_channel_from_messages(messages)
+            if runtime_channel:
+                channel = _normalize_device_fragment(runtime_channel)
+        if not has_explicit_user_id:
+            session_anchor = extract_session_anchor_from_messages(messages)
+            if session_anchor:
+                raw_user_id = build_user_id_from_session_anchor(session_anchor)
+                has_explicit_user_id = True
 
     normalized_user_cmd = (latest_user_text or "").strip().lower()
     reset_requested = (
