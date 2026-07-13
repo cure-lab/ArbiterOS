@@ -10,6 +10,11 @@ model_list:
       model: gpt-5.5
       api_key: os.environ/ARBITEROS_UPSTREAM_API_KEY
       api_base: https://your-provider.example/v1
+  - model_name: gpt-5.2-chat-latest
+    litellm_params:
+      model: gpt-5.2-chat-latest
+      api_key: os.environ/ARBITEROS_UPSTREAM_API_KEY
+      api_base: https://your-provider.example/v1
 
 response_format:
   type: json_schema
