@@ -36,12 +36,13 @@ cd ArbiterOS-Kernel
 uv sync --group dev
 ```
 
-**2 Set Config**: Edit `litellm_config.yaml` to add your models. Each entry under `model_list` should specify:
+**2 Set Config**: Copy `litellm_config.yaml.example` to `litellm_config.yaml` and add upstream models under `model_list`. Each entry:
 
-- `**model_name`**: ID exposed to clients (used in OpenClaw as `models[].id`)
-- `**litellm_params.model`**: LiteLLM format, e.g. `openai/gpt-5.2`
-- `**litellm_params.api_key`**: Your API key for the upstream provider
-- `**litellm_params.api_base`**:  API base URL
+- **`model_name`**: route name clients use as the first segment of `model` (e.g. `gpt-5.5` in `gpt-5.5;codex`)
+- **`litellm_params.model`**: LiteLLM upstream id, e.g. `openai/gpt-5.2`
+- **`litellm_params.api_key`** / **`api_base`**: upstream credentials
+
+**Multi-agent**: clients must send `model` as `{route_model};{agent_name}` (optional `;role`). Per-agent behavior is in `agents/*.yaml`. See [`../assets/docs/multi_agent_routing.md`](../assets/docs/multi_agent_routing.md).
 
 **Skill trust (optional)** — When classifying path trustworthiness, the kernel can run [cisco-ai-skill-scanner](https://pypi.org/project/cisco-ai-skill-scanner/) to analyze scan the skill before use them if you finish this following 3 steps.
 
@@ -149,9 +150,9 @@ uv run poe litellm
 
 You need [OpenClaw](https://docs.openclaw.ai/) installed first. Then add a local provider in your `openclaw.json` that points at the proxy. See [Model Providers – Local proxies (LM Studio, vLLM, LiteLLM, etc.)](https://docs.openclaw.ai/concepts/model-providers#local-proxies-lm-studio-vllm-litellm-etc).
 
-1. Ensure the proxy is running (`uv run poe litellm`) and the model you want is defined in `litellm_config.yaml`.
-2. In `openclaw.json`, under `models.providers`, add a provider with `baseUrl: "http://127.0.0.1:4000/v1"` and list the proxy’s model IDs in `models` (use the `model_name` from `litellm_config.yaml`, e.g. `gpt-5.2`).
-3. Set `agents.defaults.model.primary` to `"<providerId>/<modelId>"` (e.g. `arbiteros/gpt-5.2` if the provider key is `arbiteros`).
+1. Ensure the proxy is running (`uv run poe litellm`) and the model route is in `litellm_config.yaml`.
+2. In `openclaw.json`, under `models.providers`, add a provider with `baseUrl: "http://127.0.0.1:4000/v1"` and list model IDs as `{route_model};openclaw` (e.g. `gpt-5.2;openclaw`).
+3. Set `agents.defaults.model.primary` to `"<providerId>/<modelId>"` (e.g. `arbiteros/gpt-5.2;openclaw`).
 4. After configuration, restart OpenClaw. In the UI, set **Model/auth provider** to **Skip for now** and **Filter models by provider** to `arbiteros` (or whatever provider name you used in `openclaw.json`).
 
 Example snippet (full example: `config_example/openclaw.json`):
@@ -167,7 +168,7 @@ Example snippet (full example: `config_example/openclaw.json`):
         "authHeader": false,
         "models": [
           {
-            "id": "gpt-5.2",
+            "id": "gpt-5.2;openclaw",
             "name": "GPT-5.2",
             "reasoning": false,
             "input": ["text"],
@@ -189,7 +190,7 @@ Example snippet (full example: `config_example/openclaw.json`):
   },
   "agents": {
     "defaults": {
-      "model": { "primary": "arbiteros/gpt-5.2" }
+      "model": { "primary": "arbiteros/gpt-5.2;openclaw" }
     }
   }
 }
