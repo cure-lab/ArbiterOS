@@ -44,6 +44,13 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.pretty import Pretty
 
+from arbiteros_kernel.agent_registry import (
+    agent_name_from_request_data,
+    copy_global_response_format,
+    resolve_upstream_compat_flags as _resolve_upstream_compat_flags_for_agent,
+    set_request_agent,
+    validate_request_route,
+)
 from arbiteros_kernel.chat_agent_session import (
     build_user_id_from_session_anchor,
     extract_runtime_channel_from_messages,
@@ -63,6 +70,7 @@ from arbiteros_kernel.policy_check import (
     check_response_policy,
     is_local_policy_confirm_enabled,
     resolve_role_policy_enabled_override,
+    split_model_agent_role,
     split_model_and_role,
 )
 from arbiteros_kernel.precall_policy_check import check_precall_policy
@@ -612,16 +620,24 @@ def _read_litellm_config_yaml() -> dict[str, Any]:
 
 
 def _lookup_response_format_from_litellm_config(model: str) -> Optional[dict[str, Any]]:
-    """Resolve ``response_format`` from ``litellm_config.yaml`` model_list for *model*."""
+    """Resolve global ``response_format`` from ``litellm_config.yaml``."""
+    _ = model
+    cfg = _read_litellm_config_yaml()
+    if not isinstance(cfg, dict):
+        return None
+    global_rf = copy_global_response_format(cfg)
+    if global_rf is not None:
+        return global_rf
+
+    # Legacy fallback: per-model response_format in model_list.
     requested = (model or "").strip()
     if not requested:
         return None
-    base_model, _role = split_model_and_role(requested)
+    route_model, _, _ = split_model_agent_role(requested)
     candidates = {requested}
-    if isinstance(base_model, str) and base_model.strip():
-        candidates.add(base_model.strip())
-    cfg = _read_litellm_config_yaml()
-    model_list = cfg.get("model_list") if isinstance(cfg, dict) else None
+    if isinstance(route_model, str) and route_model.strip():
+        candidates.add(route_model.strip())
+    model_list = cfg.get("model_list")
     if not isinstance(model_list, list):
         return None
     for entry in model_list:
@@ -690,16 +706,8 @@ def _read_skill_scanner_llm_triple_from_litellm_config() -> tuple[Optional[str],
     return None, None, None
 
 
-def _read_tool_agent_from_litellm_config() -> Optional[str]:
-    cfg = _read_litellm_config_yaml()
-    arb_cfg = cfg.get("arbiteros_config") if isinstance(cfg, dict) else {}
-    if not isinstance(arb_cfg, dict):
-        return None
-    raw_tool_agent = arb_cfg.get("tool_agent")
-    if not isinstance(raw_tool_agent, str):
-        return None
-    normalized = raw_tool_agent.strip().lower()
-    return normalized or None
+def _get_request_agent_name(incoming: Optional[dict] = None) -> Optional[str]:
+    return agent_name_from_request_data(incoming)
 
 
 def _precall_log_enabled_from_litellm_config() -> bool:
@@ -715,8 +723,8 @@ def _precall_log_enabled_from_litellm_config() -> bool:
 def _normalize_model_name_for_compat(raw_model: Any) -> str:
     if not isinstance(raw_model, str):
         return ""
-    parsed_model, _ = split_model_and_role(raw_model)
-    model_name = parsed_model if isinstance(parsed_model, str) and parsed_model else raw_model
+    route_model, _, _ = split_model_agent_role(raw_model)
+    model_name = route_model if isinstance(route_model, str) and route_model else raw_model
     return _upstream_model_name_for_chat_api(model_name.strip())
 
 
@@ -732,56 +740,12 @@ def _model_matches_compat_rule(rule_value: Any, normalized_model: str) -> bool:
     return False
 
 
-def _resolve_upstream_compat_flags(model: Any) -> dict[str, bool]:
-    """
-    Resolve upstream compatibility flags for the current request model.
-
-    Supports both:
-    - new format: arbiteros_config.upstream_compat.rules[]
-    - legacy format: arbiteros_config.upstream_compat.<flag>_for[]
-    """
-    defaults = {
-        "strip_metadata": False,
-        "force_non_stream": False,
-        "prefer_chat_completions": False,
-    }
-    normalized_model = _normalize_model_name_for_compat(model)
-    if not normalized_model:
-        return defaults
-
-    cfg = _read_litellm_config_yaml()
-    arb_cfg = cfg.get("arbiteros_config") if isinstance(cfg, dict) else {}
-    if not isinstance(arb_cfg, dict):
-        return defaults
-    compat_cfg = arb_cfg.get("upstream_compat")
-    if not isinstance(compat_cfg, dict):
-        return defaults
-    if compat_cfg.get("enabled") is False:
-        return defaults
-
-    resolved = dict(defaults)
-    rules = compat_cfg.get("rules")
-    if isinstance(rules, list):
-        for rule in rules:
-            if not isinstance(rule, dict):
-                continue
-            if not _model_matches_compat_rule(rule.get("match_model"), normalized_model):
-                continue
-            for key in resolved:
-                if isinstance(rule.get(key), bool):
-                    resolved[key] = resolved[key] or bool(rule.get(key))
-
-    # Backward-compatible shorthand flags.
-    shorthand_map = {
-        "strip_metadata_for": "strip_metadata",
-        "force_non_stream_for": "force_non_stream",
-        "force_chat_completions_for": "prefer_chat_completions",
-    }
-    for source_key, target_key in shorthand_map.items():
-        if _model_matches_compat_rule(compat_cfg.get(source_key), normalized_model):
-            resolved[target_key] = True
-
-    return resolved
+def _resolve_upstream_compat_flags(
+    model: Any,
+    *,
+    agent_name: Optional[str] = None,
+) -> dict[str, bool]:
+    return _resolve_upstream_compat_flags_for_agent(model, agent_name=agent_name)
 
 
 _ALIGNMENT_SENTINEL_POSTEXEC_PROMPT = """
@@ -2578,7 +2542,7 @@ def _inject_tool_depends_on_into_tools(
     instructions = _depends_on_instructions_for_trace(trace_id)
     next_step = len(instructions) + 1
     use_codex_wording = _is_responses_api_request(data)
-    use_claude_code_wording = _is_claude_code_tool_agent() and not use_codex_wording
+    use_claude_code_wording = _is_claude_code_tool_agent(data) and not use_codex_wording
     schema = _build_tool_depends_on_schema(
         prior_items,
         instructions,
@@ -2975,7 +2939,7 @@ def _extract_claude_code_scope_key(incoming: Any) -> Optional[str]:
 
 def _is_claude_code_duplicate_request(incoming: Any) -> bool:
     """Best-effort dedupe for Claude Code shadow retries of the same turn."""
-    if _read_tool_agent_from_litellm_config() != "claude_code":
+    if _get_request_agent_name(incoming) != "claude_code":
         return False
     if not isinstance(incoming, dict):
         return False
@@ -3090,7 +3054,7 @@ def _build_device_context(incoming: dict) -> _DeviceContext:
     messages = incoming.get("messages")
     if not isinstance(messages, list):
         messages = []
-    tool_agent = _read_tool_agent_from_litellm_config()
+    tool_agent = _get_request_agent_name(incoming)
     is_codex_agent = tool_agent == "codex"
     is_claude_code_agent = tool_agent == "claude_code"
     prompt_cache_key = _extract_prompt_cache_key(incoming) if is_codex_agent else None
@@ -6531,7 +6495,7 @@ def _apply_respond_text_depends_on(
             depends_on_raw=depends_on_raw,
         )
         return
-    if not read_depends_on_sidecar_enabled():
+    if not read_depends_on_sidecar_enabled(_get_request_agent_name(request_data)):
         _log_depends_on_sidecar_decision(trace_id, instr, "use_model_pending", reason="disabled")
         _apply_text_instruction_depends_on(
             builder,
@@ -6985,7 +6949,7 @@ def _should_skip_depends_on_sidecar_for_request(request_data: Any) -> bool:
     Narrower than ``_is_claude_code_aux_request``: non-streaming proxy requests and
     shadow dedupe markers must not suppress sidecar on the main committing request.
     """
-    if _read_tool_agent_from_litellm_config() != "claude_code":
+    if _get_request_agent_name(request_data) != "claude_code":
         return False
     if not isinstance(request_data, dict):
         return False
@@ -7019,7 +6983,7 @@ def _is_claude_code_aux_request(request_data: Any) -> bool:
     Detect Claude Code internal helper turns (recap/suggestion/shadow duplicate).
     These keep model IO intact but skip instruction accumulation; policy still runs.
     """
-    if _read_tool_agent_from_litellm_config() != "claude_code":
+    if _get_request_agent_name(request_data) != "claude_code":
         return False
     if not isinstance(request_data, dict):
         return False
@@ -7124,12 +7088,12 @@ def _add_instruction_for_non_strict(data: dict, content: str) -> None:
     )
 
 
-def _is_codex_tool_agent() -> bool:
-    return _read_tool_agent_from_litellm_config() == "codex"
+def _is_codex_tool_agent(incoming: Optional[dict] = None) -> bool:
+    return _get_request_agent_name(incoming) == "codex"
 
 
-def _is_claude_code_tool_agent() -> bool:
-    return _read_tool_agent_from_litellm_config() == "claude_code"
+def _is_claude_code_tool_agent(incoming: Optional[dict] = None) -> bool:
+    return _get_request_agent_name(incoming) == "claude_code"
 
 
 def _extract_codex_suffix_json_objects(content: str) -> tuple[str, list[dict[str, Any]]]:
@@ -8997,17 +8961,20 @@ class MyCustomHandler(CustomLogger):
     ]:  # raise exception if invalid, return a str for the user to receive - if rejected, or return a modified dictionary for passing into litellm
         if is_depends_on_sidecar_internal_request(data):
             return data
-        # Some upstreams (e.g. gpt-5.2-chat-latest) reject non-default temperature; clients often send 0.7.
         _m = data.get("model")
-        parsed_model, parsed_role_name = split_model_and_role(_m)
+        route_error, route_model, agent_name, parsed_role_name = validate_request_route(_m)
+        if route_error:
+            return route_error
+
+        data = {**data, "model": route_model}
+        set_request_agent(agent_name)
+
         role_policy_override: Optional[dict[str, bool]] = None
         role_policy_fallback_reason: Optional[str] = None
         role_policy_config_override: Optional[dict[str, Any]] = None
         role_policy_config_source: Optional[str] = None
         role_policy_config_fallback_reason: Optional[str] = None
-        if isinstance(parsed_model, str) and parsed_model and parsed_model != _m:
-            data = {**data, "model": parsed_model}
-        if isinstance(_m, str) and ";" in _m and not parsed_role_name:
+        if isinstance(_m, str) and _m.count(";") >= 2 and not parsed_role_name:
             role_policy_fallback_reason = "invalid_role_spec"
         if parsed_role_name:
             role_policy_override, role_policy_fallback_reason = (
@@ -9023,6 +8990,7 @@ class MyCustomHandler(CustomLogger):
         metadata_for_role = (
             dict(metadata_for_role) if isinstance(metadata_for_role, dict) else {}
         )
+        metadata_for_role["arbiteros_agent_name"] = agent_name or ""
         if parsed_role_name:
             metadata_for_role["arbiteros_role_name_requested"] = parsed_role_name
         else:
@@ -9347,7 +9315,10 @@ class MyCustomHandler(CustomLogger):
             )
             _save_json("pre_call", {"call_type": call_type, "incoming": filtered_data})
         _inject_tool_depends_on_into_tools(data, trace_id=trace_id_for_cache)
-        compat_flags = _resolve_upstream_compat_flags(data.get("model"))
+        compat_flags = _resolve_upstream_compat_flags(
+            data.get("model"),
+            agent_name=agent_name,
+        )
         metadata_for_backup = data.get("metadata") if isinstance(data, dict) else None
         if compat_flags.get("strip_metadata"):
             # Keep metadata for local backup/logical flow, but do not forward upstream
@@ -9371,7 +9342,7 @@ class MyCustomHandler(CustomLogger):
             precall_policy_result = check_precall_policy(
                 trace_id=trace_id_for_cache or "",
                 current_request=data,
-                tool_agent=_read_tool_agent_from_litellm_config(),
+                tool_agent=_get_request_agent_name(data),
             )
             data = precall_policy_result.request
         _save_precall_to_log(
