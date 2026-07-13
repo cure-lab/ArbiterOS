@@ -148,19 +148,19 @@ def test_invoke_depends_on_sidecar_failure_returns_empty():
 
 
 @patch(
-    "arbiteros_kernel.depends_on_sidecar._read_litellm_config_yaml",
-    return_value={"arbiteros_config": {"depends_on_sidecar": {"enabled": True}}},
+    "arbiteros_kernel.agent_registry.read_depends_on_sidecar_enabled_for_agent",
+    return_value=True,
 )
 def test_read_depends_on_sidecar_enabled_true(_mock_cfg):
-    assert read_depends_on_sidecar_enabled() is True
+    assert read_depends_on_sidecar_enabled("claude_code") is True
 
 
 @patch(
-    "arbiteros_kernel.depends_on_sidecar._read_litellm_config_yaml",
-    return_value={"arbiteros_config": {"depends_on_sidecar": {"enabled": False}}},
+    "arbiteros_kernel.agent_registry.read_depends_on_sidecar_enabled_for_agent",
+    return_value=False,
 )
 def test_read_depends_on_sidecar_enabled_false(_mock_cfg):
-    assert read_depends_on_sidecar_enabled() is False
+    assert read_depends_on_sidecar_enabled("openclaw") is False
 
 
 def test_apply_respond_text_depends_on_sidecar_override(monkeypatch):
@@ -185,7 +185,7 @@ def test_apply_respond_text_depends_on_sidecar_override(monkeypatch):
         "content": "hello back",
     }
 
-    monkeypatch.setattr(cb, "read_depends_on_sidecar_enabled", lambda: True)
+    monkeypatch.setattr(cb, "read_depends_on_sidecar_enabled", lambda *args, **kwargs: True)
     monkeypatch.setattr(
         cb,
         "invoke_depends_on_sidecar",
@@ -231,7 +231,7 @@ def test_apply_respond_text_depends_on_disabled_uses_pending(monkeypatch):
         "content": "hello back",
     }
 
-    monkeypatch.setattr(cb, "read_depends_on_sidecar_enabled", lambda: False)
+    monkeypatch.setattr(cb, "read_depends_on_sidecar_enabled", lambda *args, **kwargs: False)
     cb._set_pending_text_depends_on(
         "trace-2",
         [
@@ -257,7 +257,7 @@ def test_should_skip_depends_on_sidecar_ignores_non_stream_proxy_body(monkeypatc
     from arbiteros_kernel import litellm_callback as cb
 
     monkeypatch.setattr(
-        cb, "_read_tool_agent_from_litellm_config", lambda: "claude_code"
+        cb, "_get_request_agent_name", lambda incoming=None: "claude_code"
     )
     request_data = {
         "messages": [{"role": "user", "content": "你是谁"}],
@@ -270,7 +270,7 @@ def test_should_skip_depends_on_sidecar_title_turn(monkeypatch):
     from arbiteros_kernel import litellm_callback as cb
 
     monkeypatch.setattr(
-        cb, "_read_tool_agent_from_litellm_config", lambda: "claude_code"
+        cb, "_get_request_agent_name", lambda incoming=None: "claude_code"
     )
     request_data = {
         "messages": [
@@ -292,7 +292,7 @@ def test_should_skip_depends_on_sidecar_not_duplicate_shadow_retry(monkeypatch):
     from arbiteros_kernel import litellm_callback as cb
 
     monkeypatch.setattr(
-        cb, "_read_tool_agent_from_litellm_config", lambda: "claude_code"
+        cb, "_get_request_agent_name", lambda incoming=None: "claude_code"
     )
     request_data = {
         "model": "claude-sonnet-4-5-20250929",
@@ -328,9 +328,9 @@ def test_apply_respond_text_depends_on_non_stream_claude_code_invokes_sidecar(
         "content": "hello back",
     }
 
-    monkeypatch.setattr(cb, "read_depends_on_sidecar_enabled", lambda: True)
+    monkeypatch.setattr(cb, "read_depends_on_sidecar_enabled", lambda *args, **kwargs: True)
     monkeypatch.setattr(
-        cb, "_read_tool_agent_from_litellm_config", lambda: "claude_code"
+        cb, "_get_request_agent_name", lambda incoming=None: "claude_code"
     )
     monkeypatch.setattr(
         cb,
