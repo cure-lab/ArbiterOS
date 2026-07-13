@@ -61,15 +61,14 @@ def test_inject_depends_on_codex_description_uses_responses_wording():
     }
     _inject_tool_depends_on_into_tools(data)
     desc = data["tools"][0]["parameters"]["properties"]["depends_on"]["description"]
-    assert "function_call_output" in desc
-    assert "call_id" in desc
+    assert "TOOLRESULT" in desc
+    assert "call_abc" not in desc or "Allowed ids" in desc
     assert "role='tool'" not in desc
-    assert "call_abc (exec_command)" in desc
 
 
 def test_inject_depends_on_openclaw_description_uses_chat_wording(monkeypatch):
     monkeypatch.setattr(
-        lc, "_read_tool_agent_from_litellm_config", lambda: "openclaw"
+        lc, "_get_request_agent_name", lambda incoming=None: "openclaw"
     )
     data = {
         "model": "gpt-4",
@@ -79,8 +78,7 @@ def test_inject_depends_on_openclaw_description_uses_chat_wording(monkeypatch):
     _inject_tool_depends_on_into_tools(data)
     desc = data["tools"][0]["function"]["parameters"]["properties"]["depends_on"]["description"]
     assert "role='tool'" in desc
-    assert "tool_call_id" in desc
-    assert "function_call_output" not in desc
+    assert "TOOLRESULT" in desc
 
 
 def test_inject_depends_on_codex_flat_tool_schema():
@@ -97,7 +95,7 @@ def test_inject_depends_on_codex_flat_tool_schema():
 
 def test_inject_depends_on_openclaw_nested_tool_schema_unchanged(monkeypatch):
     monkeypatch.setattr(
-        lc, "_read_tool_agent_from_litellm_config", lambda: "openclaw"
+        lc, "_get_request_agent_name", lambda incoming=None: "openclaw"
     )
     data = {
         "model": "gpt-4",
@@ -279,7 +277,7 @@ def test_inject_depends_on_codex_non_function_tools():
 
     assert "parameters" not in tools[1]
     assert "[arbiteros_depends_on]" in tools[1]["description"]
-    assert "function_call_output" in tools[1]["description"]
+    assert "TOOLRESULT" in tools[1]["description"]
     assert tools[1].get("format") is not None
 
     assert "parameters" not in tools[2]
@@ -289,7 +287,7 @@ def test_inject_depends_on_codex_non_function_tools():
     assert "description" not in tools[3]
 
     assert "[arbiteros_depends_on]" in data["instructions"]
-    assert "function_call_output" in data["instructions"]
+    assert "TOOLRESULT" in data["instructions"]
 
 
 def test_inject_depends_on_all_codex_tools_from_precall_fixture():
