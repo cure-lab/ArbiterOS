@@ -42,15 +42,10 @@ def _read_litellm_config_yaml() -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
-def read_depends_on_sidecar_enabled() -> bool:
-    cfg = _read_litellm_config_yaml()
-    arb_cfg = cfg.get("arbiteros_config") if isinstance(cfg, dict) else {}
-    if not isinstance(arb_cfg, dict):
-        return False
-    block = arb_cfg.get("depends_on_sidecar")
-    if not isinstance(block, dict):
-        return False
-    return block.get("enabled") is True
+def read_depends_on_sidecar_enabled(agent_name: Optional[str] = None) -> bool:
+    from arbiteros_kernel.agent_registry import read_depends_on_sidecar_enabled_for_agent
+
+    return read_depends_on_sidecar_enabled_for_agent(agent_name)
 
 
 def is_depends_on_sidecar_internal_request(request_data: Any) -> bool:
