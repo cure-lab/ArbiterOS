@@ -1,0 +1,5 @@
+agent_name: hermes
+depends_on_sidecar:
+  enabled: false
+upstream_compat:
+  enabled: false
