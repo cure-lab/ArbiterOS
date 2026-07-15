@@ -57,8 +57,16 @@ uv sync --group dev
 **3 Run**:
 
 ```bash
+# Recommended product shell (starts Kernel if needed, then opens ArbiterOS TUI)
+uv run poe arbiteros
+
+# Original proxy-only mode (unchanged)
 uv run poe litellm
 ```
+
+- `poe arbiteros` **owns** the Kernel proxy: it frees `:4000` if needed, starts the proxy, then opens the shell (`list` / `attach <trace_id>` / `quit`). When you `quit`, the proxy is stopped too — so `running` / `offline` always match this session.
+- Original proxy-only mode remains: `uv run poe litellm`. To attach a TUI without owning that process: `uv run python -m arbiteros_kernel.tui --no-start-proxy`.
+- Proxy logs from the shell launcher go to `log/proxy.log` so the foreground stays clean.
 
 Proxy URL: [http://localhost:4000](http://localhost:4000). Send client requests there to use this proxy with the logging and kernel above.
 
