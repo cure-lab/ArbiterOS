@@ -124,6 +124,17 @@ def _prompt_local_policy_confirmation(
     """
     Return True to keep block, False to allow original response.
     """
+    try:
+        from arbiteros_kernel.tui_bridge import is_tui_mode, request_confirm_via_tui
+
+        if is_tui_mode():
+            return request_confirm_via_tui(
+                trace_id=trace_id,
+                error_type=error_type,
+                policy_names=policy_names,
+            )
+    except Exception:
+        pass
     with _LOCAL_CONFIRM_INPUT_LOCK:
         if _is_local_policy_confirm_test_mode():
             print(
