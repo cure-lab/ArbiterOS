@@ -36,6 +36,9 @@ run.parallel = ["mlflow", "litellm"]
 [tool.poe.tasks.litellm]
 sequence = ["warm-skills", "litellm-proxy"]
 
+[tool.poe.tasks.arbiteros]
+cmd = "uv run python -m arbiteros_kernel.tui"
+
 [tool.poe.tasks.langfuse_replay]
 cmd = "uv run python -m arbiteros_kernel.langfuse_replay --input log/api_calls.jsonl ${replay_args}"
 args = [{ name = "replay_args", positional = true, multiple = true }]
