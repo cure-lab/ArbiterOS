@@ -9068,6 +9068,13 @@ class MyCustomHandler(CustomLogger):
         if state is None:
             state, created_new_trace = _ensure_trace_state(context)
 
+        try:
+            from arbiteros_kernel.session_traces import register_trace
+
+            register_trace(state.trace_id if state is not None else None)
+        except Exception:
+            pass
+
         if isinstance(role_policy_fallback_reason, str) and role_policy_fallback_reason:
             _save_json(
                 "role_policy_fallback",
