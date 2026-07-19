@@ -102,6 +102,7 @@ from arbiteros_kernel.instruction_depends_on import (
     build_tool_depends_on_description,
     builder_has_tool_result_for_call_id,
     find_instruction_id_by_tool_call_id,
+    find_tool_result_instruction_for_call_id,
     format_arbiteros_ref_marker,
     instruction_ref_kind,
     kernel_depends_on_tool_call,
@@ -109,6 +110,7 @@ from arbiteros_kernel.instruction_depends_on import (
     normalize_text_depends_on_raw,
     normalize_tool_depends_on_raw,
     resolve_depends_on_refs,
+    rewrite_toolcall_depends_on_to_toolresult,
     strip_arbiteros_ref_marker,
     strip_arbiteros_ref_markers,
 )
@@ -4597,6 +4599,39 @@ def _normalize_tool_result_content_for_dedupe(content: Any) -> str:
     return text.strip()
 
 
+def _stamp_toolresult_ref_on_stored_result(instr: dict[str, Any]) -> None:
+    """Persist ``[ARBITEROS_REF id=<self> kind=TOOLRESULT]`` on ``result.raw``.
+
+    Incoming wire text may carry a wrong/stale marker (e.g. TOOLCALL uuid). Always
+    rewrite with this TOOLRESULT instruction's own id before saving to disk.
+    """
+    if not isinstance(instr, dict):
+        return
+    instr_id = instr.get("id")
+    if not isinstance(instr_id, str) or not instr_id.strip():
+        return
+    content = instr.get("content")
+    if not isinstance(content, dict):
+        return
+    result = content.get("result")
+    if not isinstance(result, dict):
+        return
+    raw = result.get("raw")
+    if not isinstance(raw, str):
+        return
+    marker = format_arbiteros_ref_marker(instr_id.strip(), REF_KIND_TOOLRESULT)
+    body = strip_arbiteros_ref_markers(raw)
+    # Preserve a leading taint line if one was already stored in raw.
+    if body.startswith("[ARBITEROS_TAINT"):
+        taint_end = body.find("]\n")
+        if taint_end != -1:
+            taint_prefix = body[: taint_end + 2]
+            rest = body[taint_end + 2 :]
+            result["raw"] = taint_prefix + marker + rest
+            return
+    result["raw"] = marker + body
+
+
 def _register_tool_result_emitted(
     state: _TraceState, tool_call_id: Optional[str]
 ) -> None:
@@ -5025,8 +5060,13 @@ def _emit_tool_result_nodes_if_needed(request_data: dict, state: _TraceState) ->
         )
         parsed_result: Optional[dict[str, Any]] = None
         if isinstance(content, str) and content.strip():
-            parsed = _safe_json_loads(content)
-            parsed_result = parsed if isinstance(parsed, dict) else {"raw": content}
+            cleaned_content = _normalize_tool_result_content_for_dedupe(content)
+            parsed = _safe_json_loads(cleaned_content)
+            parsed_result = (
+                parsed
+                if isinstance(parsed, dict)
+                else {"raw": cleaned_content or content}
+            )
 
         parser_snapshot: dict[str, Any] = {}
         policy_protected_reason: Optional[str] = None
@@ -5064,6 +5104,7 @@ def _emit_tool_result_nodes_if_needed(request_data: dict, state: _TraceState) ->
                         result=parsed_result,
                     )
                     if isinstance(instr, dict):
+                        _stamp_toolresult_ref_on_stored_result(instr)
                         _set_instruction_depends_on(
                             builder,
                             instr,
@@ -6385,7 +6426,9 @@ def _set_instruction_depends_on(
         entries.extend(
             kernel_depends_on_tool_call(instructions, kernel_tool_call_id)
         )
-    instr["depends_on"] = _dedupe_depends_on_entries(entries)
+    instr["depends_on"] = rewrite_toolcall_depends_on_to_toolresult(
+        instructions, _dedupe_depends_on_entries(entries)
+    )
     if isinstance(depends_on_source, str) and depends_on_source.strip():
         source = depends_on_source.strip()
         for entry in instr["depends_on"]:
@@ -8573,11 +8616,18 @@ def _inject_ref_markers_into_messages(
             tc_id = msg.get("tool_call_id")
             if not isinstance(tc_id, str) or not tc_id.strip():
                 continue
-            instr_id = tool_result_id_to_instr_id.get(tc_id.strip())
+            # Prefer TOOLRESULT instruction only — never stamp a TOOLCALL uuid
+            # with kind=TOOLRESULT.
+            result_instr = find_tool_result_instruction_for_call_id(
+                instructions, tc_id.strip()
+            )
+            instr_id = None
+            if isinstance(result_instr, dict):
+                cand = result_instr.get("id")
+                if isinstance(cand, str) and cand.strip():
+                    instr_id = cand.strip()
             if not instr_id:
-                instr_id = find_instruction_id_by_tool_call_id(
-                    instructions, tc_id.strip(), prefer_with_result=True
-                )
+                instr_id = tool_result_id_to_instr_id.get(tc_id.strip())
             if not instr_id:
                 continue
             marker = format_arbiteros_ref_marker(instr_id, REF_KIND_TOOLRESULT)
@@ -8860,11 +8910,18 @@ def _inject_ref_markers_into_responses_input(
             call_id = item.get("call_id")
             if not isinstance(call_id, str) or not call_id.strip():
                 continue
-            instr_id = tool_result_id_to_instr_id.get(call_id.strip())
+            # Prefer TOOLRESULT instruction only — never stamp a TOOLCALL uuid
+            # with kind=TOOLRESULT.
+            result_instr = find_tool_result_instruction_for_call_id(
+                instructions, call_id.strip()
+            )
+            instr_id = None
+            if isinstance(result_instr, dict):
+                cand = result_instr.get("id")
+                if isinstance(cand, str) and cand.strip():
+                    instr_id = cand.strip()
             if not instr_id:
-                instr_id = find_instruction_id_by_tool_call_id(
-                    instructions, call_id.strip(), prefer_with_result=True
-                )
+                instr_id = tool_result_id_to_instr_id.get(call_id.strip())
             if not instr_id:
                 continue
             marker = format_arbiteros_ref_marker(instr_id, REF_KIND_TOOLRESULT)
@@ -9118,6 +9175,10 @@ class MyCustomHandler(CustomLogger):
                 user_messages=_extract_all_user_messages_from_request(data),
                 policy_enabled_override=role_policy_override,
             )
+        # Create TOOLRESULT instructions before stamping ARBITEROS_REF so
+        # function_call_output / role=tool markers use the TOOLRESULT uuid
+        # (not the parent TOOLCALL uuid).
+        _emit_tool_result_nodes_if_needed(data, state)
         data = _inject_ref_markers_into_messages(data, trace_id=trace_id_for_cache)
         data = _inject_ref_markers_into_responses_input(
             data, trace_id=trace_id_for_cache
@@ -9352,9 +9413,14 @@ class MyCustomHandler(CustomLogger):
             metadata=(metadata_for_backup if isinstance(metadata_for_backup, dict) else None),
         )
         if isinstance(data, dict):
+            builder = _get_instruction_builder_for_trace(trace_id_for_cache or "")
+            instructions_for_precall = (
+                list(getattr(builder, "instructions", [])) if builder else []
+            )
             precall_policy_result = check_precall_policy(
                 trace_id=trace_id_for_cache or "",
                 current_request=data,
+                instructions=instructions_for_precall,
                 tool_agent=_read_tool_agent_from_litellm_config(),
             )
             data = precall_policy_result.request
@@ -9924,6 +9990,22 @@ class MyCustomHandler(CustomLogger):
             metadata=(data.get("metadata") if isinstance(data, dict) else None),
         )
         _clear_pending_instruction_token_usage(_trace_id)
+        if isinstance(_trace_id, str) and _trace_id.strip():
+            try:
+                from arbiteros_kernel.precall_policy.cost_doctor_runtime import (
+                    cost_down_enabled,
+                    cost_down_phase,
+                    record_post_call_attribution,
+                )
+
+                if cost_down_enabled() and cost_down_phase() in {"B", "C", "D"}:
+                    _instructions_post = _depends_on_instructions_for_trace(_trace_id.strip())
+                    record_post_call_attribution(
+                        _trace_id.strip(),
+                        instructions=_instructions_post,
+                    )
+            except Exception:
+                pass
         return response
 
     async def async_post_call_streaming_hook(

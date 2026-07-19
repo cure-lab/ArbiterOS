@@ -76,6 +76,14 @@ arbiteros_local_policy_confirm: true
 arbiteros_local_policy_confirm_test_mode: false
 precall_log_enabled: true
 
+# Cost Doctor precall (optional; set env before starting litellm, e.g. in .env):
+#   ARBITEROS_COST_DOWN_RULE_ENGINE=/path/to/config/cost_down_rule_engine.json
+#   ARBITEROS_COST_DOWN_PHASE=D          # A=observe | B=DROP | C=+COMPRESS | D=+persist
+#   ARBITEROS_COST_DOWN_LIVE_POLICY_DIR=log/cost_down
+# Optional offline replay validation against a analyzed instance:
+#   ARBITEROS_COST_DOWN_VALIDATION_POLICY=/path/to/reports/.../cost_down/policy.json
+# Deprecated alias (rule engine only): ARBITEROS_COST_DOWN_POLICY
+
 litellm_settings:
   drop_params: true
   callbacks: arbiteros_kernel.litellm_callback.proxy_handler_instance

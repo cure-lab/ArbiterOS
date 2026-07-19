@@ -61,6 +61,71 @@ def test_inject_depends_on_schema_into_response_format():
     assert "counterfactual" in dep["items"]["properties"]
 
 
+def test_inject_responses_toolresult_ref_uses_toolresult_instruction_id():
+    """function_call_output ARBITEROS_REF id must be TOOLRESULT uuid, not TOOLCALL."""
+    from arbiteros_kernel.litellm_callback import (
+        _TraceState,
+        _emitted_tool_result_call_ids_by_trace,
+        _emit_tool_result_nodes_if_needed,
+        _inject_ref_markers_into_responses_input,
+    )
+
+    trace_id = "trace-toolresult-ref"
+    builder = InstructionBuilder(trace_id=trace_id)
+    builder.add_from_tool_call(
+        tool_name="terminal",
+        tool_call_id="call_abc",
+        arguments={"command": "ls"},
+        result=None,
+    )
+    call_instr_id = builder.instructions[0]["id"]
+    assert builder.instructions[0]["arbiteros_ref_kind"] == "TOOLCALL"
+
+    data = {
+        "model": "gpt-5",
+        "input": [
+            {
+                "type": "function_call",
+                "call_id": "call_abc",
+                "name": "terminal",
+                "arguments": '{"command":"ls"}',
+            },
+            {
+                "type": "function_call_output",
+                "call_id": "call_abc",
+                "output": "file_a.py\nfile_b.py",
+            },
+        ],
+    }
+    from arbiteros_kernel import litellm_callback as cb
+
+    original_get = cb._get_instruction_builder_for_trace
+    original_save = cb._save_instructions_to_trace_file
+    cb._get_instruction_builder_for_trace = lambda _tid: builder
+    cb._save_instructions_to_trace_file = lambda *_args, **_kwargs: None
+    _emitted_tool_result_call_ids_by_trace.pop(trace_id, None)
+    state = _TraceState(trace_id=trace_id, device_key="dev", channel="ch", user_id="u1")
+    try:
+        _emit_tool_result_nodes_if_needed(data, state)
+        out = _inject_ref_markers_into_responses_input(data, trace_id=trace_id)
+    finally:
+        cb._get_instruction_builder_for_trace = original_get
+        cb._save_instructions_to_trace_file = original_save
+
+    result_instrs = [
+        i for i in builder.instructions if i.get("arbiteros_ref_kind") == "TOOLRESULT"
+    ]
+    assert len(result_instrs) == 1
+    result_id = result_instrs[0]["id"]
+    assert result_id != call_instr_id
+    output = out["input"][1]["output"]
+    assert output.startswith(f"[ARBITEROS_REF id={result_id} kind=TOOLRESULT]")
+    assert call_instr_id not in output.split("\n", 1)[0]
+    raw = result_instrs[0]["content"]["result"]["raw"]
+    assert raw.startswith(f"[ARBITEROS_REF id={result_id} kind=TOOLRESULT]")
+    assert call_instr_id not in raw.split("\n", 1)[0]
+
+
 def test_inject_ref_markers_into_messages_adds_system_and_user_refs():
     builder = InstructionBuilder(trace_id="trace-ref-test")
     data = {

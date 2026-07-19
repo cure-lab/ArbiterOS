@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "cisco-ai-skill-scanner==1.0.2",
+    "flow-cost-doctor",
     "hypercorn>=0.18.0",
     "jsonschema>=4.26.0",
     "langfuse>=3.14.1",
@@ -24,6 +25,9 @@ dev = [
     "poethepoet>=0.40.0",
     "pytest>=9.0.2",
 ]
+
+[tool.uv.sources]
+flow-cost-doctor = { path = "../../", editable = true }
 
 [tool.poe.tasks]
 mlflow = "uv run mlflow server"

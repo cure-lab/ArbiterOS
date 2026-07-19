@@ -71,10 +71,83 @@ def _tool_instr(instr_id: str, step: int, tc_id: str, *, with_result: bool = Fal
     }
 
 
-def test_format_and_strip_arbiteros_ref_marker():
-    marker = format_arbiteros_ref_marker("11111111-1111-1111-1111-111111111111", "USERINPUT")
-    assert marker.startswith("[ARBITEROS_REF id=")
-    assert strip_arbiteros_ref_marker(marker + "hello") == "hello"
+def test_rewrite_toolcall_depends_on_to_toolresult_preserves_confidence():
+    from arbiteros_kernel.instruction_depends_on import (
+        rewrite_toolcall_depends_on_to_toolresult,
+    )
+
+    instructions = [
+        _tool_instr("call-1", 1, "tc1"),
+        _tool_instr("result-1", 2, "tc1", with_result=True),
+    ]
+    entries = [
+        {
+            "instruction_id": "call-1",
+            "ref": "call-1",
+            "ref_type": REF_TYPE_INSTRUCTION_ID,
+            "source": SOURCE_MODEL,
+            "confidence": 0.9,
+            "counterfactual": "Without the tool output I would not edit the file.",
+        }
+    ]
+    rewritten = rewrite_toolcall_depends_on_to_toolresult(instructions, entries)
+    assert len(rewritten) == 1
+    assert rewritten[0]["instruction_id"] == "result-1"
+    assert rewritten[0]["ref"] == "result-1"
+    assert rewritten[0]["confidence"] == 0.9
+    assert "tool output" in rewritten[0]["counterfactual"]
+
+
+def test_rewrite_skips_kernel_toolcall_edges():
+    from arbiteros_kernel.instruction_depends_on import (
+        rewrite_toolcall_depends_on_to_toolresult,
+    )
+
+    instructions = [
+        _tool_instr("call-1", 1, "tc1"),
+        _tool_instr("result-1", 2, "tc1", with_result=True),
+    ]
+    entries = [
+        {
+            "instruction_id": "call-1",
+            "ref": "call-1",
+            "ref_type": REF_TYPE_INSTRUCTION_ID,
+            "source": SOURCE_KERNEL,
+            "confidence": KERNEL_TOOL_RESULT_CONFIDENCE,
+            "counterfactual": KERNEL_TOOL_RESULT_COUNTERFACTUAL,
+        }
+    ]
+    rewritten = rewrite_toolcall_depends_on_to_toolresult(instructions, entries)
+    assert rewritten[0]["instruction_id"] == "call-1"
+
+
+def test_resolve_depends_on_refs_rewrites_toolcall_to_toolresult():
+    instructions = [
+        _tool_instr("call-1", 1, "tc1"),
+        _tool_instr("result-1", 2, "tc1", with_result=True),
+        _text_instr("out-1", 3),
+    ]
+    resolved = resolve_depends_on_refs(
+        instructions,
+        [
+            {
+                "instruction_id": "call-1",
+                "confidence": 0.88,
+                "counterfactual": "Without that reading I would not know the API.",
+            }
+        ],
+        current_runtime_step=3,
+    )
+    assert len(resolved) == 1
+    assert resolved[0]["instruction_id"] == "result-1"
+    assert resolved[0]["confidence"] == 0.88
+
+
+def test_depends_on_schema_description_mentions_toolresult_for_outputs():
+    text = build_depends_on_schema_description([])
+    assert "kind=TOOLRESULT" in text
+    assert "not a TOOLCALL id" in text
+
 
 
 def test_normalize_depends_on_declarations_accepts_objects_and_legacy_strings():

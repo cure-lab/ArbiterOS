@@ -59,6 +59,10 @@ DEPENDS_ON_REF_RULES = (
     "[ARBITEROS_REF id=<instruction-uuid> kind=SYSTEMPROMPT|USERINPUT|TOOLCALL|TOOLRESULT|LLMOUTPUT]. "
     "Set depends_on to objects with instruction_id copied from those markers; use [] when none. "
     "Only reference instruction ids that appear earlier in the conversation. "
+    "When this step depends on tool output / observation content, copy the id from the "
+    "[ARBITEROS_REF kind=TOOLRESULT] marker on that tool result — not a TOOLCALL id. "
+    "Use a TOOLCALL id only when this step depends on the act of issuing that call itself "
+    "(rare). "
     f"{DEPENDS_ON_COUNTERFACTUAL_RULES}"
 )
 
@@ -431,6 +435,70 @@ def resolve_instruction_ids_to_depends_on(
     return _dedupe_entries(resolved)
 
 
+def rewrite_toolcall_depends_on_to_toolresult(
+    instructions: list[dict[str, Any]],
+    entries: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Rewrite model TOOLCALL citations to the matching TOOLRESULT when available.
+
+    Models often cite the tool-call instruction id even when they mean the tool
+    output. Prefer the TOOLRESULT instruction id for the same ``tool_call_id``.
+    Kernel-authored edges (SOURCE_KERNEL) are left unchanged.
+    """
+    if not entries:
+        return entries
+    rewritten: list[dict[str, Any]] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("source") == SOURCE_KERNEL:
+            rewritten.append(entry)
+            continue
+        instruction_id = entry.get("instruction_id") or entry.get("ref")
+        if not isinstance(instruction_id, str) or not instruction_id.strip():
+            rewritten.append(entry)
+            continue
+        target = find_instruction_by_id(instructions, instruction_id.strip())
+        if target is None:
+            rewritten.append(entry)
+            continue
+        kind = instruction_ref_kind(target)
+        content = _instruction_content(target.get("content"))
+        tool_call_id = content.get("tool_call_id")
+        is_call_only = kind == REF_KIND_TOOLCALL or (
+            isinstance(tool_call_id, str)
+            and tool_call_id.strip()
+            and content.get("result") is None
+            and kind != REF_KIND_TOOLRESULT
+        )
+        if not is_call_only:
+            rewritten.append(entry)
+            continue
+        if not isinstance(tool_call_id, str) or not tool_call_id.strip():
+            rewritten.append(entry)
+            continue
+        result_instr = find_tool_result_instruction_for_call_id(
+            instructions, tool_call_id.strip()
+        )
+        if result_instr is None:
+            rewritten.append(entry)
+            continue
+        result_id = result_instr.get("id")
+        if not isinstance(result_id, str) or not result_id.strip():
+            rewritten.append(entry)
+            continue
+        result_id = result_id.strip()
+        if result_id == instruction_id.strip():
+            rewritten.append(entry)
+            continue
+        updated = dict(entry)
+        updated["instruction_id"] = result_id
+        updated["ref"] = result_id
+        updated["ref_type"] = REF_TYPE_INSTRUCTION_ID
+        rewritten.append(updated)
+    return _dedupe_entries(rewritten)
+
+
 def resolve_depends_on_refs(
     instructions: list[dict[str, Any]],
     raw_refs: Any,
@@ -482,7 +550,9 @@ def resolve_depends_on_refs(
                 trace_id=trace_id,
             )
         )
-    return _dedupe_entries(resolved)
+    return rewrite_toolcall_depends_on_to_toolresult(
+        instructions, _dedupe_entries(resolved)
+    )
 
 
 def resolve_mixed_depends_on_refs(
@@ -829,19 +899,15 @@ def _tool_history_wording(
     use_codex_responses_wording: bool = False,
     use_claude_code_wording: bool = False,
 ) -> str:
-    if use_codex_responses_wording:
-        return (
-            "Prior tool outputs: copy the instruction id from the matching "
-            "[ARBITEROS_REF kind=TOOLRESULT] marker. "
-        )
-    if use_claude_code_wording:
-        return (
-            "Prior tool outputs: copy the instruction id from the matching "
-            "[ARBITEROS_REF kind=TOOLRESULT] marker. "
-        )
-    return (
+    common = (
         "Prior tool outputs: copy the instruction id from the matching "
-        "[ARBITEROS_REF kind=TOOLRESULT] marker in role='tool' messages. "
+        "[ARBITEROS_REF kind=TOOLRESULT] marker (never a TOOLCALL id for tool output). "
+    )
+    if use_codex_responses_wording or use_claude_code_wording:
+        return common
+    return (
+        common
+        + "These markers appear on role='tool' / function_call_output messages. "
     )
 
 
