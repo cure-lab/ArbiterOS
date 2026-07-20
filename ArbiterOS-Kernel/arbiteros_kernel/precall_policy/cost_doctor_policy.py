@@ -114,6 +114,7 @@ class CostDoctorPreCallPolicy(PreCallPolicy):
             compress_cache=state.compress_cache,
             upstream_model=upstream_model,
             context_aliases=state.context_aliases,
+            rule_engine=rule_engine,
         )
 
         if phase == "A":

@@ -1,7 +1,7 @@
 [
   {
     "name": "CostDoctorPreCallPolicy",
-    "enabled": false,
+    "enabled": true,
     "description": "Cost Doctor precall: cumulative ratio context optimization before upstream LLM dispatch."
   }
 ]

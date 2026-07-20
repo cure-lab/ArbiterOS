@@ -43,8 +43,33 @@ def test_default_registry_empty_without_rule_engine_path():
     assert get_precall_policy_classes() == []
 
 
-def test_registry_loads_cost_doctor_when_rule_engine_path_set(monkeypatch: pytest.MonkeyPatch):
-    if RULE_ENGINE_TEMPLATE.exists():
+def test_registry_loads_cost_doctor_when_rule_engine_path_set(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    from arbiteros_kernel.precall_policy import defaults as precall_defaults
+
+    registry_path = tmp_path / "precall_policy_registry.json"
+    registry_path.write_text(
+        json.dumps(
+            [
+                {
+                    "name": "CostDoctorPreCallPolicy",
+                    "enabled": True,
+                    "description": "test",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ARBITEROS_PRECALL_POLICY_REGISTRY", str(registry_path))
+    precall_defaults.get_precall_policy_registry(force_reload=True)
+
+    fcd_rule_engine = (
+        Path(__file__).resolve().parents[3] / "config" / "cost_down_rule_engine.json"
+    )
+    if fcd_rule_engine.exists():
+        monkeypatch.setenv("ARBITEROS_COST_DOWN_RULE_ENGINE", str(fcd_rule_engine))
+    elif RULE_ENGINE_TEMPLATE.exists():
         monkeypatch.setenv("ARBITEROS_COST_DOWN_RULE_ENGINE", str(RULE_ENGINE_TEMPLATE))
     else:
         monkeypatch.setenv("ARBITEROS_COST_DOWN_RULE_ENGINE", "/tmp/missing-rule-engine.json")
@@ -157,6 +182,7 @@ def test_phase_b_drop_removes_message(monkeypatch: pytest.MonkeyPatch):
 
 def test_phase_c_compress_truncates_content(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("ARBITEROS_COST_DOWN_PHASE", "C")
+    monkeypatch.setenv("ARBITEROS_COST_DOWN_COMPRESS_BACKEND", "rule")
     instruction_to_context = {"inst-old": "obs_0002_file"}
     compress_strategy = OptimizationStrategy(
         target=StrategyTarget(target_type="context_content", target_id="obs_0002_file"),
@@ -165,11 +191,12 @@ def test_phase_c_compress_truncates_content(monkeypatch: pytest.MonkeyPatch):
         estimated_token_savings=50,
         confidence=0.7,
         risk_level="medium",
-        rule_id="COMPRESS_AND_GATE",
+        rule_id="COMPRESS_MIDBAND",
         compress_target_ratio=0.1,
+        compress_mode="rule_based",
         producer_step_index=0,
     )
-    body = "abcdefghij" * 20
+    body = "FAILED test_foo.py::test_bar AssertionError: boom\n" + ("noise line\n" * 80)
     request = {
         "messages": [
             {
@@ -182,16 +209,140 @@ def test_phase_c_compress_truncates_content(monkeypatch: pytest.MonkeyPatch):
         request,
         instruction_to_context=instruction_to_context,
         context_actions={
-            "obs_0002_file": {"effective_action": "COMPRESS", "action": "compress"},
+            "obs_0002_file": {
+                "effective_action": "COMPRESS",
+                "action": "compress",
+                "progress_signal": "error_signal",
+                "source_type": "tool",
+            },
         },
         strategies_by_context={"obs_0002_file": compress_strategy},
         step_index=10,
         stage="planning",
         phase="C",
+        rule_engine={"compress_backend": "rule", "enable_midband_compress": True},
     )
     assert modified is True
     new_content = mutated["messages"][0]["content"]
     assert len(new_content) < len(request["messages"][0]["content"])
+    assert "FAILED" in new_content or "AssertionError" in new_content or "compacted" in new_content
+
+
+def test_phase_c_rule_backend_does_not_require_llm(monkeypatch: pytest.MonkeyPatch, capsys):
+    from arbiteros_kernel.precall_policy.compress_executor import compress_text
+
+    monkeypatch.setenv("ARBITEROS_COST_DOWN_COMPRESS_BACKEND", "rule")
+    monkeypatch.setenv("ARBITEROS_COST_DOWN_COMPRESS_LOG", "1")
+    text = "assert True\n" + ("xxxx\n" * 200)
+    out = compress_text(
+        text,
+        target_ratio=0.15,
+        context_id="obs_test",
+        backend="rule",
+        rule_engine={"compress_backend": "rule"},
+    )
+    assert len(out) < len(text)
+    logged = capsys.readouterr().out
+    assert "[CostDoctor][rule-compress]" in logged
+    assert "context=obs_test" in logged
+    assert "tokens_before=" in logged
+    assert "tokens_after=" in logged
+    assert "keep_ratio=" in logged
+    assert "saved_ratio=" in logged
+
+
+def test_phase_c_keep_and_drop_unaffected_by_rule_compress(monkeypatch: pytest.MonkeyPatch):
+    """Rule compress must only rewrite COMPRESS carriers; KEEP intact, DROP removed."""
+    monkeypatch.setenv("ARBITEROS_COST_DOWN_PHASE", "C")
+    monkeypatch.setenv("ARBITEROS_COST_DOWN_COMPRESS_BACKEND", "rule")
+
+    keep_body = "KEEP_ME_UNCHANGED " + ("k" * 120)
+    drop_body = "DROP_ME " + ("d" * 120)
+    compress_body = "FAILED test_x.py::test_y AssertionError: boom\n" + ("noise\n" * 100)
+
+    keep_strategy = OptimizationStrategy(
+        target=StrategyTarget(target_type="context_content", target_id="obs_keep"),
+        action="KEEP",
+        reason="high value",
+        estimated_token_savings=0,
+        confidence=0.9,
+        risk_level="low",
+        rule_id="KEEP_HIGH_VALUE",
+        producer_step_index=0,
+    )
+    drop_strategy = OptimizationStrategy(
+        target=StrategyTarget(target_type="context_content", target_id="obs_drop"),
+        action="DROP",
+        reason="low value",
+        estimated_token_savings=100,
+        confidence=0.8,
+        risk_level="high",
+        rule_id="DROP_LOW_VALUE",
+        producer_step_index=0,
+    )
+    compress_strategy = OptimizationStrategy(
+        target=StrategyTarget(target_type="context_content", target_id="obs_mid"),
+        action="COMPRESS",
+        reason="midband",
+        estimated_token_savings=50,
+        confidence=0.7,
+        risk_level="medium",
+        rule_id="COMPRESS_MIDBAND",
+        compress_target_ratio=0.15,
+        compress_mode="rule_based",
+        producer_step_index=0,
+    )
+    request = {
+        "messages": [
+            {
+                "role": "user",
+                "content": f"[ARBITEROS_REF id=inst-keep kind=TOOLRESULT]\n{keep_body}",
+            },
+            {
+                "role": "user",
+                "content": f"[ARBITEROS_REF id=inst-drop kind=TOOLRESULT]\n{drop_body}",
+            },
+            {
+                "role": "user",
+                "content": f"[ARBITEROS_REF id=inst-mid kind=TOOLRESULT]\n{compress_body}",
+            },
+        ]
+    }
+    mutated, modified = apply_context_actions_to_request(
+        request,
+        instruction_to_context={
+            "inst-keep": "obs_keep",
+            "inst-drop": "obs_drop",
+            "inst-mid": "obs_mid",
+        },
+        context_actions={
+            "obs_keep": {"effective_action": "KEEP", "action": "keep"},
+            "obs_drop": {"effective_action": "DROP", "action": "drop"},
+            "obs_mid": {
+                "effective_action": "COMPRESS",
+                "action": "compress",
+                "progress_signal": "error_signal",
+                "source_type": "tool",
+            },
+        },
+        strategies_by_context={
+            "obs_keep": keep_strategy,
+            "obs_drop": drop_strategy,
+            "obs_mid": compress_strategy,
+        },
+        step_index=10,
+        stage="planning",
+        phase="C",
+        rule_engine={"compress_backend": "rule", "enable_midband_compress": True},
+    )
+    assert modified is True
+    contents = [msg["content"] for msg in mutated["messages"]]
+    assert len(contents) == 2  # DROP removed
+    assert any(keep_body in c for c in contents)
+    assert all(drop_body not in c for c in contents)
+    mid = next(c for c in contents if "inst-mid" in c or "FAILED" in c or "compacted" in c)
+    assert len(mid) < len(request["messages"][2]["content"])
+    assert keep_body in next(c for c in contents if "KEEP_ME_UNCHANGED" in c)
 
 
 def test_phase_d_persists_live_policy(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):

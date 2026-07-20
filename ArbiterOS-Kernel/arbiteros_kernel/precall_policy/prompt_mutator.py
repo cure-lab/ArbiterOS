@@ -11,7 +11,7 @@ from flow_cost_doctor.cost_down import OptimizationStrategy
 from flow_cost_doctor.runtime.apply import applied_prompt_tokens
 from flow_cost_doctor.runtime.payload_index import PayloadIndex
 
-from arbiteros_kernel.precall_policy.compress_executor import compress_text_with_llm
+from arbiteros_kernel.precall_policy.compress_executor import compress_text
 
 _REF_MARKER_RE = re.compile(
     r"^\[ARBITEROS_REF id=([^\s\]]+) kind=([A-Z_]+)\]\s*\n?",
@@ -34,6 +34,7 @@ def apply_context_actions_to_request(
     compress_cache: dict[str, str] | None = None,
     upstream_model: str | None = None,
     context_aliases: dict[str, str] | None = None,
+    rule_engine: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], bool]:
     """Mutate request according to phase and decided context actions."""
     if phase == "A":
@@ -53,6 +54,7 @@ def apply_context_actions_to_request(
         compress_cache=compress_cache or {},
         upstream_model=upstream_model,
         context_aliases=context_aliases or {},
+        rule_engine=rule_engine or {},
     )
 
     if isinstance(updated.get("messages"), list):
@@ -98,6 +100,7 @@ class _MutationContext:
         compress_cache: dict[str, str],
         upstream_model: str | None,
         context_aliases: dict[str, str],
+        rule_engine: dict[str, Any],
     ) -> None:
         self.instruction_to_context = instruction_to_context
         self.context_actions = context_actions
@@ -109,6 +112,7 @@ class _MutationContext:
         self.compress_cache = compress_cache
         self.upstream_model = upstream_model
         self.context_aliases = context_aliases
+        self.rule_engine = rule_engine
 
 
 def _canonical_context_id(context_id: str | None, ctx: _MutationContext) -> str | None:
@@ -146,10 +150,19 @@ def _compress_body(
 ) -> str:
     ratio = strategy.compress_target_ratio or 0.1
     if ctx.phase in {"C", "D"}:
-        return compress_text_with_llm(
+        progress_signal = None
+        source_type = None
+        meta = ctx.context_actions.get(context_id) or {}
+        if isinstance(meta, dict):
+            progress_signal = meta.get("progress_signal")
+            source_type = meta.get("source_type")
+        return compress_text(
             body,
             target_ratio=float(ratio),
             context_id=context_id,
+            rule_engine=ctx.rule_engine,
+            progress_signal=str(progress_signal) if progress_signal else None,
+            source_type=str(source_type) if source_type else None,
             model=ctx.upstream_model,
             cache=ctx.compress_cache,
         )
