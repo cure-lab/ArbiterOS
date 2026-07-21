@@ -35,7 +35,7 @@ DEFAULT_DENY_PATHS = [
 
 PRESETS: dict[str, tuple[str, SandboxSettings]] = {
     "1": (
-        "Locked down (read-only + strict approval + sensitive-file deny)",
+        "Locked down (:read-only + denials + untrusted approval)",
         SandboxSettings(
             sandbox_mode="read-only",
             approval_policy="untrusted",
@@ -44,7 +44,7 @@ PRESETS: dict[str, tuple[str, SandboxSettings]] = {
         ),
     ),
     "2": (
-        "Daily dev (workspace-write, no network, protect secrets)",
+        "Daily dev (:workspace + denials, no network)",
         SandboxSettings(
             sandbox_mode="workspace-write",
             approval_policy="on-request",
@@ -54,7 +54,7 @@ PRESETS: dict[str, tuple[str, SandboxSettings]] = {
         ),
     ),
     "3": (
-        "Networked dev (workspace-write + open network)",
+        "Networked dev (:workspace + denials + open network)",
         SandboxSettings(
             sandbox_mode="workspace-write",
             approval_policy="on-request",
@@ -284,15 +284,22 @@ def _collect_network_policy(io: WizardIO, current: SandboxSettings) -> Any:
 
 
 def run_custom_wizard(io: WizardIO, seed: SandboxSettings) -> SandboxSettings | None:
-    """Step machine with back navigation. Returns None if cancelled."""
+    """Step machine with back navigation. Returns None if cancelled.
+
+    Writes Codex permission profiles (not legacy sandbox_mode). Access modes map to
+    built-ins `:read-only` / `:workspace` / `:danger-full-access`, or a custom
+    profile that extends one of the first two when denials/network/roots are set.
+    """
     s = _clone(seed)
-    # Dynamic step ids; network/writable/tmpdir only when workspace-write.
     step = 0
 
     def steps_for(mode: str) -> list[str]:
-        base = ["mode", "approval", "globs", "paths"]
+        # Full access cannot use filesystem denials (Codex rejects extending it).
+        if mode == "danger-full-access":
+            return ["mode", "approval"]
+        base = ["mode", "approval", "globs", "paths", "network"]
         if mode == "workspace-write":
-            base.extend(["network", "writable", "tmpdir"])
+            base.extend(["writable", "tmpdir"])
         return base
 
     while True:
@@ -308,11 +315,11 @@ def run_custom_wizard(io: WizardIO, seed: SandboxSettings) -> SandboxSettings | 
         result: Any = None
         if name == "mode":
             choice = io.ask_choice(
-                "What can the agent do on the filesystem?",
+                "Access mode (Codex permission profile)",
                 {
-                    "1": "read-only",
-                    "2": "workspace-write (typical)",
-                    "3": "danger-full-access (no sandbox)",
+                    "1": "read-only → :read-only (inspect only)",
+                    "2": "workspace-write → :workspace (typical)",
+                    "3": "danger-full-access → no sandbox",
                 },
                 default={"read-only": "1", "workspace-write": "2", "danger-full-access": "3"}.get(
                     s.sandbox_mode, "2"
@@ -335,7 +342,6 @@ def run_custom_wizard(io: WizardIO, seed: SandboxSettings) -> SandboxSettings | 
                     continue
                 if ok is CANCEL or not ok:
                     continue
-            if s.sandbox_mode != "workspace-write":
                 s.network_policy = "off"
                 s.network_access = False
                 s.writable_roots = []
@@ -343,6 +349,12 @@ def run_custom_wizard(io: WizardIO, seed: SandboxSettings) -> SandboxSettings | 
                 s.exclude_slash_tmp = False
                 s.allowed_domains = []
                 s.denied_domains = []
+                s.deny_globs = []
+                s.deny_paths = []
+            elif s.sandbox_mode == "read-only":
+                s.writable_roots = []
+                s.exclude_tmpdir_env_var = False
+                s.exclude_slash_tmp = False
             step += 1
             continue
 
@@ -370,7 +382,7 @@ def run_custom_wizard(io: WizardIO, seed: SandboxSettings) -> SandboxSettings | 
         if name == "globs":
             conf = io.ask_yes_no(
                 "Configure sensitive-file glob denials",
-                default=bool(s.deny_globs) or s.sandbox_mode != "danger-full-access",
+                default=bool(s.deny_globs),
             )
             if conf is BACK:
                 step -= 1
@@ -421,7 +433,7 @@ def run_custom_wizard(io: WizardIO, seed: SandboxSettings) -> SandboxSettings | 
 
         if name == "writable":
             conf = io.ask_yes_no(
-                "Add writable roots outside the workspace",
+                "Add extra workspace roots (permissions.workspace_roots)",
                 default=bool(s.writable_roots),
             )
             if conf is BACK:
@@ -442,13 +454,17 @@ def run_custom_wizard(io: WizardIO, seed: SandboxSettings) -> SandboxSettings | 
             continue
 
         if name == "tmpdir":
-            ex_tmp = io.ask_yes_no("Forbid writing $TMPDIR", default=s.exclude_tmpdir_env_var)
+            ex_tmp = io.ask_yes_no(
+                "Deny $TMPDIR (:tmpdir = deny)", default=s.exclude_tmpdir_env_var
+            )
             if ex_tmp is BACK:
                 step -= 1
                 continue
             if ex_tmp is CANCEL:
                 return None
-            ex_slash = io.ask_yes_no("Forbid writing /tmp", default=s.exclude_slash_tmp)
+            ex_slash = io.ask_yes_no(
+                "Deny /tmp (:slash_tmp = deny)", default=s.exclude_slash_tmp
+            )
             if ex_slash is BACK:
                 continue
             if ex_slash is CANCEL:
@@ -481,6 +497,7 @@ def run_preset_picker(io: WizardIO) -> SandboxSettings | None:
 def confirm_and_apply(io: WizardIO, settings: SandboxSettings) -> bool:
     show_settings(io, "About to write", settings)
     io.say(f"Target: {CONFIG_PATH}")
+    io.say("Writes permission profiles only; removes legacy sandbox_mode if present.")
     ok = io.ask_yes_no("Confirm write", default=False, allow_back=False)
     if ok is CANCEL or not ok:
         io.say("Cancelled — config unchanged.")

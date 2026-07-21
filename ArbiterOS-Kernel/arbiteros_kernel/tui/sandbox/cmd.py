@@ -23,7 +23,8 @@ HELP = (
     "Commands: [bold]list[/bold]  |  [bold]use <name>[/bold]  |  [bold]new[/bold]  |  "
     "[bold]show[/bold]  |  [bold]delete <name>[/bold]  |  [bold]back[/bold] (q)\n"
     "Codex only. Profiles: ~/.arbiteros/sandbox_profiles/codex/\n"
-    "Applying a profile writes ~/.codex/config.toml (restart Codex after)."
+    "Applies Codex [bold]permission profiles[/bold] to ~/.codex/config.toml "
+    "(not legacy sandbox_mode). Restart Codex after apply."
 )
 
 
