@@ -79,6 +79,12 @@ arbiteros_local_policy_confirm: true
 arbiteros_local_policy_confirm_test_mode: false
 precall_log_enabled: true
 
+# Said/Done PreToolUse defender (Gateway pending + Codex hook match/escalate).
+# true  => record TOOLCALLs and gate PreToolUse (auto-allow match, else watch).
+# false => like before: no pending registration; hook auto-allows (no escalate).
+# Env override: ARBITEROS_SAID_DONE_HOOK_ENABLED=0|1
+said_done_hook_enabled: false
+
 litellm_settings:
   drop_params: true
   callbacks: arbiteros_kernel.litellm_callback.proxy_handler_instance

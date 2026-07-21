@@ -4290,6 +4290,24 @@ def _stage_response_instructions_for_policy(
     )
 
 
+def _register_said_done_pending_from_response(
+    trace_id: Optional[str], response_dict: Optional[dict]
+) -> None:
+    """Register committed TOOLCALLs into the said/done pending index (no LLM)."""
+    if not isinstance(trace_id, str) or not trace_id.strip():
+        return
+    if not isinstance(response_dict, dict):
+        return
+    try:
+        from arbiteros_kernel.execution_check import register_pending_toolcalls
+    except Exception:
+        return
+    details = _extract_tool_call_details_from_response(response_dict)
+    if not details:
+        return
+    register_pending_toolcalls(trace_id=trace_id.strip(), toolcalls=details)
+
+
 def _commit_response_instructions_after_policy(
     builder: Any,
     trace_id: str,
@@ -4321,6 +4339,11 @@ def _commit_response_instructions_after_policy(
     _save_instructions_to_trace_file(
         trace_id, builder, token_usage_start_index=count_before
     )
+    # Said/Done: register TOOLCALLs present in the committed response (stripped ones absent).
+    try:
+        _register_said_done_pending_from_response(trace_id, response_dict)
+    except Exception:
+        pass
 
 
 def _replace_instructions_from_modified_response(
@@ -9072,6 +9095,26 @@ class MyCustomHandler(CustomLogger):
             from arbiteros_kernel.session_traces import register_trace
 
             register_trace(state.trace_id if state is not None else None)
+        except Exception:
+            pass
+
+        # Scheme-B said/done index: map agent session keys → trace_id (additive only).
+        try:
+            from arbiteros_kernel.session_index import register_binding
+
+            pck = _extract_prompt_cache_key(data) if isinstance(data, dict) else None
+            claude_sid = (
+                _extract_claude_code_session_id(data)
+                if isinstance(data, dict)
+                else None
+            )
+            register_binding(
+                trace_id=state.trace_id if state is not None else None,
+                device_key=state.device_key if state is not None else None,
+                prompt_cache_key=pck,
+                session_id=claude_sid or pck,
+                channel=state.channel if state is not None else None,
+            )
         except Exception:
             pass
 

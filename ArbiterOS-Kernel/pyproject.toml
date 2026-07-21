@@ -47,6 +47,12 @@ args = [{ name = "replay_args", positional = true, multiple = true }]
 cmd = "uv run python -m arbiteros_kernel.policy_test_harness ${spec_file}"
 args = [{ name = "spec_file", positional = true }]
 
+[tool.poe.tasks.defender-install]
+cmd = "uv run python hooks/defender/install_hooks.py"
+
+[tool.poe.tasks.defender-watch]
+cmd = "uv run python hooks/defender/watch.py"
+
 [tool.ty]
 environment = { python = ".venv" }
 

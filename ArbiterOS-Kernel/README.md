@@ -24,6 +24,10 @@ Kernel traces are keyed by **session identity** (`device_key`), not by individua
 
 **If you parallelize from the command line:** start **multiple full agent sessions** (separate Codex/Claude Code/OpenClaw processes), not many parallel bare proxy calls. For custom clients, you may pass `metadata.arbiteros_device_key` or `metadata.arbiteros_trace_id` on each request to control grouping; see [`../assets/docs/kernel.md`](../assets/docs/kernel.md) for details.
 
+## Said / Done defender (PreToolUse)
+
+Kernel records Gateway-declared `TOOLCALL`s and a session→trace index under `log/said_done/`. The ArbiterOS defender hook (`hooks/defender/`) auto-allows PreToolUse actions that match a pending declaration on the same trace; unknown or mismatched actions escalate to `hooks/defender/watch.py`. See [`hooks/defender/README.md`](hooks/defender/README.md).
+
 ## Setup and Run
 
 **1 Requirements**: Python 3.12+, [uv](https://docs.astral.sh/uv/).
