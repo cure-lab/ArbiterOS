@@ -74,10 +74,11 @@ class ArbiterTuiApp:
         self.console.print(
             Panel(
                 "Commands: [bold]list[/bold]  |  [bold]attach <trace_id>[/bold]  |  "
-                "[bold]quit[/bold] (q)\n"
+                "[bold]sw[/bold] (sandbox wizard)  |  [bold]quit[/bold] (q)\n"
                 "If a policy block needs your decision, [bold]attach[/bold] that trace and answer "
                 "[bold]Y[/bold]/[bold]N[/bold] inside it. "
-                "`list` shows a [bold]block[/bold] column when confirmation is pending.",
+                "`list` shows a [bold]block[/bold] column when confirmation is pending. "
+                "`sw` configures Codex sandbox profiles and applies them to ~/.codex/config.toml.",
                 title="How to use",
                 border_style="white",
             )
@@ -261,6 +262,12 @@ class ArbiterTuiApp:
         if lower == "list":
             self.cmd_list()
             return True
+        if lower in {"sw", "sandbox", "sandbox_wizard"}:
+            from arbiteros_kernel.tui.sandbox import run_sandbox_wizard_menu
+
+            run_sandbox_wizard_menu(console=self.console)
+            self.render_home()
+            return True
         if lower.startswith("attach "):
             parts = shlex.split(line)
             if len(parts) != 2:
@@ -269,7 +276,9 @@ class ArbiterTuiApp:
             if self.cmd_attach(parts[1]):
                 return self.attach_loop()
             return True
-        self.console.print("[dim]Unknown command. Try list, attach <trace_id>, quit.[/dim]")
+        self.console.print(
+            "[dim]Unknown command. Try list, attach <trace_id>, sw, quit.[/dim]"
+        )
         return True
 
     def attach_loop(self) -> bool:
