@@ -67,8 +67,24 @@ DEPENDS_ON_CATALOG_RULES = DEPENDS_ON_REF_RULES
 DEPENDS_ON_STATIC_SCHEMA_HINT = (
     "Prior-step dependencies from [ARBITEROS_REF ...] markers; each entry needs "
     "instruction_id, confidence (0-1), and counterfactual. Use [] when none. "
-    "Allowed ids are injected at request time."
+    "Allowed ids for this turn appear in the trailing [arbiteros_turn_context] block."
 )
+
+# Ephemeral per-turn control plane (append-only at end of messages/input).
+TURN_CONTEXT_MARKER = "[arbiteros_turn_context]"
+TOPIC_HINT_MARKER = "[arbiteros_topic_hint]"
+DEPENDS_ON_HINT_MARKER = "[arbiteros_depends_on]"
+
+
+def is_kernel_control_plane_text(text: Any) -> bool:
+    """True for ArbiterOS-injected control text (must not become USERINPUT / policy user)."""
+    if not isinstance(text, str):
+        return True
+    stripped = text.lstrip()
+    lowered = stripped.lower()
+    if lowered.startswith("[arbiteros_"):
+        return True
+    return stripped.startswith("[ARBITEROS_")
 
 KERNEL_TOOL_RESULT_CONFIDENCE = 1.0
 KERNEL_TOOL_RESULT_COUNTERFACTUAL = (
@@ -134,18 +150,50 @@ def instruction_ref_kind(instr: dict[str, Any]) -> Optional[str]:
     return None
 
 
+_MIN_DEPENDS_ON_ID_PREFIX_CHARS = 8
+
+
+def _unique_string_prefix_match(candidates: list[str], prefix: str) -> Optional[str]:
+    """Return the sole candidate that equals or starts with ``prefix`` (min length)."""
+    p = prefix.strip()
+    if not p or len(p) < _MIN_DEPENDS_ON_ID_PREFIX_CHARS:
+        return None
+    hits = [c for c in candidates if c == p or c.startswith(p)]
+    if len(hits) == 1:
+        return hits[0]
+    return None
+
+
 def find_instruction_by_id(
     instructions: list[dict[str, Any]], instruction_id: str
 ) -> Optional[dict[str, Any]]:
+    """Find by exact instruction id, or by a unique id prefix (sidecar often truncates)."""
     iid = instruction_id.strip()
     if not iid:
         return None
+    by_id: dict[str, dict[str, Any]] = {}
     for instr in instructions:
         if not isinstance(instr, dict):
             continue
         cand = instr.get("id")
-        if isinstance(cand, str) and cand.strip() == iid:
-            return instr
+        if not isinstance(cand, str) or not cand.strip():
+            continue
+        by_id[cand.strip()] = instr
+    exact = by_id.get(iid)
+    if exact is not None:
+        return exact
+    matched = _unique_string_prefix_match(list(by_id.keys()), iid)
+    if matched is None:
+        return None
+    return by_id.get(matched)
+
+
+def instruction_id_of(instr: Optional[dict[str, Any]]) -> Optional[str]:
+    if not isinstance(instr, dict):
+        return None
+    cand = instr.get("id")
+    if isinstance(cand, str) and cand.strip():
+        return cand.strip()
     return None
 
 
@@ -193,12 +241,16 @@ def normalize_counterfactual(value: Any) -> str:
     return DEFAULT_LEGACY_COUNTERFACTUAL
 
 
-def build_depends_on_entry_schema(allowed_ids: list[str]) -> dict[str, Any]:
+def build_depends_on_entry_schema(
+    allowed_ids: list[str],
+    *,
+    include_allowed_id_enum: bool = True,
+) -> dict[str, Any]:
     instruction_id_schema: dict[str, Any] = {
         "type": "string",
         "description": "Prior instruction id from an [ARBITEROS_REF ...] marker.",
     }
-    if allowed_ids:
+    if include_allowed_id_enum and allowed_ids:
         instruction_id_schema["enum"] = allowed_ids
     return {
         "type": "object",
@@ -228,11 +280,14 @@ def build_depends_on_items_schema(
     instructions: list[dict[str, Any]],
     *,
     current_runtime_step: Optional[int] = None,
+    include_allowed_id_enum: bool = True,
 ) -> dict[str, Any]:
     allowed_ids = build_allowed_depends_on_instruction_ids(
         instructions, current_runtime_step=current_runtime_step
     )
-    return build_depends_on_entry_schema(allowed_ids)
+    return build_depends_on_entry_schema(
+        allowed_ids, include_allowed_id_enum=include_allowed_id_enum
+    )
 
 
 def build_depends_on_schema_description(
@@ -241,8 +296,15 @@ def build_depends_on_schema_description(
     current_runtime_step: Optional[int] = None,
     text_preview_chars: int = 60,
     tool_call_id_prefix_chars: int = 12,
+    include_allowed_id_catalog: bool = True,
 ) -> str:
     del text_preview_chars, tool_call_id_prefix_chars
+    if not include_allowed_id_catalog:
+        return (
+            f"{DEPENDS_ON_REF_RULES} "
+            "Copy exact instruction uuid strings from [ARBITEROS_REF ...] markers. "
+            f"Allowed ids for this turn are listed in {TURN_CONTEXT_MARKER}."
+        )
     allowed_ids = build_allowed_depends_on_instruction_ids(
         instructions, current_runtime_step=current_runtime_step
     )
@@ -257,6 +319,31 @@ def build_depends_on_schema_description(
         f"{DEPENDS_ON_REF_RULES} "
         f"Allowed instruction ids for this turn: {ids_preview}{suffix}."
     )
+
+
+def build_turn_context_content(
+    *,
+    topic_section: str,
+    allowed_ids: list[str],
+    extra_tool_depends_hint: str = "",
+) -> str:
+    """Build the ephemeral trailing control-plane message body."""
+    lines = [TURN_CONTEXT_MARKER, topic_section.strip(), ""]
+    if allowed_ids:
+        lines.append(
+            "Allowed instruction ids for this turn: " + ", ".join(allowed_ids) + "."
+        )
+    else:
+        lines.append("Allowed instruction ids for this turn: (none yet; use []).")
+    lines.append(
+        "Copy exact instruction uuid strings from [ARBITEROS_REF ...] markers into "
+        "depends_on.instruction_id. Kernel drops unknown ids after the call."
+    )
+    hint = extra_tool_depends_hint.strip()
+    if hint:
+        lines.append("")
+        lines.append(hint)
+    return "\n".join(lines).rstrip() + "\n"
 
 
 def normalize_depends_on_declarations(value: Any) -> list[dict[str, Any]]:
@@ -404,6 +491,9 @@ def resolve_instruction_ids_to_depends_on(
                 trace_id or "",
             )
             continue
+        canonical = instruction_id_of(instr)
+        if canonical is None:
+            continue
         step = instr.get("runtime_step")
         if (
             isinstance(current_runtime_step, int)
@@ -413,14 +503,14 @@ def resolve_instruction_ids_to_depends_on(
         ):
             logger.debug(
                 "depends_on skip self/future instruction_id=%s current=%s trace_id=%s",
-                ref,
+                canonical,
                 current_runtime_step,
                 trace_id or "",
             )
             continue
         resolved.append(
             _make_resolved_entry(
-                instruction_id=ref,
+                instruction_id=canonical,
                 ref=ref,
                 ref_type=REF_TYPE_INSTRUCTION_ID,
                 source=SOURCE_MODEL,
@@ -455,6 +545,10 @@ def resolve_depends_on_refs(
         if instr is None:
             legacy.append(ref)
             continue
+        canonical = instruction_id_of(instr)
+        if canonical is None:
+            legacy.append(ref)
+            continue
         step = instr.get("runtime_step")
         if (
             isinstance(current_runtime_step, int)
@@ -465,7 +559,7 @@ def resolve_depends_on_refs(
             continue
         resolved.append(
             _make_resolved_entry(
-                instruction_id=ref,
+                instruction_id=canonical,
                 ref=ref,
                 ref_type=REF_TYPE_INSTRUCTION_ID,
                 source=SOURCE_MODEL,
@@ -584,14 +678,27 @@ def find_instruction_id_by_tool_call_id(
     tc_id = tool_call_id.strip()
     if not tc_id:
         return None
-    matches: list[dict[str, Any]] = []
+    exact_matches: list[dict[str, Any]] = []
+    all_tc_ids: list[str] = []
+    by_tc: dict[str, list[dict[str, Any]]] = {}
     for instr in instructions:
         if not isinstance(instr, dict):
             continue
         content = _instruction_content(instr.get("content"))
-        if content.get("tool_call_id") != tc_id:
+        stored = content.get("tool_call_id")
+        if not isinstance(stored, str) or not stored.strip():
             continue
-        matches.append(instr)
+        full_tc = stored.strip()
+        all_tc_ids.append(full_tc)
+        by_tc.setdefault(full_tc, []).append(instr)
+        if full_tc == tc_id:
+            exact_matches.append(instr)
+    matches = exact_matches
+    if not matches:
+        matched_tc = _unique_string_prefix_match(list(dict.fromkeys(all_tc_ids)), tc_id)
+        if matched_tc is None:
+            return None
+        matches = list(by_tc.get(matched_tc) or [])
     if not matches:
         return None
     if prefer_with_result:
@@ -779,26 +886,37 @@ def _format_step_catalog_line(
         return None
     kind = instruction_ref_kind(instr) or "UNKNOWN"
     instr_id = instr.get("id")
-    id_prefix = ""
+    # Always emit the FULL instruction uuid — shortened prefixes caused sidecar
+    # models to return unresolvable ids.
+    id_marker = ""
     if isinstance(instr_id, str) and instr_id.strip():
-        id_prefix = instr_id.strip()[:8]
+        id_marker = f"[{instr_id.strip()}]"
     content = instr.get("content")
     if isinstance(content, str):
         preview = _preview_text_content(content, max_chars=text_preview_chars)
         detail = preview or str(instr.get("instruction_type") or "")
-        return f"  {step} {kind} [{id_prefix}] | {detail}"
+        if id_marker:
+            return f"  {step} {kind} {id_marker} | {detail}"
+        return f"  {step} {kind} | {detail}"
     if isinstance(content, dict):
         tool_name = content.get("tool_name")
         tool_name_str = (
             str(tool_name).strip() if isinstance(tool_name, str) and tool_name.strip() else "tool"
         )
         tc_id = content.get("tool_call_id")
-        tc_prefix = ""
+        tc_note = ""
         if isinstance(tc_id, str) and tc_id.strip():
-            tc_prefix = tc_id.strip()[:tool_call_id_prefix_chars]
-        if tc_prefix:
-            return f"  {step} {kind} {tool_name_str} | {tc_prefix}"
-        return f"  {step} {kind} {tool_name_str}"
+            full_tc = tc_id.strip()
+            # Keep a short tool_call hint for humans, but instruction uuid is authoritative.
+            if tool_call_id_prefix_chars > 0 and len(full_tc) > tool_call_id_prefix_chars:
+                tc_note = f" tool_call={full_tc[:tool_call_id_prefix_chars]}"
+            else:
+                tc_note = f" tool_call={full_tc}"
+        if id_marker:
+            return f"  {step} {kind} {id_marker} {tool_name_str}{tc_note}"
+        return f"  {step} {kind} {tool_name_str}{tc_note}"
+    if id_marker:
+        return f"  {step} {kind} {id_marker}"
     return f"  {step} {kind}"
 
 
@@ -854,20 +972,24 @@ def build_tool_depends_on_description(
     text_preview_chars: int = 60,
     tool_call_id_prefix_chars: int = 12,
     current_runtime_step: Optional[int] = None,
+    include_allowed_id_catalog: bool = True,
 ) -> str:
     del prior_tool_items, text_preview_chars, tool_call_id_prefix_chars
     history = _tool_history_wording(
         use_codex_responses_wording=use_codex_responses_wording,
         use_claude_code_wording=use_claude_code_wording,
     )
-    allowed_ids = build_allowed_depends_on_instruction_ids(
-        instructions, current_runtime_step=current_runtime_step
-    )
     parts = [
         DEPENDS_ON_REF_RULES,
         history,
         "Copy exact instruction uuid strings from [ARBITEROS_REF ...] markers.",
     ]
+    if not include_allowed_id_catalog:
+        parts.append(f"Allowed ids for this turn are listed in {TURN_CONTEXT_MARKER}.")
+        return " ".join(parts)
+    allowed_ids = build_allowed_depends_on_instruction_ids(
+        instructions, current_runtime_step=current_runtime_step
+    )
     if allowed_ids:
         preview = ", ".join(allowed_ids[:6])
         suffix = " …" if len(allowed_ids) > 6 else ""

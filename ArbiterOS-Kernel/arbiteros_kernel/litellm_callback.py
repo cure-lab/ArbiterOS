@@ -86,6 +86,7 @@ from arbiteros_kernel.protocol_adapter import (
     extract_text_from_responses_output as _pa_extract_text_from_responses_output,
     finalize_responses_stream as _pa_finalize_responses_stream,
     inject_system_hint_into_request as _pa_inject_system_hint_into_request,
+    append_trailing_control_message as _pa_append_trailing_control_message,
     normalize_anthropic_system_layout as _pa_normalize_anthropic_system_layout,
     request_has_top_level_system as _pa_request_has_top_level_system,
     is_responses_api_request as _pa_is_responses_api_request,
@@ -109,15 +110,19 @@ from arbiteros_kernel.instruction_depends_on import (
     REF_KIND_TOOLRESULT,
     REF_KIND_USERINPUT,
     SOURCE_SIDECAR,
+    TURN_CONTEXT_MARKER,
     _dedupe_entries as dedupe_depends_on_entries,
+    build_allowed_depends_on_instruction_ids,
     build_depends_on_entry_schema,
     build_depends_on_items_schema,
     build_depends_on_schema_description,
     build_tool_depends_on_description,
+    build_turn_context_content,
     builder_has_tool_result_for_call_id,
-    find_instruction_id_by_tool_call_id,
+    find_tool_result_instruction_for_call_id,
     format_arbiteros_ref_marker,
     instruction_ref_kind,
+    is_kernel_control_plane_text,
     kernel_depends_on_tool_call,
     normalize_depends_on_declarations,
     normalize_text_depends_on_raw,
@@ -2389,10 +2394,13 @@ def _build_tool_depends_on_schema(
     current_runtime_step: Optional[int] = None,
 ) -> dict[str, Any]:
     del prior_items
+    stable = _prompt_cache_stable_prefix_enabled()
     return {
         "type": "array",
         "items": build_depends_on_items_schema(
-            instructions, current_runtime_step=current_runtime_step
+            instructions,
+            current_runtime_step=current_runtime_step,
+            include_allowed_id_enum=not stable,
         ),
         "description": build_tool_depends_on_description(
             [],
@@ -2400,6 +2408,7 @@ def _build_tool_depends_on_schema(
             use_codex_responses_wording=use_codex_responses_wording,
             use_claude_code_wording=use_claude_code_wording,
             current_runtime_step=current_runtime_step,
+            include_allowed_id_catalog=not stable,
         ),
     }
 
@@ -2509,6 +2518,9 @@ def _inject_tool_depends_on_global_hint(
     data: dict[str, Any], description_text: str
 ) -> None:
     """Fallback for built-in Codex tools that cannot accept parameters or description."""
+    if _prompt_cache_stable_prefix_enabled():
+        # Allowed-id / depends_on catalog lives in the trailing turn_context block.
+        return
     if not description_text.strip():
         return
     hint_content = (
@@ -6706,11 +6718,16 @@ def _inject_depends_on_schema_into_response_format(
         if builder is not None:
             instructions = list(getattr(builder, "instructions", []) or [])
     next_step = len(instructions) + 1
+    stable = _prompt_cache_stable_prefix_enabled()
     dep["items"] = build_depends_on_items_schema(
-        instructions, current_runtime_step=next_step
+        instructions,
+        current_runtime_step=next_step,
+        include_allowed_id_enum=not stable,
     )
     dep["description"] = build_depends_on_schema_description(
-        instructions, current_runtime_step=next_step
+        instructions,
+        current_runtime_step=next_step,
+        include_allowed_id_catalog=not stable,
     )
 
 
@@ -7799,9 +7816,18 @@ def _extract_text_to_wrap(
     return (None, None, None)
 
 
-def _inject_topic_summary_hint(
-    data: dict, *, state: _TraceState, context: _DeviceContext
-) -> dict:
+def _prompt_cache_stable_prefix_enabled() -> bool:
+    """Keep tools/schema/instructions byte-stable; put turn-dynamic catalogs at the end.
+
+    Disable with ``ARBITEROS_PROMPT_CACHE_STABLE_PREFIX=0`` to restore legacy prefix injection.
+    """
+    raw = os.getenv("ARBITEROS_PROMPT_CACHE_STABLE_PREFIX", "1").strip().lower()
+    return raw not in {"0", "false", "no", "off"}
+
+
+def _build_topic_summary_hint_section(
+    *, state: _TraceState, context: _DeviceContext
+) -> str:
     previous_topic_raw = (
         state.latest_topic_summary
         if isinstance(state.latest_topic_summary, str)
@@ -7822,10 +7848,7 @@ def _inject_topic_summary_hint(
         if isinstance(context.latest_user_text, str)
         else None
     ) or "(none)"
-
-    marker = "[arbiteros_topic_hint]"
-    hint_content = (
-        f"{marker}\n"
+    return (
         "Generate JSON string field `topic` (for trace naming) using BOTH:\n"
         "1) current summarized topic\n"
         "2) latest user turn\n"
@@ -7847,10 +7870,60 @@ def _inject_topic_summary_hint(
         f"Current summarized topic: {previous_topic}\n"
         f"Latest user turn: {latest_user_turn}"
     )
+
+
+def _inject_topic_summary_hint(
+    data: dict, *, state: _TraceState, context: _DeviceContext
+) -> dict:
+    # Stable-prefix mode moves topic + allowed-id catalog into the trailing turn_context.
+    if _prompt_cache_stable_prefix_enabled():
+        return data
+    marker = "[arbiteros_topic_hint]"
+    hint_content = f"{marker}\n{_build_topic_summary_hint_section(state=state, context=context)}"
     return _pa_inject_system_hint_into_request(
         data,
         hint_content=hint_content,
         marker=marker,
+    )
+
+
+def _inject_turn_context_trailer(
+    data: dict,
+    *,
+    state: _TraceState,
+    context: _DeviceContext,
+    trace_id: Optional[str],
+) -> dict:
+    """Append ephemeral turn_context at the end of messages/input (not instructions)."""
+    if not _prompt_cache_stable_prefix_enabled():
+        return data
+    instructions = _depends_on_instructions_for_trace(trace_id)
+    next_step = len(instructions) + 1
+    allowed_ids = build_allowed_depends_on_instruction_ids(
+        instructions, current_runtime_step=next_step
+    )
+    use_codex_wording = _is_responses_api_request(data)
+    use_claude_code_wording = _is_claude_code_tool_agent(data) and not use_codex_wording
+    extra_hint = build_tool_depends_on_description(
+        [],
+        instructions,
+        use_codex_responses_wording=use_codex_wording,
+        use_claude_code_wording=use_claude_code_wording,
+        current_runtime_step=next_step,
+        include_allowed_id_catalog=False,
+    )
+    # Avoid duplicating the "listed in turn_context" sentence inside the trailer itself.
+    extra_hint = extra_hint.replace(
+        f"Allowed ids for this turn are listed in {TURN_CONTEXT_MARKER}.",
+        f"When calling tools, include {_TOOL_DEPENDS_ON_ARG} in arguments (use [] when none).",
+    )
+    content = build_turn_context_content(
+        topic_section=_build_topic_summary_hint_section(state=state, context=context),
+        allowed_ids=allowed_ids,
+        extra_tool_depends_hint=extra_hint,
+    )
+    return _pa_append_trailing_control_message(
+        data, content=content, marker=TURN_CONTEXT_MARKER
     )
 
 
@@ -8209,19 +8282,7 @@ def _wrap_messages_with_categories(
 
 
 def _is_kernel_injected_message_text(text: str) -> bool:
-    if not isinstance(text, str):
-        return True
-    stripped = text.lstrip()
-    lowered = stripped.lower()
-    if lowered.startswith(
-        (
-            "[arbiteros_",
-            "[arbiteros_topic_hint",
-            "[arbiteros_tool_depends_on",
-        )
-    ):
-        return True
-    return stripped.startswith("[ARBITEROS_")
+    return is_kernel_control_plane_text(text)
 
 
 def _context_instruction_by_key(
@@ -8576,10 +8637,19 @@ def _inject_ref_markers_into_messages(
             tc_id = msg.get("tool_call_id")
             if not isinstance(tc_id, str) or not tc_id.strip():
                 continue
+            # Only a real TOOLRESULT instruction id may be watermarked as
+            # kind=TOOLRESULT. Never fall back to the TOOLCALL id (that used to
+            # flip the marker on the next turn once TOOLRESULT was emitted).
             instr_id = tool_result_id_to_instr_id.get(tc_id.strip())
             if not instr_id:
-                instr_id = find_instruction_id_by_tool_call_id(
-                    instructions, tc_id.strip(), prefer_with_result=True
+                found = find_tool_result_instruction_for_call_id(
+                    instructions, tc_id.strip()
+                )
+                found_id = found.get("id") if isinstance(found, dict) else None
+                instr_id = (
+                    found_id.strip()
+                    if isinstance(found_id, str) and found_id.strip()
+                    else None
                 )
             if not instr_id:
                 continue
@@ -8863,10 +8933,19 @@ def _inject_ref_markers_into_responses_input(
             call_id = item.get("call_id")
             if not isinstance(call_id, str) or not call_id.strip():
                 continue
+            # Only a real TOOLRESULT instruction id may be watermarked as
+            # kind=TOOLRESULT. Never fall back to the TOOLCALL id (that used to
+            # flip the marker on the next turn once TOOLRESULT was emitted).
             instr_id = tool_result_id_to_instr_id.get(call_id.strip())
             if not instr_id:
-                instr_id = find_instruction_id_by_tool_call_id(
-                    instructions, call_id.strip(), prefer_with_result=True
+                found = find_tool_result_instruction_for_call_id(
+                    instructions, call_id.strip()
+                )
+                found_id = found.get("id") if isinstance(found, dict) else None
+                instr_id = (
+                    found_id.strip()
+                    if isinstance(found_id, str) and found_id.strip()
+                    else None
                 )
             if not instr_id:
                 continue
@@ -9152,6 +9231,11 @@ class MyCustomHandler(CustomLogger):
                 user_messages=_extract_all_user_messages_from_request(data),
                 policy_enabled_override=role_policy_override,
             )
+        # Emit TOOLRESULT instructions BEFORE REF watermarks so the first turn
+        # that sees a tool output already has the stable TOOLRESULT id. Injecting
+        # first used to stamp kind=TOOLRESULT with the TOOLCALL id, then flip the
+        # id on the next turn (breaking depends_on identity and prompt-cache prefixes).
+        _emit_tool_result_nodes_if_needed(data, state)
         data = _inject_ref_markers_into_messages(data, trace_id=trace_id_for_cache)
         data = _inject_ref_markers_into_responses_input(
             data, trace_id=trace_id_for_cache
@@ -9210,7 +9294,6 @@ class MyCustomHandler(CustomLogger):
                 with _trace_state_lock:
                     state.root_observation_id = root_observation_id
         _ensure_turn_node_if_needed(context, state)
-        _emit_tool_result_nodes_if_needed(data, state)
         data = _inject_trace_metadata(data, state)
 
         # Policy confirmation: if detected, set mock_response (after category/topic etc. so trace_id is ready)
@@ -9365,6 +9448,13 @@ class MyCustomHandler(CustomLogger):
             )
             _save_json("pre_call", {"call_type": call_type, "incoming": filtered_data})
         _inject_tool_depends_on_into_tools(data, trace_id=trace_id_for_cache)
+        # After tools/schemas are frozen: append turn-dynamic catalogs at the END only.
+        data = _inject_turn_context_trailer(
+            data,
+            state=state,
+            context=context,
+            trace_id=trace_id_for_cache,
+        )
         compat_flags = _resolve_upstream_compat_flags(
             data.get("model"),
             agent_name=agent_name,

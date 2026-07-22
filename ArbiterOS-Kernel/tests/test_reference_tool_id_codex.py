@@ -234,7 +234,9 @@ def _tool_schema_has_depends_on(tool: dict) -> bool:
     return "depends_on" in props
 
 
-def test_inject_depends_on_codex_non_function_tools():
+def test_inject_depends_on_codex_non_function_tools(monkeypatch):
+    # Default stable-prefix mode must NOT append allowed-id catalogs into instructions.
+    monkeypatch.setenv("ARBITEROS_PROMPT_CACHE_STABLE_PREFIX", "1")
     data = {
         "model": "gpt-5.5",
         "input": [],
@@ -286,11 +288,31 @@ def test_inject_depends_on_codex_non_function_tools():
     assert "parameters" not in tools[3]
     assert "description" not in tools[3]
 
+    assert "instructions" not in data or "[arbiteros_depends_on]" not in data.get(
+        "instructions", ""
+    )
+
+
+def test_inject_depends_on_codex_non_function_tools_legacy_prefix(monkeypatch):
+    monkeypatch.setenv("ARBITEROS_PROMPT_CACHE_STABLE_PREFIX", "0")
+    data = {
+        "model": "gpt-5.5",
+        "input": [],
+        "instructions": "You are Codex.",
+        "tools": [
+            {
+                "type": "web_search",
+                "search_content_types": ["text"],
+            },
+        ],
+    }
+    _inject_tool_depends_on_into_tools(data)
     assert "[arbiteros_depends_on]" in data["instructions"]
     assert "TOOLRESULT" in data["instructions"]
 
 
-def test_inject_depends_on_all_codex_tools_from_precall_fixture():
+def test_inject_depends_on_all_codex_tools_from_precall_fixture(monkeypatch):
+    monkeypatch.setenv("ARBITEROS_PROMPT_CACHE_STABLE_PREFIX", "1")
     fixture = {
         "type": "function",
         "name": "exec_command",
@@ -327,8 +349,9 @@ def test_inject_depends_on_all_codex_tools_from_precall_fixture():
     assert "[arbiteros_depends_on]" in data["tools"][1]["description"]
     assert "description" not in data["tools"][3]
     assert "description" not in data["tools"][4]
-    assert "[arbiteros_depends_on]" in data["instructions"]
-
+    assert "instructions" not in data or "[arbiteros_depends_on]" not in data.get(
+        "instructions", ""
+    )
 
 def test_strip_depends_on_uses_internal_trace_id_when_metadata_stripped():
     from arbiteros_kernel.litellm_callback import (

@@ -188,14 +188,63 @@ def test_kernel_depends_on_tool_call_targets_call_without_result():
 
 def test_build_step_catalog_with_previews():
     instructions = [
-        _text_instr("i1", 1, "Hello world this is a long preview that should truncate"),
-        _tool_instr("i2", 2, "call_abc123456789"),
+        _text_instr("i1-full-uuid-aaaa", 1, "Hello world this is a long preview that should truncate"),
+        _tool_instr("i2-full-uuid-bbbb", 2, "call_abc123456789"),
     ]
     catalog = build_step_catalog_with_previews(instructions, text_preview_chars=20)
     assert "Prior steps" in catalog
     assert "LLMOUTPUT" in catalog
     assert "Hello world this is…" in catalog
     assert "TOOLCALL" in catalog
+    # Catalog must expose full instruction ids (not 8-char prefixes only).
+    assert "[i1-full-uuid-aaaa]" in catalog
+    assert "[i2-full-uuid-bbbb]" in catalog
+
+
+def test_find_instruction_by_id_unique_prefix():
+    from arbiteros_kernel.instruction_depends_on import find_instruction_by_id
+
+    instructions = [
+        _text_instr("aaaaaaaa-bbbb-cccc-dddd-111111111111", 1, "a"),
+        _text_instr("bbbbbbbb-bbbb-cccc-dddd-222222222222", 2, "b"),
+    ]
+    hit = find_instruction_by_id(instructions, "aaaaaaaa")
+    assert hit is not None
+    assert hit["id"] == "aaaaaaaa-bbbb-cccc-dddd-111111111111"
+    # Ambiguous / too short
+    assert find_instruction_by_id(instructions, "bbbbbbbb-bbbb-cccc-dddd-222222222222")[
+        "id"
+    ].startswith("bbbbbbbb")
+    assert find_instruction_by_id(instructions, "zzz") is None
+
+
+def test_resolve_depends_on_refs_expands_uuid_prefix_and_tool_prefix():
+    full_a = "aaaaaaaa-bbbb-cccc-dddd-111111111111"
+    full_tool_instr = "cccccccc-bbbb-cccc-dddd-333333333333"
+    instructions = [
+        _text_instr(full_a, 1, "user ask"),
+        _tool_instr(full_tool_instr, 2, "toolu_d11fsU3chCa24f9h8OfsZa", with_result=True),
+    ]
+    resolved = resolve_depends_on_refs(
+        instructions,
+        [
+            {
+                "instruction_id": "aaaaaaaa",
+                "confidence": 0.9,
+                "counterfactual": "Need user ask.",
+            },
+            {
+                "instruction_id": "toolu_d11fsU",
+                "confidence": 0.8,
+                "counterfactual": "Need tool result.",
+            },
+        ],
+        current_runtime_step=3,
+        trace_id="t-prefix",
+    )
+    ids = {e["instruction_id"] for e in resolved}
+    assert full_a in ids
+    assert full_tool_instr in ids
 
 
 def test_build_depends_on_schema_description_lists_allowed_ids():

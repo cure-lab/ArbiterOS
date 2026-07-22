@@ -95,7 +95,10 @@ def build_sidecar_depends_on_entry_schema(allowed_ids: list[str]) -> dict[str, A
     """Anthropic structured output rejects minimum/maximum on number fields."""
     instruction_id_schema: dict[str, Any] = {
         "type": "string",
-        "description": "Prior instruction id from an [ARBITEROS_REF ...] marker.",
+        "description": (
+            "FULL prior instruction uuid from an [ARBITEROS_REF ...] marker / catalog "
+            "bracket. Do not truncate."
+        ),
     }
     if allowed_ids:
         instruction_id_schema["enum"] = allowed_ids
@@ -162,13 +165,17 @@ def build_sidecar_messages(
     )
     system_text = (
         "You declare causal depends_on for an assistant RESPOND step. "
-        "Return JSON matching the response schema. "
+        "Return JSON matching the response schema (raw JSON only, no markdown fences). "
+        "Each depends_on.instruction_id MUST be a FULL instruction uuid copied exactly "
+        "from the square brackets in the prior-steps catalog (never shorten or invent ids; "
+        "do not use tool_call ids). "
         f"{rules}\n\n{catalog}"
     )
     user_text = (
         "Assistant RESPOND content for this turn:\n"
         f"{respond_content.strip()}\n\n"
-        "Declare depends_on for this RESPOND step only."
+        "Declare depends_on for this RESPOND step only. "
+        "Use full instruction uuids from the catalog brackets."
     )
     return [
         {"role": "system", "content": system_text},
@@ -176,14 +183,46 @@ def build_sidecar_messages(
     ]
 
 
+def _loads_json_object(text: str) -> Optional[dict[str, Any]]:
+    """Parse a JSON object from raw model text, including markdown fences."""
+    if not isinstance(text, str) or not text.strip():
+        return None
+    stripped = text.strip()
+    candidates: list[str] = [stripped]
+    if stripped.startswith("```"):
+        inner = stripped
+        if inner.startswith("```"):
+            first_nl = inner.find("\n")
+            if first_nl >= 0:
+                inner = inner[first_nl + 1 :]
+            else:
+                inner = inner[3:]
+            if inner.rstrip().endswith("```"):
+                inner = inner.rstrip()[:-3]
+            candidates.append(inner.strip())
+    first_curly = stripped.find("{")
+    last_curly = stripped.rfind("}")
+    if first_curly != -1 and last_curly > first_curly:
+        candidates.append(stripped[first_curly : last_curly + 1])
+
+    seen: set[str] = set()
+    for candidate in candidates:
+        if not candidate or candidate in seen:
+            continue
+        seen.add(candidate)
+        try:
+            parsed = json.loads(candidate)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return None
+
+
 def parse_sidecar_depends_on_payload(content: Any) -> list[dict[str, Any]]:
     if not isinstance(content, str) or not content.strip():
         return []
-    text = content.strip()
-    try:
-        parsed = json.loads(text)
-    except (json.JSONDecodeError, TypeError):
-        return []
+    parsed = _loads_json_object(content)
     if not isinstance(parsed, dict):
         return []
     return normalize_depends_on_declarations(parsed.get("depends_on"))

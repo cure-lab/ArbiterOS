@@ -66,7 +66,7 @@ response_format:
               - confidence
               - counterfactual
             additionalProperties: false
-          description: "Prior-step dependencies from [ARBITEROS_REF ...] markers; each entry needs instruction_id, confidence (0-1), and counterfactual. Use [] when none. Allowed ids are injected at request time."
+          description: "Prior-step dependencies from [ARBITEROS_REF ...] markers; each entry needs instruction_id, confidence (0-1), and counterfactual. Use [] when none. Allowed ids for this turn appear in the trailing [arbiteros_turn_context] block."
       required:
         - topic
         - category
@@ -78,6 +78,9 @@ response_format:
 arbiteros_local_policy_confirm: true
 arbiteros_local_policy_confirm_test_mode: false
 precall_log_enabled: true
+
+# Prompt-cache stable prefix (kernel default ON): freeze tools/schema/instructions and append
+# ephemeral [arbiteros_turn_context] at the end. Rollback: ARBITEROS_PROMPT_CACHE_STABLE_PREFIX=0
 
 # Said/Done PreToolUse defender (Gateway pending + Codex hook match/escalate).
 # true  => record TOOLCALLs and gate PreToolUse (auto-allow match, else watch).
