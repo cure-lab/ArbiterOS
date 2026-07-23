@@ -1,281 +1,39 @@
 model_list:
-  - model_name: deepseek-v4-pro
+  - model_name: deepseek-v4-pro;nanobot
     litellm_params:
-      model: deepseek/deepseek-v4-pro
+      model: openai/deepseek-v4-pro
       api_key: os.environ/DEEPSEEK_API_KEY
-      response_format:
-        type: json_schema
-        json_schema:
-          name: instruction_output
-          schema:
-            type: object
-            properties:
-              topic:
-                type: string
-                description: "A concise topic/title for this turn (keep it short, e.g. 8-20 Chinese chars or <= 40 chars)."
-                maxLength: 60
-              category:
-                type: string
-                enum:
-                  - COGNITIVE_CORE__REASON
-                  - COGNITIVE_CORE__PLAN
-                  - COGNITIVE_CORE__CRITIQUE
-                  - COGNITIVE_CORE__ASK
-                  - COGNITIVE_CORE__RESPOND
-                description: "The instruction category type. Use the most Accurate category possible, rather than only choose 'COGNITIVE_CORE__RESPOND'. "
-              content:
-                type: string
-                description: "The actual content of the instruction"
-            required: [topic, category, content]
-            additionalProperties: false
-          strict: true
-  - model_name: deepseek-v4-flash
+      api_base: os.environ/DEEPSEEK_API_BASE
+  - model_name: deepseek-v4-flash;nanobot
     litellm_params:
-      model: deepseek/deepseek-v4-flash
+      model: openai/deepseek-v4-flash
       api_key: os.environ/DEEPSEEK_API_KEY
-      response_format:
-        type: json_schema
-        json_schema:
-          name: instruction_output
-          schema:
-            type: object
-            properties:
-              topic:
-                type: string
-                description: "A concise topic/title for this turn (keep it short, e.g. 8-20 Chinese chars or <= 40 chars)."
-                maxLength: 60
-              category:
-                type: string
-                enum:
-                  - COGNITIVE_CORE__REASON
-                  - COGNITIVE_CORE__PLAN
-                  - COGNITIVE_CORE__CRITIQUE
-                  - COGNITIVE_CORE__ASK
-                  - COGNITIVE_CORE__RESPOND
-                description: "The instruction category type. Use the most Accurate category possible, rather than only choose 'COGNITIVE_CORE__RESPOND'. "
-              content:
-                type: string
-                description: "The actual content of the instruction"
-            required: [topic, category, content]
-            additionalProperties: false
-          strict: true
-  - model_name: gpt-5
+      api_base: os.environ/DEEPSEEK_API_BASE
+  - model_name: gpt-5;nanobot
     litellm_params:
       model: openai/gpt-5
       api_key: os.environ/OPENAI_API_KEY
       api_base: os.environ/OPENAI_API_BASE
-      response_format:
-        type: json_schema
-        json_schema:
-          name: instruction_output
-          schema:
-            type: object
-            properties:
-              topic:
-                type: string
-                description: "A concise topic/title for this turn (keep it short, e.g. 8-20 Chinese chars or <= 40 chars)."
-                maxLength: 60
-              category:
-                type: string
-                enum:
-                  - COGNITIVE_CORE__REASON
-                  - COGNITIVE_CORE__PLAN
-                  - COGNITIVE_CORE__CRITIQUE
-                  - COGNITIVE_CORE__ASK
-                  - COGNITIVE_CORE__RESPOND
-                description: "The instruction category type. Use the most Accurate category possible, rather than only choose 'COGNITIVE_CORE__RESPOND'. "
-              content:
-                type: string
-                description: "The actual content of the instruction"
-            required: [topic, category, content]
-            additionalProperties: false
-          strict: true
-  - model_name: gpt-5-mini
+  - model_name: gpt-5-mini;nanobot
     litellm_params:
       model: openai/gpt-5-mini
       api_key: os.environ/OPENAI_API_KEY
       api_base: os.environ/OPENAI_API_BASE
-      response_format:
-        type: json_schema
-        json_schema:
-          name: instruction_output
-          schema:
-            type: object
-            properties:
-              topic:
-                type: string
-                description: "A concise topic/title for this turn (keep it short, e.g. 8-20 Chinese chars or <= 40 chars)."
-                maxLength: 60
-              category:
-                type: string
-                enum:
-                  - COGNITIVE_CORE__REASON
-                  - COGNITIVE_CORE__PLAN
-                  - COGNITIVE_CORE__CRITIQUE
-                  - COGNITIVE_CORE__ASK
-                  - COGNITIVE_CORE__RESPOND
-                description: "The instruction category type. Use the most Accurate category possible, rather than only choose 'COGNITIVE_CORE__RESPOND'. "
-              content:
-                type: string
-                description: "The actual content of the instruction"
-            required: [topic, category, content]
-            additionalProperties: false
-          strict: true
-  - model_name: gpt-5-nano
+  - model_name: gpt-5-nano;nanobot
     litellm_params:
       model: openai/gpt-5-nano
       api_key: os.environ/OPENAI_API_KEY
       api_base: os.environ/OPENAI_API_BASE
-      response_format:
-        type: json_schema
-        json_schema:
-          name: instruction_output
-          schema:
-            type: object
-            properties:
-              topic:
-                type: string
-                description: "A concise topic/title for this turn (keep it short, e.g. 8-20 Chinese chars or <= 40 chars)."
-                maxLength: 60
-              category:
-                type: string
-                enum:
-                  - COGNITIVE_CORE__REASON
-                  - COGNITIVE_CORE__PLAN
-                  - COGNITIVE_CORE__CRITIQUE
-                  - COGNITIVE_CORE__ASK
-                  - COGNITIVE_CORE__RESPOND
-                description: "The instruction category type. Use the most Accurate category possible, rather than only choose 'COGNITIVE_CORE__RESPOND'. "
-              content:
-                type: string
-                description: "The actual content of the instruction"
-            required: [topic, category, content]
-            additionalProperties: false
-          strict: true
-  - model_name: gpt-4o
+  - model_name: gpt-4o;nanobot
     litellm_params:
       model: openai/gpt-4o
       api_key: os.environ/OPENAI_API_KEY
       api_base: os.environ/OPENAI_API_BASE
-      response_format:
-        type: json_schema
-        json_schema:
-          name: instruction_output
-          schema:
-            type: object
-            properties:
-              topic:
-                type: string
-                description: "A concise topic/title for this turn (keep it short, e.g. 8-20 Chinese chars or <= 40 chars)."
-                maxLength: 60
-              category:
-                type: string
-                enum:
-                  - COGNITIVE_CORE__REASON
-                  - COGNITIVE_CORE__PLAN
-                  - COGNITIVE_CORE__CRITIQUE
-                  - COGNITIVE_CORE__ASK
-                  - COGNITIVE_CORE__RESPOND
-                description: "The instruction category type. Use the most Accurate category possible, rather than only choose 'COGNITIVE_CORE__RESPOND'. "
-              content:
-                type: string
-                description: "The actual content of the instruction"
-            required: [topic, category, content]
-            additionalProperties: false
-          strict: true
-  - model_name: gpt-4o-mini
+  - model_name: gpt-4o-mini;nanobot
     litellm_params:
       model: openai/gpt-4o-mini
       api_key: os.environ/OPENAI_API_KEY
       api_base: os.environ/OPENAI_API_BASE
-      response_format:
-        type: json_schema
-        json_schema:
-          name: instruction_output
-          schema:
-            type: object
-            properties:
-              topic:
-                type: string
-                description: "A concise topic/title for this turn (keep it short, e.g. 8-20 Chinese chars or <= 40 chars)."
-                maxLength: 60
-              category:
-                type: string
-                enum:
-                  - COGNITIVE_CORE__REASON
-                  - COGNITIVE_CORE__PLAN
-                  - COGNITIVE_CORE__CRITIQUE
-                  - COGNITIVE_CORE__ASK
-                  - COGNITIVE_CORE__RESPOND
-                description: "The instruction category type. Use the most Accurate category possible, rather than only choose 'COGNITIVE_CORE__RESPOND'. "
-              content:
-                type: string
-                description: "The actual content of the instruction"
-            required: [topic, category, content]
-            additionalProperties: false
-          strict: true
-  - model_name: claude-haiku-4-5
-    litellm_params:
-      model: openai/claude-haiku-4-5
-      api_key: os.environ/OPENAI_API_KEY
-      api_base: os.environ/OPENAI_API_BASE
-      response_format:
-        type: json_schema
-        json_schema:
-          name: instruction_output
-          schema:
-            type: object
-            properties:
-              topic:
-                type: string
-                description: "A concise topic/title for this turn (keep it short, e.g. 8-20 Chinese chars or <= 40 chars)."
-                maxLength: 60
-              category:
-                type: string
-                enum:
-                  - COGNITIVE_CORE__REASON
-                  - COGNITIVE_CORE__PLAN
-                  - COGNITIVE_CORE__CRITIQUE
-                  - COGNITIVE_CORE__ASK
-                  - COGNITIVE_CORE__RESPOND
-                description: "The instruction category type. Use the most Accurate category possible, rather than only choose 'COGNITIVE_CORE__RESPOND'. "
-              content:
-                type: string
-                description: "The actual content of the instruction"
-            required: [topic, category, content]
-            additionalProperties: false
-          strict: true
-  - model_name: gemini-2.0-flash-exp
-    litellm_params:
-      model: openai/gemini-2.0-flash-exp
-      api_key: os.environ/OPENAI_API_KEY
-      api_base: os.environ/OPENAI_API_BASE
-      response_format:
-        type: json_schema
-        json_schema:
-          name: instruction_output
-          schema:
-            type: object
-            properties:
-              topic:
-                type: string
-                description: "A concise topic/title for this turn (keep it short, e.g. 8-20 Chinese chars or <= 40 chars)."
-                maxLength: 60
-              category:
-                type: string
-                enum:
-                  - COGNITIVE_CORE__REASON
-                  - COGNITIVE_CORE__PLAN
-                  - COGNITIVE_CORE__CRITIQUE
-                  - COGNITIVE_CORE__ASK
-                  - COGNITIVE_CORE__RESPOND
-                description: "The instruction category type. Use the most Accurate category possible, rather than only choose 'COGNITIVE_CORE__RESPOND'. "
-              content:
-                type: string
-                description: "The actual content of the instruction"
-            required: [topic, category, content]
-            additionalProperties: false
-          strict: true
 
 # ArbiterOS kernel: which agent tool names to parse (instruction_parsing).
 # Now support : openclaw, nanobot, hermes, codex, claude_code
@@ -283,62 +41,97 @@ model_list:
 # enabled: true only for claude_code and codex
 # enabled: false for openclaw, nanobot, and hermes
 llm_routing:
-  enabled: true
+  enabled: false
   strategy: tag_router
 
-arbiteros_config:
-  tool_agent: openclaw
-  upstream_compat:
-    enabled: false
-    rules:
-      - match_model: "gpt-5.5"
-        strip_metadata: true
-        force_non_stream: true
+response_format:
+  type: json_schema
+  json_schema:
+    name: instruction_output
+    schema:
+      type: object
+      properties:
+        topic:
+          type: string
+          description: "A concise topic/title for this turn (keep it short, e.g. 8-20 Chinese chars or <= 40 chars)."
+          maxLength: 60
+        category:
+          type: string
+          enum:
+            - COGNITIVE_CORE__REASON
+            - COGNITIVE_CORE__PLAN
+            - COGNITIVE_CORE__CRITIQUE
+            - COGNITIVE_CORE__ASK
+            - COGNITIVE_CORE__RESPOND
+          description: "The instruction category type. Use the most Accurate category possible, rather than only choose 'COGNITIVE_CORE__RESPOND'. "
+        content:
+          type: string
+          description: "The actual content of the instruction. It can be anything and in any format you need to generate."
+        depends_on:
+          type: array
+          items:
+            type: object
+            properties:
+              instruction_id:
+                type: string
+                description: "Prior instruction id from an [ARBITEROS_REF ...] marker."
+              confidence:
+                type: number
+                minimum: 0
+                maximum: 1
+                description: "How direct and necessary this causal link is (0-1)."
+              counterfactual:
+                type: string
+                maxLength: 240
+                description: "One short sentence: if that predecessor had not occurred or produced its output, how would this step likely change?"
+            required:
+              - instruction_id
+              - confidence
+              - counterfactual
+            additionalProperties: false
+          description: "Prior-step dependencies from [ARBITEROS_REF ...] markers; each entry needs instruction_id, confidence (0-1), and counterfactual. Use [] when none. Allowed ids for this turn appear in the trailing [arbiteros_turn_context] block."
+      required:
+        - topic
+        - category
+        - content
+        - depends_on
+      additionalProperties: false
+    strict: true
 
-# When true, enforced policy modifications are confirmed locally in the kernel terminal:
-#   Y => keep blocked response
-#   N => allow original response
-# false (in-agent Yes/No confirmation) is no longer maintained; we strongly recommend
-# true and deciding each block in the ArbiterOS terminal whether to apply it.
 arbiteros_local_policy_confirm: true
-# Test mode (default false): only applies when arbiteros_local_policy_confirm is true.
-# When true, every block is auto-kept (same as pressing Y) without waiting at the terminal.
-arbiteros_local_policy_confirm_test_mode: true
+arbiteros_local_policy_confirm_test_mode: false
+precall_log_enabled: true
+
+# Prompt-cache stable prefix (kernel default ON): freeze tools/schema/instructions and append
+# ephemeral [arbiteros_turn_context] at the end. Rollback: ARBITEROS_PROMPT_CACHE_STABLE_PREFIX=0
+
+# Said/Done PreToolUse defender (Gateway pending + Codex hook match/escalate).
+# true  => record TOOLCALLs and gate PreToolUse (auto-allow match, else watch).
+# false => like before: no pending registration; hook auto-allows (no escalate).
+# Env override: ARBITEROS_SAID_DONE_HOOK_ENABLED=0|1
+said_done_hook_enabled: false
 
 litellm_settings:
-  # Following settings for anthropics models
-  # modify_params: true
   drop_params: true
   callbacks: arbiteros_kernel.litellm_callback.proxy_handler_instance
-  # Langfuse tracing is emitted by arbiteros_kernel.litellm_callback
-  # so all OpenClaw steps can be grouped into one session trace.
   success_callback: ["mlflow"]
   failure_callback: ["mlflow"]
 
-# Skill trust (arbiteros_kernel.skill_trust): path to ``.../skills`` (OpenClaw
-# skill packages). Non-empty ARBITEROS_SKILLS_ROOT overrides ``skills_root`` here.
 arbiteros_skill_trust:
-  skills_root:
+  skills_root: /path/to/your/skills
 
-# Used when running ``skill-scanner`` from the kernel. All three keys must be
-# non-empty for ``--use-llm``; otherwise scans use static + behavioral only.
 skill_scanner_llm:
-  model: openai/gpt-4o
+  model:
   api_base:
-  api_key:
+  api_key: os.environ/ARBITEROS_SKILL_SCANNER_API_KEY
 
-# Run once per session: before the first pure-text assistant reply, scan these files.
-# If any file is judged BLOCK, append a notice at the end of that reply.
-# LLM transport/parse failures are treated as SAFE (fail-open).
 session_bootstrap_scan:
-  enabled: true
+  enabled: false
   protected_paths:
     - "PATH/TO/YOUR/SOUL.MD"
     - "PATH/TO/YOUR/AGENTS.MD"
     - "PATH/TO/YOUR/IDENTITY.MD"
   max_content_chars_per_file: 12000
 
-# Taint ablation: when true, policy evaluation sees prop_* equal to base
-# trustworthiness/confidentiality (no inheritance). Implemented in policy_check only.
 taint_ablation:
   disable_inheritance: false
