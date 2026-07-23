@@ -9490,14 +9490,6 @@ class MyCustomHandler(CustomLogger):
             data.get("model"),
             agent_name=agent_name,
         )
-        metadata_for_backup = data.get("metadata") if isinstance(data, dict) else None
-        if compat_flags.get("strip_metadata"):
-            # Keep metadata for local backup/logical flow, but do not forward upstream
-            # when provider does not support the `metadata` parameter.
-            data = dict(data)
-            if trace_id_for_cache:
-                data["_arbiteros_trace_id"] = trace_id_for_cache
-            data.pop("metadata", None)
         if compat_flags.get("force_non_stream"):
             # Keep Responses API streaming for Codex/OpenAI-compatible clients.
             # Only force non-stream for chat-completions-style payloads where
@@ -9505,10 +9497,6 @@ class MyCustomHandler(CustomLogger):
             is_chat_payload = isinstance(data.get("messages"), list)
             if is_chat_payload:
                 data = {**data, "stream": False}
-        _persist_trace_backup_state(
-            state.trace_id if state is not None else None,
-            metadata=(metadata_for_backup if isinstance(metadata_for_backup, dict) else None),
-        )
         if isinstance(data, dict):
             builder = _get_instruction_builder_for_trace(trace_id_for_cache or "")
             instructions_for_precall = (
@@ -9521,6 +9509,19 @@ class MyCustomHandler(CustomLogger):
                 tool_agent=_get_request_agent_name(data),
             )
             data = precall_policy_result.request
+        metadata_for_backup = data.get("metadata") if isinstance(data, dict) else None
+        if compat_flags.get("strip_metadata"):
+            # Keep metadata for local backup/logical flow, but do not forward upstream
+            # when provider does not support the `metadata` parameter. Run after
+            # check_precall_policy so scaffold/hygiene stats stay in backup only.
+            data = dict(data)
+            if trace_id_for_cache:
+                data["_arbiteros_trace_id"] = trace_id_for_cache
+            data.pop("metadata", None)
+        _persist_trace_backup_state(
+            state.trace_id if state is not None else None,
+            metadata=(metadata_for_backup if isinstance(metadata_for_backup, dict) else None),
+        )
         _save_precall_to_log(
             data,
             state.trace_id if state is not None else None,
@@ -10033,6 +10034,25 @@ class MyCustomHandler(CustomLogger):
             "ARBITEROS_EMPTY_ASSISTANT_FALLBACK",
             "抱歉，我这次没有生成有效回复，请重试。",
         )
+        # Cost Doctor P3: rewrite simple apply_patch heredocs to portable Python.
+        if isinstance(final_msg_dict, dict):
+            try:
+                from arbiteros_kernel.precall_policy.cost_doctor_runtime import (
+                    cost_down_enabled as _cd_enabled,
+                    get_rule_engine as _cd_rule_engine,
+                )
+                from flow_cost_doctor.runtime.hygiene import (
+                    hygiene_params_from_rule_engine as _hygiene_params,
+                    lower_apply_patch_in_response as _lower_apply_patch,
+                )
+
+                if _cd_enabled():
+                    _lower_apply_patch(
+                        final_msg_dict,
+                        params=_hygiene_params(_cd_rule_engine()),
+                    )
+            except Exception:
+                pass
         final_msg_dict = _ensure_non_empty_assistant_message(
             final_msg_dict, fallback_text=fallback_text
         )

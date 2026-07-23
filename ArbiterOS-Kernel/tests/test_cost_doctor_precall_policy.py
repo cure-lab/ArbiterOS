@@ -440,6 +440,179 @@ def test_post_call_attribution_updates_cumulative_state():
     assert state.pending_prompt_items == []
 
 
+def test_two_step_precall_postcall_ratio_accumulates(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """End-to-end: precall leaves pending items; postcall folds depends_on into cum_*."""
+    from flow_cost_doctor.runtime.cumulative import cumulative_ratio_before_step
+
+    policy_path = tmp_path / "rule_engine.json"
+    policy_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "kind": "cost_down_rule_engine",
+                "rule_engine": {
+                    "decision_function": "decide_context_strategy_v2",
+                    "threshold_keep_ratio": 0.7,
+                    "threshold_drop_ratio": 0.25,
+                    "protection_step_count": 2,
+                    "threshold_min_token_burden": 50,
+                    "protected_context_ids": ["sys_1", "goal_1"],
+                    "enable_midband_compress": True,
+                    "scaffold": {"enabled": False},
+                    "hygiene": {"enabled": False},
+                },
+                "metadata": {"runtime_consumer": "arbiteros_precall"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ARBITEROS_COST_DOWN_RULE_ENGINE", str(policy_path))
+    monkeypatch.setenv("ARBITEROS_COST_DOWN_PHASE", "C")
+
+    call_id = "call_ratio_2step"
+    obs_body = "traceback " + ("x" * 400)
+    instructions = [
+        {
+            "id": "inst-sys",
+            "runtime_step": 1,
+            "arbiteros_ref_kind": "SYSTEMPROMPT",
+            "content": "You are helpful.",
+        },
+        {
+            "id": "inst-goal",
+            "runtime_step": 2,
+            "arbiteros_ref_kind": "USERINPUT",
+            "content": "Fix bug",
+        },
+        {
+            "id": "tc-1",
+            "runtime_step": 3,
+            "arbiteros_ref_kind": "TOOLCALL",
+            "content": {
+                "tool_name": "terminal",
+                "tool_call_id": call_id,
+                "arguments": {"command": "ls"},
+            },
+            "token_usage": {"llm_call_seq": 1},
+        },
+        {
+            "id": "tr-1",
+            "runtime_step": 4,
+            "arbiteros_ref_kind": "TOOLRESULT",
+            "content": {
+                "tool_name": "terminal",
+                "tool_call_id": call_id,
+                "result": obs_body,
+            },
+            "depends_on": [
+                {"instruction_id": "tc-1", "ref": "tc-1", "confidence": 1.0},
+            ],
+        },
+    ]
+    request = {
+        "model": "gpt-5.5",
+        "messages": [
+            {
+                "role": "system",
+                "content": "[ARBITEROS_REF id=inst-sys kind=SYSTEMPROMPT]\nYou are helpful.",
+            },
+            {
+                "role": "user",
+                "content": "[ARBITEROS_REF id=inst-goal kind=USERINPUT]\nFix bug",
+            },
+            {
+                "role": "user",
+                "content": f"[ARBITEROS_REF id=tr-1 kind=TOOLRESULT]\n{obs_body}",
+            },
+        ],
+    }
+
+    trace_id = "trace-ratio-2step"
+    result1 = check_precall_policy(
+        trace_id=trace_id,
+        current_request=request,
+        instructions=instructions,
+        policy_classes=[CostDoctorPreCallPolicy],
+    )
+    assert result1.modified in {True, False}
+
+    state = get_or_create_state(trace_id)
+    obs_id = next(cid for cid in state.available_context_ids if cid.startswith("obs_"))
+    cum_tokens_before = state.cum_tokens.get(obs_id, 0.0)
+    assert state.pending_prompt_items, "precall should stage pending attribution"
+
+    instructions_after_llm1 = [
+        *instructions,
+        {
+            "id": "out-1",
+            "runtime_step": 5,
+            "arbiteros_ref_kind": "LLMOUTPUT",
+            "content": "I read the traceback.",
+            "token_usage": {"llm_call_seq": 1},
+            "depends_on": [{"instruction_id": "tr-1", "confidence": 0.9}],
+        },
+    ]
+    record_post_call_attribution(trace_id, instructions=instructions_after_llm1)
+    assert state.pending_prompt_items == []
+    assert state.cum_tokens.get(obs_id, 0.0) > cum_tokens_before
+    assert state.cum_weighted.get(obs_id, 0.0) > 0.0
+    ratio_after_post = cumulative_ratio_before_step(
+        obs_id, state.cum_tokens, state.cum_weighted
+    )
+
+    instructions_after_llm1.append(
+        {
+            "id": "out-2",
+            "runtime_step": 6,
+            "arbiteros_ref_kind": "LLMOUTPUT",
+            "content": "Next step reasoning.",
+            "token_usage": {"llm_call_seq": 2},
+            "depends_on": [],
+        }
+    )
+    request2 = {
+        **request,
+        "messages": [
+            *request["messages"],
+            {
+                "role": "assistant",
+                "content": "[ARBITEROS_REF id=out-1 kind=LLMOUTPUT]\nI read the traceback.",
+            },
+        ],
+    }
+    result2 = check_precall_policy(
+        trace_id=trace_id,
+        current_request=request2,
+        instructions=instructions_after_llm1,
+        policy_classes=[CostDoctorPreCallPolicy],
+    )
+    assert result2.modified in {True, False}
+    snap = state.last_step_record.get("cumulative_ratio_snapshot") or {}
+    assert obs_id in snap
+    assert snap[obs_id] == pytest.approx(ratio_after_post, rel=1e-4)
+
+
+def test_litellm_post_call_success_invokes_record_post_call_attribution():
+    """Guard: async_post_call_success_hook must call record_post_call_attribution."""
+    from pathlib import Path as _Path
+
+    callback_path = (
+        _Path(__file__).resolve().parents[1]
+        / "arbiteros_kernel"
+        / "litellm_callback.py"
+    )
+    source = callback_path.read_text(encoding="utf-8")
+    assert "async def async_post_call_success_hook" in source
+    hook_start = source.index("async def async_post_call_success_hook")
+    hook_end = source.index("async def async_post_call_streaming_hook", hook_start)
+    hook_body = source[hook_start:hook_end]
+    assert "record_post_call_attribution(" in hook_body
+    assert "cost_down_phase() in {\"B\", \"C\", \"D\"}" in hook_body.replace("'", '"') or (
+        '{"B", "C", "D"}' in hook_body
+    )
+
 def test_record_step_attribution_direct():
     state = get_or_create_state("trace-direct")
     record_step_attribution(

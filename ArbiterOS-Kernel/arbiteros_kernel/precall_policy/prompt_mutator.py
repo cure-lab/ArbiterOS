@@ -12,6 +12,12 @@ from flow_cost_doctor.runtime.apply import applied_prompt_tokens
 from flow_cost_doctor.runtime.payload_index import PayloadIndex
 
 from arbiteros_kernel.precall_policy.compress_executor import compress_text
+from flow_cost_doctor.runtime.dep_lifetime import (
+    dep_lifetime_params_from_rule_engine,
+    prune_expired_dependency_evidence,
+    should_apply_dep_lifetime_prune,
+    target_chars_for_dep_lifetime,
+)
 
 _REF_MARKER_RE = re.compile(
     r"^\[ARBITEROS_REF id=([^\s\]]+) kind=([A-Z_]+)\]\s*\n?",
@@ -35,6 +41,7 @@ def apply_context_actions_to_request(
     upstream_model: str | None = None,
     context_aliases: dict[str, str] | None = None,
     rule_engine: dict[str, Any] | None = None,
+    live_context_ids: set[str] | None = None,
 ) -> tuple[dict[str, Any], bool]:
     """Mutate request according to phase and decided context actions."""
     if phase == "A":
@@ -43,6 +50,7 @@ def apply_context_actions_to_request(
     modified = False
     updated = copy.deepcopy(request)
     index = payload_index or PayloadIndex(instruction_to_context=instruction_to_context)
+    live_ids = set(live_context_ids or ())
     ctx = _MutationContext(
         instruction_to_context=instruction_to_context,
         context_actions=context_actions,
@@ -55,6 +63,7 @@ def apply_context_actions_to_request(
         upstream_model=upstream_model,
         context_aliases=context_aliases or {},
         rule_engine=rule_engine or {},
+        live_context_ids=live_ids,
     )
 
     if isinstance(updated.get("messages"), list):
@@ -101,6 +110,7 @@ class _MutationContext:
         upstream_model: str | None,
         context_aliases: dict[str, str],
         rule_engine: dict[str, Any],
+        live_context_ids: set[str] | None = None,
     ) -> None:
         self.instruction_to_context = instruction_to_context
         self.context_actions = context_actions
@@ -113,6 +123,7 @@ class _MutationContext:
         self.upstream_model = upstream_model
         self.context_aliases = context_aliases
         self.rule_engine = rule_engine
+        self.live_context_ids = set(live_context_ids or ())
 
 
 def _canonical_context_id(context_id: str | None, ctx: _MutationContext) -> str | None:
@@ -153,9 +164,32 @@ def _compress_body(
         progress_signal = None
         source_type = None
         meta = ctx.context_actions.get(context_id) or {}
+        effective = "COMPRESS"
         if isinstance(meta, dict):
             progress_signal = meta.get("progress_signal")
             source_type = meta.get("source_type")
+            effective = str(
+                meta.get("effective_action") or meta.get("action") or "COMPRESS"
+            )
+        dep_params = dep_lifetime_params_from_rule_engine(ctx.rule_engine)
+        if should_apply_dep_lifetime_prune(
+            effective_action=effective,
+            context_id=context_id,
+            live_context_ids=ctx.live_context_ids,
+            params=dep_params,
+            text_len=len(body),
+        ):
+            pruned = prune_expired_dependency_evidence(
+                body,
+                target_chars=target_chars_for_dep_lifetime(len(body), dep_params),
+                reason=f"dep_lifetime_off_frontier:{context_id}",
+                context_id=context_id,
+                preserve_traceback_frames=dep_params.preserve_traceback_frames,
+            )
+            if pruned.changed:
+                if isinstance(meta, dict):
+                    meta["dep_lifetime"] = "prune_off_frontier"
+                return pruned.text
         return compress_text(
             body,
             target_ratio=float(ratio),
