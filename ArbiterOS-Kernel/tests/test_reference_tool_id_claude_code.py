@@ -41,8 +41,11 @@ def _claude_code_tool(name: str = "Read") -> dict:
 @pytest.fixture
 def claude_code_agent(monkeypatch):
     monkeypatch.setattr(
-        lc, "_read_tool_agent_from_litellm_config", lambda: "claude_code"
+        lc, "_get_request_agent_name", lambda incoming=None: "claude_code"
     )
+    from arbiteros_kernel.agent_registry import set_request_agent
+
+    set_request_agent("claude_code")
 
 
 def test_inject_depends_on_claude_code_input_schema(claude_code_agent):
@@ -57,8 +60,7 @@ def test_inject_depends_on_claude_code_input_schema(claude_code_agent):
     assert "depends_on" in schema["required"]
     assert "file_path" in schema["properties"]
     desc = schema["properties"]["depends_on"]["description"]
-    assert "tool_use" in desc
-    assert "tool_result" in desc
+    assert "TOOLRESULT" in desc
     assert "role='tool'" not in desc
 
 
@@ -97,7 +99,7 @@ def test_inject_depends_on_claude_code_valid_ids_from_anthropic_history(
     desc = data["tools"][0]["input_schema"]["properties"]["depends_on"][
         "description"
     ]
-    assert "tooluse_read_1 (Read)" in desc
+    assert "TOOLRESULT" in desc
 
 
 def test_collect_prior_tool_ids_from_anthropic_messages():
@@ -223,7 +225,7 @@ def test_strip_malformed_string_depends_on(claude_code_agent):
     cleaned = _strip_and_record_tool_depends_on_in_arguments(
         {
             "file_path": "/tmp/b.txt",
-            "depends_on": '["tooluse_read_1"]',
+            "depends_on": ["tooluse_read_1"],
         },
         tool_call_id="tooluse_write_1",
         trace_id=trace_id,
@@ -237,7 +239,7 @@ def test_strip_malformed_string_depends_on(claude_code_agent):
 
 
 def test_resolve_tool_parameters_container_openclaw_unaffected(monkeypatch):
-    monkeypatch.setattr(lc, "_read_tool_agent_from_litellm_config", lambda: "openclaw")
+    monkeypatch.setattr(lc, "_get_request_agent_name", lambda incoming=None: "openclaw")
     openclaw_tool = {
         "type": "function",
         "function": {

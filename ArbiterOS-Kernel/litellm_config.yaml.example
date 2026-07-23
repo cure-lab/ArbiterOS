@@ -1,5 +1,8 @@
 # Copy to litellm_config.yaml and fill api_key / api_base (or use os.environ/VAR).
 # litellm_config.yaml is gitignored — never commit real credentials.
+#
+# Client model field format: route_model;agent_name;role
+# Per-agent kernel settings: agents/*.yaml
 
 model_list:
   - model_name: gpt-5.5
@@ -7,70 +10,70 @@ model_list:
       model: gpt-5.5
       api_key: os.environ/ARBITEROS_UPSTREAM_API_KEY
       api_base: https://your-provider.example/v1
-      response_format:
-        type: json_schema
-        json_schema:
-          name: instruction_output
-          schema:
+  - model_name: gpt-5.2-chat-latest
+    litellm_params:
+      model: openai/gpt-5.5
+      api_key: os.environ/ARBITEROS_UPSTREAM_API_KEY
+      api_base: https://your-provider.example/v1
+  - model_name: claude-sonnet-4-5-20250929
+    litellm_params:
+      model: anthropic/claude-sonnet-4-5-20250929
+      api_key: os.environ/ARBITEROS_UPSTREAM_API_KEY
+      api_base: https://your-provider.example/v1
+
+response_format:
+  type: json_schema
+  json_schema:
+    name: instruction_output
+    schema:
+      type: object
+      properties:
+        topic:
+          type: string
+          description: "A concise topic/title for this turn (keep it short, e.g. 8-20 Chinese chars or <= 40 chars)."
+          maxLength: 60
+        category:
+          type: string
+          enum:
+            - COGNITIVE_CORE__REASON
+            - COGNITIVE_CORE__PLAN
+            - COGNITIVE_CORE__CRITIQUE
+            - COGNITIVE_CORE__ASK
+            - COGNITIVE_CORE__RESPOND
+          description: "The instruction category type. Use the most Accurate category possible, rather than only choose 'COGNITIVE_CORE__RESPOND'. "
+        content:
+          type: string
+          description: "The actual content of the instruction. It can be anything and in any format you need to generate."
+        depends_on:
+          type: array
+          items:
             type: object
             properties:
-              topic:
+              instruction_id:
                 type: string
-                description: "A concise topic/title for this turn (keep it short, e.g. 8-20 Chinese chars or <= 40 chars)."
-                maxLength: 60
-              category:
+                description: "Prior instruction id from an [ARBITEROS_REF ...] marker."
+              confidence:
+                type: number
+                minimum: 0
+                maximum: 1
+                description: "How direct and necessary this causal link is (0-1)."
+              counterfactual:
                 type: string
-                enum:
-                  - COGNITIVE_CORE__REASON
-                  - COGNITIVE_CORE__PLAN
-                  - COGNITIVE_CORE__CRITIQUE
-                  - COGNITIVE_CORE__ASK
-                  - COGNITIVE_CORE__RESPOND
-                description: "The instruction category type. Use the most Accurate category possible, rather than only choose 'COGNITIVE_CORE__RESPOND'. "
-              content:
-                type: string
-                description: "The actual content of the instruction. It can be anything and in any format you need to generate."
-              depends_on:
-                type: array
-                items:
-                  type: object
-                  properties:
-                    instruction_id:
-                      type: string
-                      description: "Prior instruction id from an [ARBITEROS_REF ...] marker."
-                    confidence:
-                      type: number
-                      minimum: 0
-                      maximum: 1
-                      description: "How direct and necessary this causal link is (0-1)."
-                    counterfactual:
-                      type: string
-                      maxLength: 240
-                      description: "One short sentence: if that predecessor had not occurred or produced its output, how would this step likely change?"
-                  required:
-                    - instruction_id
-                    - confidence
-                    - counterfactual
-                  additionalProperties: false
-                description: "Prior-step dependencies from [ARBITEROS_REF ...] markers; each entry needs instruction_id, confidence (0-1), and counterfactual. Use [] when none. Allowed ids are injected at request time."
+                maxLength: 240
+                description: "One short sentence: if that predecessor had not occurred or produced its output, how would this step likely change?"
             required:
-              - topic
-              - category
-              - content
-              - depends_on
+              - instruction_id
+              - confidence
+              - counterfactual
             additionalProperties: false
-          strict: true
-
-arbiteros_config:
-  tool_agent: codex
-  depends_on_sidecar:
-    enabled: false
-  upstream_compat:
-    enabled: true
-    rules:
-      - match_model: "gpt-5.5"
-        strip_metadata: true
-        force_non_stream: true
+          description: "Prior-step dependencies from [ARBITEROS_REF ...] markers; each entry needs instruction_id, confidence (0-1), and counterfactual. Use [] when none. Allowed ids for this turn appear in the trailing [arbiteros_turn_context] block."
+      required:
+        - topic
+        - category
+        - content
+        - depends_on
+      additionalProperties: false
+    strict: true
 
 arbiteros_local_policy_confirm: true
 arbiteros_local_policy_confirm_test_mode: false
@@ -83,6 +86,15 @@ precall_log_enabled: true
 # Optional offline replay validation against a analyzed instance:
 #   ARBITEROS_COST_DOWN_VALIDATION_POLICY=/path/to/reports/.../cost_down/policy.json
 # Deprecated alias (rule engine only): ARBITEROS_COST_DOWN_POLICY
+
+# Prompt-cache stable prefix (kernel default ON): freeze tools/schema/instructions and append
+# ephemeral [arbiteros_turn_context] at the end. Rollback: ARBITEROS_PROMPT_CACHE_STABLE_PREFIX=0
+
+# Said/Done PreToolUse defender (Gateway pending + Codex hook match/escalate).
+# true  => record TOOLCALLs and gate PreToolUse (auto-allow match, else watch).
+# false => like before: no pending registration; hook auto-allows (no escalate).
+# Env override: ARBITEROS_SAID_DONE_HOOK_ENABLED=0|1
+said_done_hook_enabled: false
 
 litellm_settings:
   drop_params: true

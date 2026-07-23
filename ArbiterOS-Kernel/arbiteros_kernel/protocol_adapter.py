@@ -519,9 +519,98 @@ def inject_system_hint_into_request(
     return data
 
 
+def _message_text_contains_marker(content: Any, marker: str) -> bool:
+    if isinstance(content, str):
+        return marker in content
+    if isinstance(content, list):
+        for part in content:
+            if isinstance(part, dict):
+                text = part.get("text")
+                if isinstance(text, str) and marker in text:
+                    return True
+            elif isinstance(part, str) and marker in part:
+                return True
+    return False
+
+
+def append_trailing_control_message(
+    data: dict[str, Any], *, content: str, marker: str
+) -> dict[str, Any]:
+    """Append an ephemeral kernel control message at the END (cache-friendly).
+
+    Uses role=system (chat) or role=developer (Responses). Never role=user, so
+    turn detection / policy user extraction stay untouched when filters also apply.
+    """
+    if not isinstance(data, dict) or not content.strip() or not marker.strip():
+        return data
+
+    # Chat Completions / Anthropic messages[]
+    messages = data.get("messages")
+    if isinstance(messages, list):
+        filtered: list[Any] = []
+        for msg in messages:
+            if (
+                isinstance(msg, dict)
+                and msg.get("role") == "system"
+                and _message_text_contains_marker(msg.get("content"), marker)
+            ):
+                continue
+            filtered.append(msg)
+        filtered.append({"role": "system", "content": content})
+        return {**data, "messages": filtered}
+
+    # Responses API: append developer message to input (do NOT touch instructions).
+    if is_responses_api_request(data):
+        input_items = data.get("input")
+        new_input: list[Any] = []
+        if isinstance(input_items, list):
+            for item in input_items:
+                if (
+                    isinstance(item, dict)
+                    and str(item.get("type") or "").strip() == "message"
+                    and str(item.get("role") or "").strip() in {"developer", "system"}
+                    and _message_text_contains_marker(item.get("content"), marker)
+                ):
+                    continue
+                new_input.append(item)
+        elif isinstance(input_items, str) and input_items.strip():
+            new_input.append(
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": input_items}],
+                }
+            )
+        new_input.append(
+            {
+                "type": "message",
+                "role": "developer",
+                "content": [{"type": "input_text", "text": content}],
+            }
+        )
+        return {**data, "input": new_input}
+
+    # Anthropic top-level system only (no messages): last-resort append to system.
+    # Prefer messages[] when present (handled above). This path is cache-suboptimal
+    # but preserves functionality for rare system-only requests.
+    if request_has_top_level_system(data):
+        if _system_field_contains_marker(data.get("system"), marker):
+            return normalize_anthropic_system_layout(data)
+        new_system = _append_text_to_system_field(data.get("system"), content)
+        return normalize_anthropic_system_layout({**data, "system": new_system})
+
+    return data
+
+
 def extract_all_user_messages_from_request(request_data: Any) -> list[str]:
     if not isinstance(request_data, dict):
         return []
+
+    try:
+        from arbiteros_kernel.instruction_depends_on import is_kernel_control_plane_text
+    except Exception:  # pragma: no cover
+        def is_kernel_control_plane_text(text: Any) -> bool:  # type: ignore
+            return False
 
     out: list[str] = []
     messages = request_data.get("messages")
@@ -532,7 +621,7 @@ def extract_all_user_messages_from_request(request_data: Any) -> list[str]:
             if msg.get("role") != "user":
                 continue
             text = extract_text_from_message_content(msg.get("content")).strip()
-            if text:
+            if text and not is_kernel_control_plane_text(text):
                 out.append(text)
         return out
 
@@ -540,7 +629,7 @@ def extract_all_user_messages_from_request(request_data: Any) -> list[str]:
         input_payload = request_data.get("input")
         if isinstance(input_payload, str):
             text = input_payload.strip()
-            if text:
+            if text and not is_kernel_control_plane_text(text):
                 out.append(text)
             return out
         if isinstance(input_payload, dict):
@@ -548,14 +637,14 @@ def extract_all_user_messages_from_request(request_data: Any) -> list[str]:
             if isinstance(role, str) and role != "user":
                 return out
             text = extract_text_from_message_content(input_payload.get("content")).strip()
-            if text:
+            if text and not is_kernel_control_plane_text(text):
                 out.append(text)
             return out
         if isinstance(input_payload, list):
             for item in input_payload:
                 if isinstance(item, str):
                     text = item.strip()
-                    if text:
+                    if text and not is_kernel_control_plane_text(text):
                         out.append(text)
                     continue
                 if not isinstance(item, dict):
@@ -564,7 +653,7 @@ def extract_all_user_messages_from_request(request_data: Any) -> list[str]:
                 if isinstance(role, str) and role != "user":
                     continue
                 text = extract_text_from_message_content(item.get("content")).strip()
-                if text:
+                if text and not is_kernel_control_plane_text(text):
                     out.append(text)
     return out
 

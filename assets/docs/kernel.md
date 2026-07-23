@@ -117,12 +117,12 @@ The Kernel reads the LiteLLM config file (typically `ArbiterOS-Kernel/litellm_co
   - `_wrap_messages_with_categories()`, `_wrap_request_with_categories()`.
 6. **Context instruction sync**: Register system and user messages as first-class instructions (once per `context_key`).
   - `_sync_context_instructions_for_trace()` via `_inject_ref_markers_into_messages()`.
-7. `**[ARBITEROS_REF]` watermark injection**: Prefix conversation messages with `[ARBITEROS_REF id=<uuid> kind=…]` so the model can cite prior steps in `depends_on`.
-  - `_inject_ref_markers_into_messages()`, `_inject_ref_markers_into_responses_input()`.
-8. **Tool result instruction emit (deduped)**: Scan request history for `role: "tool"` (or Responses `function_call_output`) and append **new** `TOOLRESULT` instructions only.
+7. **Tool result instruction emit (deduped)**: Scan request history for `role: "tool"` (or Responses `function_call_output`) and append **new** `TOOLRESULT` instructions only. Must run **before** REF injection so the first turn that sees a tool output already has the stable TOOLRESULT id.
   - `_emit_tool_result_nodes_if_needed()`; skips when `builder_has_tool_result_for_call_id()` or `_should_emit_tool_result_once()` already recorded the `tool_call_id`.
-9. **Topic hint**: Inject the previous turn’s topic summary into the prompt.
-  - `_inject_topic_summary_hint()`.
+8. `**[ARBITEROS_REF]` watermark injection**: Prefix conversation messages with `[ARBITEROS_REF id=<uuid> kind=…]` so the model can cite prior steps in `depends_on`. Tool-result slots only use a real TOOLRESULT instruction id (never the TOOLCALL id).
+  - `_inject_ref_markers_into_messages()`, `_inject_ref_markers_into_responses_input()`.
+9. **Prompt-cache stable prefix** (default on; disable with `ARBITEROS_PROMPT_CACHE_STABLE_PREFIX=0`): keep `tools` / `text.format` / `instructions` free of turn-varying allowed-id enums and topic/depends suffixes. Append one ephemeral `[arbiteros_turn_context]` control message at the **end** of `messages`/`input` (role `system` or `developer`, never `user`) with topic hint + allowed ids.
+  - `_inject_turn_context_trailer()` via `append_trailing_control_message()`.
 10. **Logging**: Write to `log/precall.jsonl`, optional `log/precall/{trace_id}.json`, and `log/api_calls.jsonl`.
   - `_save_precall_to_log()`, `_save_json()`.
 11. **Inject metadata & forward**: Add `arbiteros_trace_id` and `arbiteros_device_key` to request metadata, then return data for LiteLLM to forward.
@@ -278,13 +278,15 @@ Instructions are JSON objects appended by `InstructionBuilder` and serialized un
 ### 7.3 `[ARBITEROS_REF]` watermarks and `depends_on` flow
 
 1. **Record**: Each committed instruction gets a UUID (`id`) and an `arbiteros_ref_kind`.
-2. **Inject (pre-call)**: Before the LLM call, the kernel prefixes the matching conversation slot with
+2. **Emit TOOLRESULT (pre-call)**: When history contains a new tool output, create the TOOLRESULT instruction **before** watermark injection so the REF id is stable on the first turn that sees that output.
+3. **Inject (pre-call)**: Before the LLM call, the kernel prefixes the matching conversation slot with
   `[ARBITEROS_REF id=<uuid> kind=SYSTEMPROMPT|USERINPUT|TOOLCALL|TOOLRESULT|LLMOUTPUT]`.
-3. **Constrain (pre-call)**: `_inject_depends_on_schema_into_response_format()` lists allowed prior `instruction_id` values in the structured-output schema so the model cannot cite unknown ids.
-4. **Declare (model)**: Structured assistant output or tool `arguments` include `depends_on: [{ instruction_id, confidence, counterfactual }, …]`.
-5. **Strip (post-call)**: `_strip_and_record_tool_depends_on_in_arguments()` removes `depends_on` from tool arguments returned to the agent and from the copy stored in `content.arguments`.
-6. **Resolve (post-call)**: `_set_instruction_depends_on()` normalizes declarations into the persisted `depends_on` array on each new instruction.
-7. **Sidecar (optional)**: When `depends_on_sidecar.enabled` is true, plain-text `RESPOND` steps without model-declared deps may receive a second internal LLM pass (`source: "sidecar"`).
+   Tool-output slots only accept a real TOOLRESULT instruction id (never the sibling TOOLCALL id).
+4. **Constrain (pre-call)**: `_inject_depends_on_schema_into_response_format()` keeps a **static** depends_on schema (no per-turn enum when prompt-cache stable prefix is on). Allowed ids for the turn are listed in the trailing `[arbiteros_turn_context]` block instead.
+5. **Declare (model)**: Structured assistant output or tool `arguments` include `depends_on: [{ instruction_id, confidence, counterfactual }, …]`.
+6. **Strip (post-call)**: `_strip_and_record_tool_depends_on_in_arguments()` removes `depends_on` from tool arguments returned to the agent and from the copy stored in `content.arguments`.
+7. **Resolve (post-call)**: `_set_instruction_depends_on()` normalizes declarations into the persisted `depends_on` array on each new instruction (unknown ids are dropped).
+8. **Sidecar (optional)**: When `depends_on_sidecar.enabled` is true, plain-text `RESPOND` steps without model-declared deps may receive a second internal LLM pass (`source: "sidecar"`).
 
 **TOOLRESULT deduplication**: Agents that replay full chat history (e.g. OpenHands) resend all prior `role: "tool"` messages on every turn. `_emit_tool_result_nodes_if_needed()` scans that history but emits at most **one** `TOOLRESULT` instruction per `tool_call_id` per trace (`builder_has_tool_result_for_call_id` + `_should_emit_tool_result_once`).
 

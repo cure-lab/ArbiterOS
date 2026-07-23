@@ -49,6 +49,53 @@ def test_parse_sidecar_depends_on_payload():
     assert parsed[0]["instruction_id"] == "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 
 
+def test_parse_sidecar_depends_on_payload_markdown_fence():
+    """Claude often wraps sidecar JSON in ```json fences; must still parse."""
+    iid = "58173ceb-7bdb-4e64-bd67-f9320388be7c"
+    fenced = (
+        "```json\n"
+        "{\n"
+        '  "depends_on": [\n'
+        "    {\n"
+        f'      "instruction_id": "{iid}",\n'
+        '      "confidence": 0.95,\n'
+        '      "counterfactual": "Without the user input, clarification would not occur."\n'
+        "    }\n"
+        "  ]\n"
+        "}\n"
+        "```"
+    )
+    parsed = parse_sidecar_depends_on_payload(fenced)
+    assert len(parsed) == 1
+    assert parsed[0]["instruction_id"] == iid
+    assert parsed[0]["confidence"] == 0.95
+
+
+def test_parse_sidecar_depends_on_payload_prose_wrapped_json():
+    iid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    body = json.dumps(
+        {
+            "depends_on": [
+                {
+                    "instruction_id": iid,
+                    "confidence": 0.8,
+                    "counterfactual": "Prior step required.",
+                }
+            ]
+        }
+    )
+    wrapped = f"Here is the dependency declaration:\n{body}\nThanks."
+    parsed = parse_sidecar_depends_on_payload(wrapped)
+    assert len(parsed) == 1
+    assert parsed[0]["instruction_id"] == iid
+
+
+def test_parse_sidecar_depends_on_payload_invalid_returns_empty():
+    assert parse_sidecar_depends_on_payload("not json") == []
+    assert parse_sidecar_depends_on_payload("```json\n[]\n```") == []
+    assert parse_sidecar_depends_on_payload("") == []
+
+
 def test_build_sidecar_response_format_has_depends_on_array():
     schema = build_sidecar_response_format([], current_runtime_step=1)
     props = schema["json_schema"]["schema"]["properties"]
@@ -67,6 +114,8 @@ def test_build_sidecar_messages_includes_content():
     assert messages[0]["role"] == "system"
     assert messages[1]["role"] == "user"
     assert "final answer" in messages[1]["content"]
+    assert "FULL instruction uuid" in messages[0]["content"]
+    assert "no markdown fences" in messages[0]["content"]
 
 
 def test_invoke_depends_on_sidecar_success():
@@ -112,6 +161,40 @@ def test_invoke_depends_on_sidecar_success():
     assert raw[0]["instruction_id"] == prior_id
 
 
+def test_invoke_depends_on_sidecar_parses_markdown_fence():
+    prior_id = "11111111-2222-3333-4444-555555555555"
+    body = json.dumps(
+        {
+            "depends_on": [
+                {
+                    "instruction_id": prior_id,
+                    "confidence": 0.9,
+                    "counterfactual": "Would lack user question.",
+                }
+            ]
+        }
+    )
+
+    def fake_completion(**_kwargs):
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(content=f"```json\n{body}\n```")
+                )
+            ]
+        )
+
+    raw = invoke_depends_on_sidecar(
+        model="claude-sonnet-4-5-20250929",
+        instructions=[{"id": prior_id, "runtime_step": 1, "content": "hi"}],
+        respond_content="answer",
+        current_runtime_step=2,
+        completion_fn=fake_completion,
+    )
+    assert len(raw) == 1
+    assert raw[0]["instruction_id"] == prior_id
+
+
 def test_invoke_depends_on_sidecar_uses_request_model_name():
     seen: dict[str, Any] = {}
 
@@ -148,19 +231,19 @@ def test_invoke_depends_on_sidecar_failure_returns_empty():
 
 
 @patch(
-    "arbiteros_kernel.depends_on_sidecar._read_litellm_config_yaml",
-    return_value={"arbiteros_config": {"depends_on_sidecar": {"enabled": True}}},
+    "arbiteros_kernel.agent_registry.read_depends_on_sidecar_enabled_for_agent",
+    return_value=True,
 )
 def test_read_depends_on_sidecar_enabled_true(_mock_cfg):
-    assert read_depends_on_sidecar_enabled() is True
+    assert read_depends_on_sidecar_enabled("claude_code") is True
 
 
 @patch(
-    "arbiteros_kernel.depends_on_sidecar._read_litellm_config_yaml",
-    return_value={"arbiteros_config": {"depends_on_sidecar": {"enabled": False}}},
+    "arbiteros_kernel.agent_registry.read_depends_on_sidecar_enabled_for_agent",
+    return_value=False,
 )
 def test_read_depends_on_sidecar_enabled_false(_mock_cfg):
-    assert read_depends_on_sidecar_enabled() is False
+    assert read_depends_on_sidecar_enabled("openclaw") is False
 
 
 def test_apply_respond_text_depends_on_sidecar_override(monkeypatch):
@@ -185,7 +268,7 @@ def test_apply_respond_text_depends_on_sidecar_override(monkeypatch):
         "content": "hello back",
     }
 
-    monkeypatch.setattr(cb, "read_depends_on_sidecar_enabled", lambda: True)
+    monkeypatch.setattr(cb, "read_depends_on_sidecar_enabled", lambda *args, **kwargs: True)
     monkeypatch.setattr(
         cb,
         "invoke_depends_on_sidecar",
@@ -231,7 +314,7 @@ def test_apply_respond_text_depends_on_disabled_uses_pending(monkeypatch):
         "content": "hello back",
     }
 
-    monkeypatch.setattr(cb, "read_depends_on_sidecar_enabled", lambda: False)
+    monkeypatch.setattr(cb, "read_depends_on_sidecar_enabled", lambda *args, **kwargs: False)
     cb._set_pending_text_depends_on(
         "trace-2",
         [
@@ -257,7 +340,7 @@ def test_should_skip_depends_on_sidecar_ignores_non_stream_proxy_body(monkeypatc
     from arbiteros_kernel import litellm_callback as cb
 
     monkeypatch.setattr(
-        cb, "_read_tool_agent_from_litellm_config", lambda: "claude_code"
+        cb, "_get_request_agent_name", lambda incoming=None: "claude_code"
     )
     request_data = {
         "messages": [{"role": "user", "content": "你是谁"}],
@@ -270,7 +353,7 @@ def test_should_skip_depends_on_sidecar_title_turn(monkeypatch):
     from arbiteros_kernel import litellm_callback as cb
 
     monkeypatch.setattr(
-        cb, "_read_tool_agent_from_litellm_config", lambda: "claude_code"
+        cb, "_get_request_agent_name", lambda incoming=None: "claude_code"
     )
     request_data = {
         "messages": [
@@ -292,7 +375,7 @@ def test_should_skip_depends_on_sidecar_not_duplicate_shadow_retry(monkeypatch):
     from arbiteros_kernel import litellm_callback as cb
 
     monkeypatch.setattr(
-        cb, "_read_tool_agent_from_litellm_config", lambda: "claude_code"
+        cb, "_get_request_agent_name", lambda incoming=None: "claude_code"
     )
     request_data = {
         "model": "claude-sonnet-4-5-20250929",
@@ -328,9 +411,9 @@ def test_apply_respond_text_depends_on_non_stream_claude_code_invokes_sidecar(
         "content": "hello back",
     }
 
-    monkeypatch.setattr(cb, "read_depends_on_sidecar_enabled", lambda: True)
+    monkeypatch.setattr(cb, "read_depends_on_sidecar_enabled", lambda *args, **kwargs: True)
     monkeypatch.setattr(
-        cb, "_read_tool_agent_from_litellm_config", lambda: "claude_code"
+        cb, "_get_request_agent_name", lambda incoming=None: "claude_code"
     )
     monkeypatch.setattr(
         cb,

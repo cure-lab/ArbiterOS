@@ -44,6 +44,19 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.pretty import Pretty
 
+from arbiteros_kernel.agent_registry import (
+    agent_name_from_request_data,
+    copy_global_response_format,
+    resolve_upstream_compat_flags as _resolve_upstream_compat_flags_for_agent,
+    set_request_agent,
+    validate_request_route,
+)
+from arbiteros_kernel.chat_agent_session import (
+    build_user_id_from_session_anchor,
+    extract_runtime_channel_from_messages,
+    extract_session_anchor_from_messages,
+    is_chat_gateway_tool_agent,
+)
 from arbiteros_kernel.langfuse_env import ensure_langfuse_env_compat
 from arbiteros_kernel.policy.alignment_trigger import (
     should_trigger_postexec_sentinel,
@@ -57,6 +70,7 @@ from arbiteros_kernel.policy_check import (
     check_response_policy,
     is_local_policy_confirm_enabled,
     resolve_role_policy_enabled_override,
+    split_model_agent_role,
     split_model_and_role,
 )
 from arbiteros_kernel.precall_policy_check import check_precall_policy
@@ -72,6 +86,7 @@ from arbiteros_kernel.protocol_adapter import (
     extract_text_from_responses_output as _pa_extract_text_from_responses_output,
     finalize_responses_stream as _pa_finalize_responses_stream,
     inject_system_hint_into_request as _pa_inject_system_hint_into_request,
+    append_trailing_control_message as _pa_append_trailing_control_message,
     normalize_anthropic_system_layout as _pa_normalize_anthropic_system_layout,
     request_has_top_level_system as _pa_request_has_top_level_system,
     is_responses_api_request as _pa_is_responses_api_request,
@@ -95,16 +110,19 @@ from arbiteros_kernel.instruction_depends_on import (
     REF_KIND_TOOLRESULT,
     REF_KIND_USERINPUT,
     SOURCE_SIDECAR,
+    TURN_CONTEXT_MARKER,
     _dedupe_entries as dedupe_depends_on_entries,
+    build_allowed_depends_on_instruction_ids,
     build_depends_on_entry_schema,
     build_depends_on_items_schema,
     build_depends_on_schema_description,
     build_tool_depends_on_description,
+    build_turn_context_content,
     builder_has_tool_result_for_call_id,
-    find_instruction_id_by_tool_call_id,
     find_tool_result_instruction_for_call_id,
     format_arbiteros_ref_marker,
     instruction_ref_kind,
+    is_kernel_control_plane_text,
     kernel_depends_on_tool_call,
     normalize_depends_on_declarations,
     normalize_text_depends_on_raw,
@@ -608,16 +626,24 @@ def _read_litellm_config_yaml() -> dict[str, Any]:
 
 
 def _lookup_response_format_from_litellm_config(model: str) -> Optional[dict[str, Any]]:
-    """Resolve ``response_format`` from ``litellm_config.yaml`` model_list for *model*."""
+    """Resolve global ``response_format`` from ``litellm_config.yaml``."""
+    _ = model
+    cfg = _read_litellm_config_yaml()
+    if not isinstance(cfg, dict):
+        return None
+    global_rf = copy_global_response_format(cfg)
+    if global_rf is not None:
+        return global_rf
+
+    # Legacy fallback: per-model response_format in model_list.
     requested = (model or "").strip()
     if not requested:
         return None
-    base_model, _role = split_model_and_role(requested)
+    route_model, _, _ = split_model_agent_role(requested)
     candidates = {requested}
-    if isinstance(base_model, str) and base_model.strip():
-        candidates.add(base_model.strip())
-    cfg = _read_litellm_config_yaml()
-    model_list = cfg.get("model_list") if isinstance(cfg, dict) else None
+    if isinstance(route_model, str) and route_model.strip():
+        candidates.add(route_model.strip())
+    model_list = cfg.get("model_list")
     if not isinstance(model_list, list):
         return None
     for entry in model_list:
@@ -686,16 +712,8 @@ def _read_skill_scanner_llm_triple_from_litellm_config() -> tuple[Optional[str],
     return None, None, None
 
 
-def _read_tool_agent_from_litellm_config() -> Optional[str]:
-    cfg = _read_litellm_config_yaml()
-    arb_cfg = cfg.get("arbiteros_config") if isinstance(cfg, dict) else {}
-    if not isinstance(arb_cfg, dict):
-        return None
-    raw_tool_agent = arb_cfg.get("tool_agent")
-    if not isinstance(raw_tool_agent, str):
-        return None
-    normalized = raw_tool_agent.strip().lower()
-    return normalized or None
+def _get_request_agent_name(incoming: Optional[dict] = None) -> Optional[str]:
+    return agent_name_from_request_data(incoming)
 
 
 def _precall_log_enabled_from_litellm_config() -> bool:
@@ -711,8 +729,8 @@ def _precall_log_enabled_from_litellm_config() -> bool:
 def _normalize_model_name_for_compat(raw_model: Any) -> str:
     if not isinstance(raw_model, str):
         return ""
-    parsed_model, _ = split_model_and_role(raw_model)
-    model_name = parsed_model if isinstance(parsed_model, str) and parsed_model else raw_model
+    route_model, _, _ = split_model_agent_role(raw_model)
+    model_name = route_model if isinstance(route_model, str) and route_model else raw_model
     return _upstream_model_name_for_chat_api(model_name.strip())
 
 
@@ -728,56 +746,12 @@ def _model_matches_compat_rule(rule_value: Any, normalized_model: str) -> bool:
     return False
 
 
-def _resolve_upstream_compat_flags(model: Any) -> dict[str, bool]:
-    """
-    Resolve upstream compatibility flags for the current request model.
-
-    Supports both:
-    - new format: arbiteros_config.upstream_compat.rules[]
-    - legacy format: arbiteros_config.upstream_compat.<flag>_for[]
-    """
-    defaults = {
-        "strip_metadata": False,
-        "force_non_stream": False,
-        "prefer_chat_completions": False,
-    }
-    normalized_model = _normalize_model_name_for_compat(model)
-    if not normalized_model:
-        return defaults
-
-    cfg = _read_litellm_config_yaml()
-    arb_cfg = cfg.get("arbiteros_config") if isinstance(cfg, dict) else {}
-    if not isinstance(arb_cfg, dict):
-        return defaults
-    compat_cfg = arb_cfg.get("upstream_compat")
-    if not isinstance(compat_cfg, dict):
-        return defaults
-    if compat_cfg.get("enabled") is False:
-        return defaults
-
-    resolved = dict(defaults)
-    rules = compat_cfg.get("rules")
-    if isinstance(rules, list):
-        for rule in rules:
-            if not isinstance(rule, dict):
-                continue
-            if not _model_matches_compat_rule(rule.get("match_model"), normalized_model):
-                continue
-            for key in resolved:
-                if isinstance(rule.get(key), bool):
-                    resolved[key] = resolved[key] or bool(rule.get(key))
-
-    # Backward-compatible shorthand flags.
-    shorthand_map = {
-        "strip_metadata_for": "strip_metadata",
-        "force_non_stream_for": "force_non_stream",
-        "force_chat_completions_for": "prefer_chat_completions",
-    }
-    for source_key, target_key in shorthand_map.items():
-        if _model_matches_compat_rule(compat_cfg.get(source_key), normalized_model):
-            resolved[target_key] = True
-
-    return resolved
+def _resolve_upstream_compat_flags(
+    model: Any,
+    *,
+    agent_name: Optional[str] = None,
+) -> dict[str, bool]:
+    return _resolve_upstream_compat_flags_for_agent(model, agent_name=agent_name)
 
 
 _ALIGNMENT_SENTINEL_POSTEXEC_PROMPT = """
@@ -2421,10 +2395,13 @@ def _build_tool_depends_on_schema(
     current_runtime_step: Optional[int] = None,
 ) -> dict[str, Any]:
     del prior_items
+    stable = _prompt_cache_stable_prefix_enabled()
     return {
         "type": "array",
         "items": build_depends_on_items_schema(
-            instructions, current_runtime_step=current_runtime_step
+            instructions,
+            current_runtime_step=current_runtime_step,
+            include_allowed_id_enum=not stable,
         ),
         "description": build_tool_depends_on_description(
             [],
@@ -2432,6 +2409,7 @@ def _build_tool_depends_on_schema(
             use_codex_responses_wording=use_codex_responses_wording,
             use_claude_code_wording=use_claude_code_wording,
             current_runtime_step=current_runtime_step,
+            include_allowed_id_catalog=not stable,
         ),
     }
 
@@ -2541,6 +2519,9 @@ def _inject_tool_depends_on_global_hint(
     data: dict[str, Any], description_text: str
 ) -> None:
     """Fallback for built-in Codex tools that cannot accept parameters or description."""
+    if _prompt_cache_stable_prefix_enabled():
+        # Allowed-id / depends_on catalog lives in the trailing turn_context block.
+        return
     if not description_text.strip():
         return
     hint_content = (
@@ -2574,7 +2555,7 @@ def _inject_tool_depends_on_into_tools(
     instructions = _depends_on_instructions_for_trace(trace_id)
     next_step = len(instructions) + 1
     use_codex_wording = _is_responses_api_request(data)
-    use_claude_code_wording = _is_claude_code_tool_agent() and not use_codex_wording
+    use_claude_code_wording = _is_claude_code_tool_agent(data) and not use_codex_wording
     schema = _build_tool_depends_on_schema(
         prior_items,
         instructions,
@@ -2971,7 +2952,7 @@ def _extract_claude_code_scope_key(incoming: Any) -> Optional[str]:
 
 def _is_claude_code_duplicate_request(incoming: Any) -> bool:
     """Best-effort dedupe for Claude Code shadow retries of the same turn."""
-    if _read_tool_agent_from_litellm_config() != "claude_code":
+    if _get_request_agent_name(incoming) != "claude_code":
         return False
     if not isinstance(incoming, dict):
         return False
@@ -3086,7 +3067,7 @@ def _build_device_context(incoming: dict) -> _DeviceContext:
     messages = incoming.get("messages")
     if not isinstance(messages, list):
         messages = []
-    tool_agent = _read_tool_agent_from_litellm_config()
+    tool_agent = _get_request_agent_name(incoming)
     is_codex_agent = tool_agent == "codex"
     is_claude_code_agent = tool_agent == "claude_code"
     prompt_cache_key = _extract_prompt_cache_key(incoming) if is_codex_agent else None
@@ -3149,6 +3130,16 @@ def _build_device_context(incoming: dict) -> _DeviceContext:
         has_explicit_user_id = True
         if channel == "unknown-channel":
             channel = "claude_code"
+    elif is_chat_gateway_tool_agent(tool_agent):
+        if channel == "unknown-channel":
+            runtime_channel = extract_runtime_channel_from_messages(messages)
+            if runtime_channel:
+                channel = _normalize_device_fragment(runtime_channel)
+        if not has_explicit_user_id:
+            session_anchor = extract_session_anchor_from_messages(messages)
+            if session_anchor:
+                raw_user_id = build_user_id_from_session_anchor(session_anchor)
+                has_explicit_user_id = True
 
     normalized_user_cmd = (latest_user_text or "").strip().lower()
     reset_requested = (
@@ -4312,6 +4303,24 @@ def _stage_response_instructions_for_policy(
     )
 
 
+def _register_said_done_pending_from_response(
+    trace_id: Optional[str], response_dict: Optional[dict]
+) -> None:
+    """Register committed TOOLCALLs into the said/done pending index (no LLM)."""
+    if not isinstance(trace_id, str) or not trace_id.strip():
+        return
+    if not isinstance(response_dict, dict):
+        return
+    try:
+        from arbiteros_kernel.execution_check import register_pending_toolcalls
+    except Exception:
+        return
+    details = _extract_tool_call_details_from_response(response_dict)
+    if not details:
+        return
+    register_pending_toolcalls(trace_id=trace_id.strip(), toolcalls=details)
+
+
 def _commit_response_instructions_after_policy(
     builder: Any,
     trace_id: str,
@@ -4343,6 +4352,11 @@ def _commit_response_instructions_after_policy(
     _save_instructions_to_trace_file(
         trace_id, builder, token_usage_start_index=count_before
     )
+    # Said/Done: register TOOLCALLs present in the committed response (stripped ones absent).
+    try:
+        _register_said_done_pending_from_response(trace_id, response_dict)
+    except Exception:
+        pass
 
 
 def _replace_instructions_from_modified_response(
@@ -6558,7 +6572,7 @@ def _apply_respond_text_depends_on(
             depends_on_raw=depends_on_raw,
         )
         return
-    if not read_depends_on_sidecar_enabled():
+    if not read_depends_on_sidecar_enabled(_get_request_agent_name(request_data)):
         _log_depends_on_sidecar_decision(trace_id, instr, "use_model_pending", reason="disabled")
         _apply_text_instruction_depends_on(
             builder,
@@ -6746,11 +6760,16 @@ def _inject_depends_on_schema_into_response_format(
         if builder is not None:
             instructions = list(getattr(builder, "instructions", []) or [])
     next_step = len(instructions) + 1
+    stable = _prompt_cache_stable_prefix_enabled()
     dep["items"] = build_depends_on_items_schema(
-        instructions, current_runtime_step=next_step
+        instructions,
+        current_runtime_step=next_step,
+        include_allowed_id_enum=not stable,
     )
     dep["description"] = build_depends_on_schema_description(
-        instructions, current_runtime_step=next_step
+        instructions,
+        current_runtime_step=next_step,
+        include_allowed_id_catalog=not stable,
     )
 
 
@@ -7012,7 +7031,7 @@ def _should_skip_depends_on_sidecar_for_request(request_data: Any) -> bool:
     Narrower than ``_is_claude_code_aux_request``: non-streaming proxy requests and
     shadow dedupe markers must not suppress sidecar on the main committing request.
     """
-    if _read_tool_agent_from_litellm_config() != "claude_code":
+    if _get_request_agent_name(request_data) != "claude_code":
         return False
     if not isinstance(request_data, dict):
         return False
@@ -7046,7 +7065,7 @@ def _is_claude_code_aux_request(request_data: Any) -> bool:
     Detect Claude Code internal helper turns (recap/suggestion/shadow duplicate).
     These keep model IO intact but skip instruction accumulation; policy still runs.
     """
-    if _read_tool_agent_from_litellm_config() != "claude_code":
+    if _get_request_agent_name(request_data) != "claude_code":
         return False
     if not isinstance(request_data, dict):
         return False
@@ -7151,12 +7170,12 @@ def _add_instruction_for_non_strict(data: dict, content: str) -> None:
     )
 
 
-def _is_codex_tool_agent() -> bool:
-    return _read_tool_agent_from_litellm_config() == "codex"
+def _is_codex_tool_agent(incoming: Optional[dict] = None) -> bool:
+    return _get_request_agent_name(incoming) == "codex"
 
 
-def _is_claude_code_tool_agent() -> bool:
-    return _read_tool_agent_from_litellm_config() == "claude_code"
+def _is_claude_code_tool_agent(incoming: Optional[dict] = None) -> bool:
+    return _get_request_agent_name(incoming) == "claude_code"
 
 
 def _extract_codex_suffix_json_objects(content: str) -> tuple[str, list[dict[str, Any]]]:
@@ -7839,9 +7858,18 @@ def _extract_text_to_wrap(
     return (None, None, None)
 
 
-def _inject_topic_summary_hint(
-    data: dict, *, state: _TraceState, context: _DeviceContext
-) -> dict:
+def _prompt_cache_stable_prefix_enabled() -> bool:
+    """Keep tools/schema/instructions byte-stable; put turn-dynamic catalogs at the end.
+
+    Disable with ``ARBITEROS_PROMPT_CACHE_STABLE_PREFIX=0`` to restore legacy prefix injection.
+    """
+    raw = os.getenv("ARBITEROS_PROMPT_CACHE_STABLE_PREFIX", "1").strip().lower()
+    return raw not in {"0", "false", "no", "off"}
+
+
+def _build_topic_summary_hint_section(
+    *, state: _TraceState, context: _DeviceContext
+) -> str:
     previous_topic_raw = (
         state.latest_topic_summary
         if isinstance(state.latest_topic_summary, str)
@@ -7862,10 +7890,7 @@ def _inject_topic_summary_hint(
         if isinstance(context.latest_user_text, str)
         else None
     ) or "(none)"
-
-    marker = "[arbiteros_topic_hint]"
-    hint_content = (
-        f"{marker}\n"
+    return (
         "Generate JSON string field `topic` (for trace naming) using BOTH:\n"
         "1) current summarized topic\n"
         "2) latest user turn\n"
@@ -7887,10 +7912,60 @@ def _inject_topic_summary_hint(
         f"Current summarized topic: {previous_topic}\n"
         f"Latest user turn: {latest_user_turn}"
     )
+
+
+def _inject_topic_summary_hint(
+    data: dict, *, state: _TraceState, context: _DeviceContext
+) -> dict:
+    # Stable-prefix mode moves topic + allowed-id catalog into the trailing turn_context.
+    if _prompt_cache_stable_prefix_enabled():
+        return data
+    marker = "[arbiteros_topic_hint]"
+    hint_content = f"{marker}\n{_build_topic_summary_hint_section(state=state, context=context)}"
     return _pa_inject_system_hint_into_request(
         data,
         hint_content=hint_content,
         marker=marker,
+    )
+
+
+def _inject_turn_context_trailer(
+    data: dict,
+    *,
+    state: _TraceState,
+    context: _DeviceContext,
+    trace_id: Optional[str],
+) -> dict:
+    """Append ephemeral turn_context at the end of messages/input (not instructions)."""
+    if not _prompt_cache_stable_prefix_enabled():
+        return data
+    instructions = _depends_on_instructions_for_trace(trace_id)
+    next_step = len(instructions) + 1
+    allowed_ids = build_allowed_depends_on_instruction_ids(
+        instructions, current_runtime_step=next_step
+    )
+    use_codex_wording = _is_responses_api_request(data)
+    use_claude_code_wording = _is_claude_code_tool_agent(data) and not use_codex_wording
+    extra_hint = build_tool_depends_on_description(
+        [],
+        instructions,
+        use_codex_responses_wording=use_codex_wording,
+        use_claude_code_wording=use_claude_code_wording,
+        current_runtime_step=next_step,
+        include_allowed_id_catalog=False,
+    )
+    # Avoid duplicating the "listed in turn_context" sentence inside the trailer itself.
+    extra_hint = extra_hint.replace(
+        f"Allowed ids for this turn are listed in {TURN_CONTEXT_MARKER}.",
+        f"When calling tools, include {_TOOL_DEPENDS_ON_ARG} in arguments (use [] when none).",
+    )
+    content = build_turn_context_content(
+        topic_section=_build_topic_summary_hint_section(state=state, context=context),
+        allowed_ids=allowed_ids,
+        extra_tool_depends_hint=extra_hint,
+    )
+    return _pa_append_trailing_control_message(
+        data, content=content, marker=TURN_CONTEXT_MARKER
     )
 
 
@@ -8249,19 +8324,7 @@ def _wrap_messages_with_categories(
 
 
 def _is_kernel_injected_message_text(text: str) -> bool:
-    if not isinstance(text, str):
-        return True
-    stripped = text.lstrip()
-    lowered = stripped.lower()
-    if lowered.startswith(
-        (
-            "[arbiteros_",
-            "[arbiteros_topic_hint",
-            "[arbiteros_tool_depends_on",
-        )
-    ):
-        return True
-    return stripped.startswith("[ARBITEROS_")
+    return is_kernel_control_plane_text(text)
 
 
 def _context_instruction_by_key(
@@ -8616,18 +8679,20 @@ def _inject_ref_markers_into_messages(
             tc_id = msg.get("tool_call_id")
             if not isinstance(tc_id, str) or not tc_id.strip():
                 continue
-            # Prefer TOOLRESULT instruction only — never stamp a TOOLCALL uuid
-            # with kind=TOOLRESULT.
-            result_instr = find_tool_result_instruction_for_call_id(
-                instructions, tc_id.strip()
-            )
-            instr_id = None
-            if isinstance(result_instr, dict):
-                cand = result_instr.get("id")
-                if isinstance(cand, str) and cand.strip():
-                    instr_id = cand.strip()
+            # Only a real TOOLRESULT instruction id may be watermarked as
+            # kind=TOOLRESULT. Never fall back to the TOOLCALL id (that used to
+            # flip the marker on the next turn once TOOLRESULT was emitted).
+            instr_id = tool_result_id_to_instr_id.get(tc_id.strip())
             if not instr_id:
-                instr_id = tool_result_id_to_instr_id.get(tc_id.strip())
+                found = find_tool_result_instruction_for_call_id(
+                    instructions, tc_id.strip()
+                )
+                found_id = found.get("id") if isinstance(found, dict) else None
+                instr_id = (
+                    found_id.strip()
+                    if isinstance(found_id, str) and found_id.strip()
+                    else None
+                )
             if not instr_id:
                 continue
             marker = format_arbiteros_ref_marker(instr_id, REF_KIND_TOOLRESULT)
@@ -8910,18 +8975,20 @@ def _inject_ref_markers_into_responses_input(
             call_id = item.get("call_id")
             if not isinstance(call_id, str) or not call_id.strip():
                 continue
-            # Prefer TOOLRESULT instruction only — never stamp a TOOLCALL uuid
-            # with kind=TOOLRESULT.
-            result_instr = find_tool_result_instruction_for_call_id(
-                instructions, call_id.strip()
-            )
-            instr_id = None
-            if isinstance(result_instr, dict):
-                cand = result_instr.get("id")
-                if isinstance(cand, str) and cand.strip():
-                    instr_id = cand.strip()
+            # Only a real TOOLRESULT instruction id may be watermarked as
+            # kind=TOOLRESULT. Never fall back to the TOOLCALL id (that used to
+            # flip the marker on the next turn once TOOLRESULT was emitted).
+            instr_id = tool_result_id_to_instr_id.get(call_id.strip())
             if not instr_id:
-                instr_id = tool_result_id_to_instr_id.get(call_id.strip())
+                found = find_tool_result_instruction_for_call_id(
+                    instructions, call_id.strip()
+                )
+                found_id = found.get("id") if isinstance(found, dict) else None
+                instr_id = (
+                    found_id.strip()
+                    if isinstance(found_id, str) and found_id.strip()
+                    else None
+                )
             if not instr_id:
                 continue
             marker = format_arbiteros_ref_marker(instr_id, REF_KIND_TOOLRESULT)
@@ -9038,17 +9105,20 @@ class MyCustomHandler(CustomLogger):
     ]:  # raise exception if invalid, return a str for the user to receive - if rejected, or return a modified dictionary for passing into litellm
         if is_depends_on_sidecar_internal_request(data):
             return data
-        # Some upstreams (e.g. gpt-5.2-chat-latest) reject non-default temperature; clients often send 0.7.
         _m = data.get("model")
-        parsed_model, parsed_role_name = split_model_and_role(_m)
+        route_error, route_model, agent_name, parsed_role_name = validate_request_route(_m)
+        if route_error:
+            return route_error
+
+        data = {**data, "model": route_model}
+        set_request_agent(agent_name)
+
         role_policy_override: Optional[dict[str, bool]] = None
         role_policy_fallback_reason: Optional[str] = None
         role_policy_config_override: Optional[dict[str, Any]] = None
         role_policy_config_source: Optional[str] = None
         role_policy_config_fallback_reason: Optional[str] = None
-        if isinstance(parsed_model, str) and parsed_model and parsed_model != _m:
-            data = {**data, "model": parsed_model}
-        if isinstance(_m, str) and ";" in _m and not parsed_role_name:
+        if isinstance(_m, str) and _m.count(";") >= 2 and not parsed_role_name:
             role_policy_fallback_reason = "invalid_role_spec"
         if parsed_role_name:
             role_policy_override, role_policy_fallback_reason = (
@@ -9064,6 +9134,7 @@ class MyCustomHandler(CustomLogger):
         metadata_for_role = (
             dict(metadata_for_role) if isinstance(metadata_for_role, dict) else {}
         )
+        metadata_for_role["arbiteros_agent_name"] = agent_name or ""
         if parsed_role_name:
             metadata_for_role["arbiteros_role_name_requested"] = parsed_role_name
         else:
@@ -9141,6 +9212,33 @@ class MyCustomHandler(CustomLogger):
         if state is None:
             state, created_new_trace = _ensure_trace_state(context)
 
+        try:
+            from arbiteros_kernel.session_traces import register_trace
+
+            register_trace(state.trace_id if state is not None else None)
+        except Exception:
+            pass
+
+        # Scheme-B said/done index: map agent session keys → trace_id (additive only).
+        try:
+            from arbiteros_kernel.session_index import register_binding
+
+            pck = _extract_prompt_cache_key(data) if isinstance(data, dict) else None
+            claude_sid = (
+                _extract_claude_code_session_id(data)
+                if isinstance(data, dict)
+                else None
+            )
+            register_binding(
+                trace_id=state.trace_id if state is not None else None,
+                device_key=state.device_key if state is not None else None,
+                prompt_cache_key=pck,
+                session_id=claude_sid or pck,
+                channel=state.channel if state is not None else None,
+            )
+        except Exception:
+            pass
+
         if isinstance(role_policy_fallback_reason, str) and role_policy_fallback_reason:
             _save_json(
                 "role_policy_fallback",
@@ -9175,9 +9273,10 @@ class MyCustomHandler(CustomLogger):
                 user_messages=_extract_all_user_messages_from_request(data),
                 policy_enabled_override=role_policy_override,
             )
-        # Create TOOLRESULT instructions before stamping ARBITEROS_REF so
-        # function_call_output / role=tool markers use the TOOLRESULT uuid
-        # (not the parent TOOLCALL uuid).
+        # Emit TOOLRESULT instructions BEFORE REF watermarks so the first turn
+        # that sees a tool output already has the stable TOOLRESULT id. Injecting
+        # first used to stamp kind=TOOLRESULT with the TOOLCALL id, then flip the
+        # id on the next turn (breaking depends_on identity and prompt-cache prefixes).
         _emit_tool_result_nodes_if_needed(data, state)
         data = _inject_ref_markers_into_messages(data, trace_id=trace_id_for_cache)
         data = _inject_ref_markers_into_responses_input(
@@ -9237,7 +9336,6 @@ class MyCustomHandler(CustomLogger):
                 with _trace_state_lock:
                     state.root_observation_id = root_observation_id
         _ensure_turn_node_if_needed(context, state)
-        _emit_tool_result_nodes_if_needed(data, state)
         data = _inject_trace_metadata(data, state)
 
         # Policy confirmation: if detected, set mock_response (after category/topic etc. so trace_id is ready)
@@ -9392,7 +9490,17 @@ class MyCustomHandler(CustomLogger):
             )
             _save_json("pre_call", {"call_type": call_type, "incoming": filtered_data})
         _inject_tool_depends_on_into_tools(data, trace_id=trace_id_for_cache)
-        compat_flags = _resolve_upstream_compat_flags(data.get("model"))
+        # After tools/schemas are frozen: append turn-dynamic catalogs at the END only.
+        data = _inject_turn_context_trailer(
+            data,
+            state=state,
+            context=context,
+            trace_id=trace_id_for_cache,
+        )
+        compat_flags = _resolve_upstream_compat_flags(
+            data.get("model"),
+            agent_name=agent_name,
+        )
         metadata_for_backup = data.get("metadata") if isinstance(data, dict) else None
         if compat_flags.get("strip_metadata"):
             # Keep metadata for local backup/logical flow, but do not forward upstream
@@ -9421,7 +9529,7 @@ class MyCustomHandler(CustomLogger):
                 trace_id=trace_id_for_cache or "",
                 current_request=data,
                 instructions=instructions_for_precall,
-                tool_agent=_read_tool_agent_from_litellm_config(),
+                tool_agent=_get_request_agent_name(data),
             )
             data = precall_policy_result.request
         _save_precall_to_log(
