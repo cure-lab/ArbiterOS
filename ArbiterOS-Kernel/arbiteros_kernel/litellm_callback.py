@@ -4614,15 +4614,13 @@ def _normalize_tool_result_content_for_dedupe(content: Any) -> str:
 
 
 def _stamp_toolresult_ref_on_stored_result(instr: dict[str, Any]) -> None:
-    """Persist ``[ARBITEROS_REF id=<self> kind=TOOLRESULT]`` on ``result.raw``.
+    """Keep ``result.raw`` free of ``[ARBITEROS_REF ...]`` markers.
 
-    Incoming wire text may carry a wrong/stale marker (e.g. TOOLCALL uuid). Always
-    rewrite with this TOOLRESULT instruction's own id before saving to disk.
+    Incoming wire text may carry a wrong/stale marker (e.g. TOOLCALL uuid). Strip
+    those before saving to disk; the live wire prompt gets the stable TOOLRESULT
+    id from ``_inject_ref_markers_*`` instead (required for prompt-cache prefixes).
     """
     if not isinstance(instr, dict):
-        return
-    instr_id = instr.get("id")
-    if not isinstance(instr_id, str) or not instr_id.strip():
         return
     content = instr.get("content")
     if not isinstance(content, dict):
@@ -4633,17 +4631,8 @@ def _stamp_toolresult_ref_on_stored_result(instr: dict[str, Any]) -> None:
     raw = result.get("raw")
     if not isinstance(raw, str):
         return
-    marker = format_arbiteros_ref_marker(instr_id.strip(), REF_KIND_TOOLRESULT)
     body = strip_arbiteros_ref_markers(raw)
-    # Preserve a leading taint line if one was already stored in raw.
-    if body.startswith("[ARBITEROS_TAINT"):
-        taint_end = body.find("]\n")
-        if taint_end != -1:
-            taint_prefix = body[: taint_end + 2]
-            rest = body[taint_end + 2 :]
-            result["raw"] = taint_prefix + marker + rest
-            return
-    result["raw"] = marker + body
+    result["raw"] = body
 
 
 def _register_tool_result_emitted(

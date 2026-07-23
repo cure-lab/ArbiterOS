@@ -15,14 +15,14 @@ from arbiteros_kernel.litellm_callback import (
 
 
 def test_lookup_response_format_from_litellm_config():
-    rf = _lookup_response_format_from_litellm_config("gpt-4o")
+    rf = _lookup_response_format_from_litellm_config("gpt-5.5")
     assert isinstance(rf, dict)
     schema = rf.get("json_schema", {}).get("schema", {})
     assert "depends_on" in schema.get("properties", {})
 
 
 def test_ensure_kernel_response_format_injects_from_config():
-    data: dict = {"model": "gpt-4o"}
+    data: dict = {"model": "gpt-5.5"}
     _ensure_kernel_response_format(data)
     assert isinstance(data.get("response_format"), dict)
     props = (
@@ -121,8 +121,10 @@ def test_inject_responses_toolresult_ref_uses_toolresult_instruction_id():
     output = out["input"][1]["output"]
     assert output.startswith(f"[ARBITEROS_REF id={result_id} kind=TOOLRESULT]")
     assert call_instr_id not in output.split("\n", 1)[0]
+    # Stored result body stays clean; REF is wire-only (prompt-cache stable prefix).
     raw = result_instrs[0]["content"]["result"]["raw"]
-    assert raw.startswith(f"[ARBITEROS_REF id={result_id} kind=TOOLRESULT]")
+    assert not raw.startswith("[ARBITEROS_REF")
+    assert "file_a.py" in raw
     assert call_instr_id not in raw.split("\n", 1)[0]
 
 
