@@ -42,20 +42,20 @@ It focuses on three things first:
 
 ## Supported Integration Pattern
 
-ArbiterOS Kernel currently works best with agent runtimes that can override the model endpoint per request or per profile.
+ArbiterOS Kernel currently works best with agent runtimes that can override the model endpoint and model name per request or per profile.
 
-- Supported in current repository: `OpenClaw`, `Nanobot`, `Hermes Agent`, and additional parser mappings documented in the Kernel codebase.
+- Supported agent types: `openclaw`, `nanobot`, `hermes`, `codex`, `claude_code` (one Kernel, many in parallel).
 - Compatible serving pattern: OpenAI-compatible / LiteLLM-based routing.
 - Default local endpoint after startup: `http://127.0.0.1:4000/v1`
 
 ## See Value Quickly
 
-The fastest path is:
-
 1. Install and start `ArbiterOS-Kernel`.
-2. Configure one upstream model in `ArbiterOS-Kernel/litellm_config.yaml`.
-3. Point your agent runtime to `http://127.0.0.1:4000/v1`.
-4. Run a tool-using workflow and inspect the resulting trace, policy decisions, and runtime logs.
+2. Copy `ArbiterOS-Kernel/litellm_config.yaml.example` → `litellm_config.yaml` and fill upstream models.
+3. Point your agent to `http://127.0.0.1:4000/v1` with `model` set to `{route_model};{agent_name}` (e.g. `gpt-5.5;codex`).
+4. Run a tool-using task and inspect `ArbiterOS-Kernel/log/`.
+
+Multi-agent setup details: [ArbiterOS-Kernel/README.md](./ArbiterOS-Kernel/README.md) and [assets/docs/multi_agent_routing.md](./assets/docs/multi_agent_routing.md).
 
 ## Benchmarks
 
@@ -125,11 +125,11 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 
 ### Connect Your Agent Runtime
 
-After the Kernel starts:
+1. Copy `ArbiterOS-Kernel/litellm_config.yaml.example` → `litellm_config.yaml` and add models.
+2. Point the agent to `http://127.0.0.1:4000/v1`.
+3. Set `model` to `{route_model};{agent_name}` (e.g. `gpt-5.5;codex`, `claude-sonnet-4-5-20250929;claude_code`).
 
-1. Edit `ArbiterOS-Kernel/litellm_config.yaml` and fill in the upstream model, API key, and base URL.
-2. Point your agent runtime or provider profile to `http://127.0.0.1:4000/v1`.
-3. Run a tool-using task and inspect the Kernel output under runtime logs or Langfuse.
+See [ArbiterOS-Kernel/README.md](./ArbiterOS-Kernel/README.md) and [multi-agent routing](./assets/docs/multi_agent_routing.md) for configuration details.
 
 ## Optional: Langfuse UI
 
@@ -141,10 +141,12 @@ docker compose -f docker-compose.yml up -d --build
 
 ## Documentation
 
+- Kernel setup: `ArbiterOS-Kernel/README.md`
+- Multi-agent routing: `assets/docs/multi_agent_routing.md`
 - Kernel architecture: `assets/docs/kernel.md`
 - Policy interface: `assets/docs/kernel-policy_interface.md`
 - Registry and taint labels: `assets/docs/registry_usage.md`
-- Add support for a new agent: `assets/docs/add_new_agent.md`
+- Add support for a new agent parser: `assets/docs/add_new_agent.md`
 - Visualization guide: `assets/docs/visualization.md`
 - Documentation index: `assets/docs/README.md`
 

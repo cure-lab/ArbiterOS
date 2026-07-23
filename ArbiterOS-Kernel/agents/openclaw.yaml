@@ -1,0 +1,5 @@
+agent_name: openclaw
+depends_on_sidecar:
+  enabled: false
+upstream_compat:
+  enabled: false

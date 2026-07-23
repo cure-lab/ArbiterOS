@@ -38,6 +38,9 @@ run.parallel = ["mlflow", "litellm"]
 [tool.poe.tasks.litellm]
 sequence = ["warm-skills", "litellm-proxy"]
 
+[tool.poe.tasks.arbiteros]
+cmd = "uv run python -m arbiteros_kernel.tui"
+
 [tool.poe.tasks.langfuse_replay]
 cmd = "uv run python -m arbiteros_kernel.langfuse_replay --input log/api_calls.jsonl ${replay_args}"
 args = [{ name = "replay_args", positional = true, multiple = true }]
@@ -45,6 +48,12 @@ args = [{ name = "replay_args", positional = true, multiple = true }]
 [tool.poe.tasks.policy-test]
 cmd = "uv run python -m arbiteros_kernel.policy_test_harness ${spec_file}"
 args = [{ name = "spec_file", positional = true }]
+
+[tool.poe.tasks.defender-install]
+cmd = "uv run python hooks/defender/install_hooks.py"
+
+[tool.poe.tasks.defender-watch]
+cmd = "uv run python hooks/defender/watch.py"
 
 [tool.ty]
 environment = { python = ".venv" }

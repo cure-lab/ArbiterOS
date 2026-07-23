@@ -26,6 +26,7 @@ __all__ = [
     "is_local_policy_confirm_enabled",
     "resolve_role_policy_enabled_override",
     "split_model_and_role",
+    "split_model_agent_role",
 ]
 
 _ROLE_POLICY_SETS_PATH = (
@@ -123,6 +124,17 @@ def _prompt_local_policy_confirmation(
     """
     Return True to keep block, False to allow original response.
     """
+    try:
+        from arbiteros_kernel.tui_bridge import is_tui_mode, request_confirm_via_tui
+
+        if is_tui_mode():
+            return request_confirm_via_tui(
+                trace_id=trace_id,
+                error_type=error_type,
+                policy_names=policy_names,
+            )
+    except Exception:
+        pass
     with _LOCAL_CONFIRM_INPUT_LOCK:
         if _is_local_policy_confirm_test_mode():
             print(
@@ -231,6 +243,32 @@ def apply_policy_enforcement_mode(
         error_type=None,
         inactivate_error_type=msg,
     )
+
+
+def split_model_agent_role(model_value: Any) -> tuple[Optional[str], Optional[str], Optional[str]]:
+    """
+    Parse ``route_model;agent_name;role`` from request model field.
+
+    Returns ``(route_model, agent_name, role_name)``.
+    When no ``;`` is present, returns ``(raw_model, None, None)``.
+    With one ``;``, treats the suffix as ``agent_name``.
+    With two or more ``;``, the third segment is ``role_name``.
+    """
+    if not isinstance(model_value, str):
+        return None, None, None
+    raw = model_value.strip()
+    if not raw:
+        return None, None, None
+    if ";" not in raw:
+        return raw, None, None
+
+    parts = [part.strip() for part in raw.split(";")]
+    route_model = parts[0] if parts else raw
+    agent_name = parts[1] if len(parts) > 1 and parts[1] else None
+    role_name = parts[2] if len(parts) > 2 and parts[2] else None
+    if not route_model:
+        route_model = raw
+    return route_model, agent_name, role_name
 
 
 def split_model_and_role(model_value: Any) -> tuple[Optional[str], Optional[str]]:

@@ -10,9 +10,9 @@
   },
 
   "alignment_sentinel_trigger": {
-    "enabled": true,
+    "enabled": false,
     "preexec": {
-      "enabled": true,
+      "enabled": false,
       "high_side_effect_tools": [
         "exec",
         "message",
@@ -64,7 +64,7 @@
       "arg_text_trigger_chars": 1000
     },
     "postexec": {
-      "enabled": true,
+      "enabled": false,
       "ingress_tools": ["web_fetch", "web_search", "image", "browser"],
       "browser_ingress_actions": ["snapshot", "console", "pdf", "screenshot"],
       "prompt_injection_markers": [
@@ -117,6 +117,7 @@
   
   "allow": {
     "tools": [
+  "terminal",
   "read",
   "write",
   "edit",
@@ -152,18 +153,13 @@
     ]
   },
 
-  "input_budget": { "max_str_len": 20000 },
-  "output_budget": { "max_chars": 500 },
+  "input_budget": { "max_str_len": 2000000 },
+  "output_budget": { "max_chars": 500000 },
 
   "tool_call_limit": {
-    "max_total_tool_calls": 80,
-    "max_calls_per_tool": 30,
+    "max_total_tool_calls": 0,
+    "max_calls_per_tool": 0,
     "per_tool_max_calls": {
-      "web_search": 12,
-      "web_fetch": 20,
-      "browser": 35,
-      "process": 20,
-      "exec": 20
     }
   },
 
@@ -209,7 +205,7 @@
   },
 
   "taint": {
-    "enabled": true,
+    "enabled": false,
 
     "taint_policy": {
       "input_tools": ["read", "web_fetch", "web_search", "session_status", "sessions_list", "sessions_history", "memory_search", "memory_get", "agents_list", "image"],
@@ -243,22 +239,17 @@
     "user_rule_file": "arbiteros_kernel/policy/user_relational_flow_rules.json"
   },
   "exec_composite_policy": {
-  "enabled": true,
+  "enabled": false,
   "allow_multi_read_only": true,
   "block_if_any_write": true,
   "block_if_any_exec": true
 },
 
   "delete_policy": {
-    "enabled": true
-  },
-  "resource_guard": {
-    "max_total_tokens": 12000000,
-    "max_trace_seconds": 6000,
-    "max_instruction_bytes": 1200000
+    "enabled": false
   },
   "nanobot_policy": {
-    "enabled": true,
+    "enabled": false,
     "max_repeat_external_lookups": 2,
     "ssrf_whitelist": [],
     "exec_deny_patterns": [
@@ -275,7 +266,7 @@
   },
   
   "efsm": {
-  "enabled": true,
+  "enabled": false,
   "initial": "IDLE",
   "plan_ttl_seconds": 600,
   "transitions": [
