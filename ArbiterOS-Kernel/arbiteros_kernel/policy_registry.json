@@ -21,7 +21,7 @@
   },
   {
     "name": "RateLimitPolicy",
-    "enabled": true,
+    "enabled": false,
     "description": "Enforces per-conversation and per-tool hard tool-call budgets, plus consecutive-repeat limits."
   },
   {
@@ -46,12 +46,12 @@
   },
   {
     "name": "RelationalPolicy",
-    "enabled": true,
+    "enabled": false,
     "description": "Applies relational taint / propagated-security checks using kernel-lowered metadata."
   },
   {
     "name": "UnaryGatePolicy",
-    "enabled": true,
+    "enabled": false,
     "description": "Applies declarative unary rules over instruction metadata and reports the matched rule."
   },
   {
@@ -66,7 +66,7 @@
   },
   {
     "name": "AlignmentSentinelPolicy",
-    "enabled": true,
+    "enabled": false,
     "description": "LLM-based pre-exec alignment check for planned tool calls against recent user objective."
   },
   {

@@ -152,10 +152,6 @@ class LogParser:
                     # Store this event, waiting for the next post_call_success
                     pending_token_usage = log_entry
 
-                if hook == "token_usage_round":
-                    # Store this event, waiting for the next post_call_success
-                    pending_token_usage = log_entry
-
                 elif hook == "post_call_success" and pending_token_usage:
                     # Pair with previous token_usage_round
                     token_data = pending_token_usage.get("data", {})

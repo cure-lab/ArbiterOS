@@ -6,34 +6,9 @@ from __future__ import annotations
 import json
 import logging
 import os
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
-
-
-from dataclasses import dataclass, field
-from typing import List
-
-
-@dataclass
-class TagResult:
-    """Result from the tagger."""
-    tags: List[str]
-    confidence: float = 1.0
-    metadata: dict = field(default_factory=dict)
-
-_DEFAULT_TAGGER_PROMPT = """You are a query classifier. Analyze the user's request and extract semantic tags.
-
-Return ONLY a JSON object with these fields:
-- domain: one of [code, math, writing, vision, general, data, reasoning]
-- complexity: one of [low, medium, high]
-- language: the primary language (e.g., "chinese", "english", "mixed")
-- requires_vision: true/false
-- is_creative: true/false
-
-Example output:
-{"domain": "code", "complexity": "high", "language": "english", "requires_vision": false, "is_creative": false}
-"""
 
 
 def _build_prompt_from_schema(tag_schema: dict) -> str:
@@ -118,50 +93,28 @@ def _resolve_env(value: str) -> str:
 
 class LightweightTagger:
     """
-    Small LLM-based tagger that extracts contextual tags from user queries.
-    Falls back to rule-based tagging if LLM call fails.
+    Small LLM-based tagger that extracts semantic tags from user queries.
 
-    Accepts an optional ``tag_schema`` dict (from the YAML ``tag_schema:`` section)
+    Accepts a ``tag_schema`` dict (from the YAML ``tag_schema:`` section)
     and uses it to dynamically build the system prompt and JSON output schema.
-    When no schema is provided, falls back to built-in defaults.
     """
 
-    def __init__(self, config: dict, tag_schema: Optional[dict] = None):
+    def __init__(self, config: dict, tag_schema: dict):
         self.config = config
         self.model = config.get("model", "gpt-4o-mini")
         self.api_base = _resolve_env(config.get("api_base", ""))
         self.api_key = _resolve_env(config.get("api_key", ""))
         self.temperature = config.get("temperature", 0.0)
         self.max_tokens = config.get("max_tokens", 256)
-        self.tag_schema = tag_schema or {}
+        self.tag_schema = tag_schema
 
-        # Build system prompt: use YAML-defined tag_schema if available, else static default
-        if self.tag_schema:
-            self.system_prompt = _build_prompt_from_schema(self.tag_schema)
-            self._json_schema = _build_json_schema_from_tag_schema(self.tag_schema)
-        else:
-            self.system_prompt = config.get("system_prompt", _DEFAULT_TAGGER_PROMPT)
-            self._json_schema = {
-                "type": "object",
-                "properties": {
-                    "domain": {"type": "string", "enum": ["code", "math", "writing", "vision", "general", "data", "reasoning"]},
-                    "complexity": {"type": "string", "enum": ["low", "medium", "high"]},
-                    "language": {"type": "string"},
-                    "requires_vision": {"type": "boolean"},
-                    "is_creative": {"type": "boolean"},
-                },
-                "required": ["domain", "complexity", "language", "requires_vision", "is_creative"],
-                "additionalProperties": False,
-            }
-        logger.debug(f"[Tagger] schema tags: {list(self.tag_schema.keys()) or 'built-in defaults'}")
+        self.system_prompt = _build_prompt_from_schema(tag_schema)
+        self._json_schema = _build_json_schema_from_tag_schema(tag_schema)
+        logger.debug(f"[Tagger] schema tags: {list(tag_schema.keys())}")
 
     def extract_tags(self, query: str) -> dict[str, Any]:
-        """Extract tags from query. Falls back to rule-based if LLM fails."""
-        try:
-            return self._llm_extract_tags(query)
-        except Exception as e:
-            logger.warning(f"[Tagger] LLM tagging failed, using rule-based fallback: {e}")
-            return self._rule_based_tags(query)
+        """Extract tags from query. Raises exception if LLM fails."""
+        return self._llm_extract_tags(query)
 
     def _llm_extract_tags(self, query: str) -> dict[str, Any]:
         import litellm
@@ -176,55 +129,39 @@ class LightweightTagger:
             ],
             "temperature": self.temperature,
             "max_tokens": self.max_tokens,
-            "response_format": {
-                "type": "json_schema",
-                "json_schema": {
-                    "name": "query_tags",
-                    "schema": response_schema,
-                    "strict": True,
-                },
-            },
         }
         if self.api_base:
             kwargs["api_base"] = self.api_base
         if self.api_key:
             kwargs["api_key"] = self.api_key
 
+        # Only use strict json_schema if the model supports it
+        strict_json = self.config.get("strict_json", False)
+        if strict_json:
+            kwargs["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "query_tags",
+                    "schema": response_schema,
+                    "strict": True,
+                },
+            }
+
         resp = litellm.completion(**kwargs)
         content = resp.choices[0].message.content
+        if not content:
+            raise RuntimeError(f"Tagger LLM returned empty content (model={self.model})")
+
+        # Strip markdown code fences if present
+        content = content.strip()
+        if content.startswith("```"):
+            lines = content.split("\n")
+            if lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+            content = "\n".join(lines)
+
         tags = json.loads(content)
         logger.debug(f"[Tagger] LLM tags: {tags}")
         return tags
-
-    def _rule_based_tags(self, query: str) -> dict[str, Any]:
-        """Simple keyword-based fallback tagging."""
-        q = query.lower()
-        domain = "general"
-        if any(w in q for w in ["code", "python", "javascript", "debug", "function", "algorithm", "program", "代码"]):
-            domain = "code"
-        elif any(w in q for w in ["image", "picture", "photo", "draw", "vision", "图片", "图像"]):
-            domain = "vision"
-        elif any(w in q for w in ["math", "calculate", "equation", "数学", "计算"]):
-            domain = "math"
-        elif any(w in q for w in ["write", "essay", "story", "poem", "写作", "文章"]):
-            domain = "writing"
-        elif any(w in q for w in ["data", "analysis", "statistics", "数据"]):
-            domain = "data"
-
-        complexity = "medium"
-        if len(query) < 50:
-            complexity = "low"
-        elif len(query) > 300 or any(w in q for w in ["complex", "advanced", "detailed", "复杂"]):
-            complexity = "high"
-
-        # Detect language
-        has_chinese = any('一' <= c <= '鿿' for c in query)
-        language = "chinese" if has_chinese else "english"
-
-        return {
-            "domain": domain,
-            "complexity": complexity,
-            "language": language,
-            "requires_vision": domain == "vision",
-            "is_creative": domain == "writing",
-        }

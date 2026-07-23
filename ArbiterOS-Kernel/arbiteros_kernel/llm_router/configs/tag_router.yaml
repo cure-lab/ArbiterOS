@@ -1,142 +1,43 @@
 tag_schema:
-  domain:
-    type: enum
-    required: true
-    description: Request domain or topic category
-    values:
-    - code
-    - math
-    - reasoning
-    - writing
-    - vision
-    - general
-    - data
-  complexity:
-    type: enum
-    required: true
-    description: Task complexity level
-    values:
-    - low
-    - medium
-    - high
-  language:
-    type: string
-    required: true
-    description: Primary language of the request (e.g., 'english', 'chinese', 'mixed')
-  requires_vision:
+  is_multi_action:
     type: bool
-    required: false
-    description: Whether the task involves images or visual content
-  is_creative:
+    required: true
+    description: User asks for 2+ distinct operations (e.g. cancel AND upgrade) in the same turn
+  is_multi_reservation:
     type: bool
-    required: false
-    description: Whether the task requires creative thinking or generation
-  requires_long_context:
+    required: true
+    description: Two or more reservation IDs are explicitly mentioned in the prompt
+  requires_policy_reasoning:
     type: bool
-    required: false
-    description: Whether the task involves very long input/output
-routing_matrix:
-- condition: domain in [code, math, reasoning] AND complexity = high
-  models:
-  - claude-sonnet-4-6
-  - deepseek-v3
-  - gpt-4o
-  metadata:
-    description: Complex technical tasks
-    priority: 10
-  state:
-    deepseek-v3:
-      alpha: 7.0
-      beta: 1.0
-      total_cost: 0.014399200000000001
-      total_requests: 6
-      avg_cost: 0.002399866666666667
-    gpt-4o:
-      alpha: 6.0
-      beta: 1.0
-      total_cost: 0.0153925
-      total_requests: 5
-      avg_cost: 0.0030785
-    last_updated: '2026-07-03T07:54:50.921370Z'
-- condition: requires_vision = true
-  models:
-  - claude-sonnet-4-6
-  - gpt-4o
-  metadata:
-    description: Vision understanding tasks
-    priority: 9
-- condition: requires_long_context = true
-  models:
-  - claude-sonnet-4-6
-  - gemini-2.0-flash-exp
-  metadata:
-    description: Long context tasks
-    priority: 8
-- condition: domain = code AND complexity = medium
-  models:
-  - claude-sonnet-4-6
-  - deepseek-v3
-  - gpt-4o-mini
-  metadata:
-    description: Standard coding tasks
-    priority: 5
-- condition: complexity = low
-  models:
-  - claude-haiku-4-5
-  - gpt-4o-mini
-  - deepseek-v3
-  metadata:
-    description: Simple, quick tasks
-    priority: 3
-  state:
-    claude-haiku-4-5:
-      alpha: 6.0
-      beta: 4.0
-      total_cost: 0.018
-      total_requests: 8
-      avg_cost: 0.00225
-    gpt-4o-mini:
-      alpha: 8.0
-      beta: 4.0
-      total_cost: 0.027
-      total_requests: 10
-      avg_cost: 0.0027
-    deepseek-v3:
-      alpha: 9.0
-      beta: 2.0
-      total_cost: 0.027
-      total_requests: 9
-      avg_cost: 0.003
-    last_updated: '2026-07-03T07:54:50.921383Z'
-- condition: domain = writing AND is_creative = true
-  models:
-  - claude-sonnet-4-6
-  - gpt-4o
-  metadata:
-    description: Creative writing tasks
-    priority: 6
-- condition: '*'
-  models:
-  - claude-haiku-4-5
-  - gpt-4o-mini
-  - deepseek-v3
-  metadata:
-    description: Default fallback
-    priority: 0
-  state:
-    gpt-4o-mini:
-      alpha: 3.0
-      beta: 1.0
-      total_cost: 0.0001191
-      total_requests: 2
-      avg_cost: 5.955e-05
-    last_updated: '2026-07-03T07:54:50.921389Z'
+    required: true
+    description: Prompt involves refund eligibility, insurance claims, medical/emergency exceptions, loyalty-status-based rules, compensation demands, or "I was told differently" disputes
+  is_emotional_or_complaint:
+    type: bool
+    required: true
+    description: User expresses frustration, anger, emotional distress, flattery to get special treatment, or explicitly demands escalation
+  has_conditional_request:
+    type: bool
+    required: true
+    description: User attaches preconditions (e.g. "only if I get a refund", "as long as it's under $100") rather than a straightforward action
+
+candidate_models:
+  - gpt-5
+  - gpt-5-nano
+
+model_costs:
+  gpt-5: 10
+  gpt-5-nano: 0.4
+
+bayesian_bandit:
+  prior_var: 1.0
+  cost_weight: 0.1
+
+database_path: tag_router_tau2_airline.json
+
 tagger:
-  model: gpt-4o-mini
-  api_base: https://poloapi.top/v1
-  api_key: ${POLOAPI_API_KEY}
+  model: gpt-4o
+  api_base: ${OPENAI_API_BASE}
+  api_key: ${OPENAI_API_KEY}
   temperature: 0.0
   max_tokens: 256
-thompson_sampler:
-  cost_weight: 0.3
-  exploration_bonus: 0.1
+  strict_json: true

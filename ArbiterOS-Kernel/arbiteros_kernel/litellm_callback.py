@@ -115,6 +115,9 @@ _LANGFUSE_NODE_LOG_FILE = (
 )
 _LANGFUSE_NODE_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
 _TRACE_STATE_FILE = Path(__file__).resolve().parent.parent / "log" / "trace_state.json"
+_TRACE_STATE_DIR = Path(__file__).resolve().parent.parent / "log" / "trace_states"
+_TRACE_STATE_DIR.mkdir(parents=True, exist_ok=True)
+_LATEST_USER_ID_FILE = _TRACE_STATE_DIR / "_latest_user_id_by_channel.json"
 _PRECALL_LOG_FILE = Path(__file__).resolve().parent.parent / "log" / "precall.jsonl"
 _INSTRUCTION_LOG_DIR = Path(__file__).resolve().parent.parent / "log"
 _INSTRUCTION_LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -223,7 +226,8 @@ class _TraceState:
 _trace_state_lock = threading.Lock()
 _trace_state_by_device: dict[str, _TraceState] = {}
 _latest_user_id_by_channel: dict[str, str] = {}
-_trace_state_file_mtime_ns: Optional[int] = None
+_trace_state_file_mtime_ns_by_device: dict[str, int] = {}
+_latest_user_id_file_mtime_ns: Optional[int] = None
 _recent_response_keys: list[str] = []
 _recent_response_key_set: set[str] = set()
 _MAX_RECENT_RESPONSE_KEYS = 512
@@ -302,6 +306,11 @@ _SECURITY_NOTICE_RE = re.compile(
 
 _TRACE_SESSION_LABEL_PREFIX = "trace"
 _NODE_NAMESPACE_PREFIX = "session"
+
+
+def _get_trace_state_file(trace_id: str) -> Path:
+    """Get the file path for a specific trace_id's state."""
+    return _TRACE_STATE_DIR / f"{trace_id}.json"
 
 
 def _trace_state_to_dict(state: _TraceState) -> dict[str, Any]:
@@ -1167,7 +1176,7 @@ def _screen_tool_results_with_alignment(
         state_changed = True
 
     if state_changed:
-        _persist_trace_state_to_disk()
+        _persist_trace_state_to_disk(state.device_key)
     if not modified:
         return data
     return {**data, "messages": new_messages}
@@ -1320,7 +1329,7 @@ def _append_bootstrap_scan_notice_if_needed(
 
     with _trace_state_lock:
         state.bootstrap_scan_done = True
-    _persist_trace_state_to_disk()
+    _persist_trace_state_to_disk(state.device_key)
 
     if not unsafe_files:
         return
@@ -1448,103 +1457,235 @@ def _max_emitted_tool_result_index(
 
 
 def _load_trace_state_snapshot_from_disk() -> tuple[
-    dict[str, _TraceState], dict[str, str], Optional[int]
+    dict[str, _TraceState], dict[str, str], dict[str, int]
 ]:
-    try:
-        stat = _TRACE_STATE_FILE.stat()
-    except FileNotFoundError:
-        return {}, {}, None
-    except Exception as exc:
-        _save_json("trace_state_read_error", {"error": str(exc)})
-        return {}, {}, None
+    """Load all device trace states from individual files in trace_states/ directory.
 
-    try:
-        raw = json.loads(_TRACE_STATE_FILE.read_text(encoding="utf-8"))
-    except Exception as exc:
-        _save_json("trace_state_parse_error", {"error": str(exc)})
-        return {}, {}, stat.st_mtime_ns
-
+    Returns:
+        - dict of device_key -> _TraceState
+        - dict of channel -> user_id (latest_user_id_by_channel)
+        - dict of device_key -> mtime_ns (for each device file)
+    """
     states_out: dict[str, _TraceState] = {}
+    mtime_ns_by_device: dict[str, int] = {}
+
+    # Load individual device state files
+    if _TRACE_STATE_DIR.exists():
+        for state_file in _TRACE_STATE_DIR.glob("*.json"):
+            if state_file.name.startswith("_"):
+                continue  # Skip special files like _latest_user_id_by_channel.json
+            try:
+                stat = state_file.stat()
+                raw = json.loads(state_file.read_text(encoding="utf-8"))
+                if not isinstance(raw, dict):
+                    continue
+
+                device_key = raw.get("device_key")
+                if not isinstance(device_key, str) or not device_key.strip():
+                    continue
+
+                parsed = _trace_state_from_dict(device_key, raw)
+                if parsed is None:
+                    continue
+                # Same device_key may have multiple trace files; keep the one with
+                # the highest sequence (latest trace).
+                existing = states_out.get(parsed.device_key)
+                if existing is None or parsed.sequence > existing.sequence:
+                    states_out[parsed.device_key] = parsed
+                    mtime_ns_by_device[parsed.device_key] = stat.st_mtime_ns
+            except Exception as exc:
+                _save_json("trace_state_read_error", {"file": str(state_file), "error": str(exc)})
+                continue
+
+    # Load latest_user_id_by_channel from separate file
     latest_out: dict[str, str] = {}
+    try:
+        if _LATEST_USER_ID_FILE.exists():
+            raw = json.loads(_LATEST_USER_ID_FILE.read_text(encoding="utf-8"))
+            if isinstance(raw, dict):
+                latest_payload = raw.get("latest_user_id_by_channel", {})
+                if isinstance(latest_payload, dict):
+                    for channel, user_id in latest_payload.items():
+                        if not isinstance(channel, str) or not isinstance(user_id, str):
+                            continue
+                        channel_norm = _normalize_device_fragment(channel)
+                        user_norm = _normalize_device_fragment(user_id)
+                        if channel_norm and user_norm:
+                            latest_out[channel_norm] = user_norm
+    except FileNotFoundError:
+        pass
+    except Exception as exc:
+        _save_json("latest_user_id_read_error", {"error": str(exc)})
 
-    states_payload = raw.get("states") if isinstance(raw, dict) else {}
-    if isinstance(states_payload, dict):
-        for key, value in states_payload.items():
-            if not isinstance(key, str) or not key.strip():
-                continue
-            parsed = _trace_state_from_dict(key, value)
-            if parsed is not None:
-                states_out[parsed.device_key] = parsed
-
-    latest_payload = (
-        raw.get("latest_user_id_by_channel") if isinstance(raw, dict) else {}
-    )
-    if isinstance(latest_payload, dict):
-        for channel, user_id in latest_payload.items():
-            if not isinstance(channel, str) or not isinstance(user_id, str):
-                continue
-            channel_norm = _normalize_device_fragment(channel)
-            user_norm = _normalize_device_fragment(user_id)
-            if channel_norm and user_norm:
-                latest_out[channel_norm] = user_norm
-
-    return states_out, latest_out, stat.st_mtime_ns
+    return states_out, latest_out, mtime_ns_by_device
 
 
 def _sync_trace_state_from_disk(force: bool = False) -> None:
-    global _trace_state_file_mtime_ns
+    """Sync trace states from disk, updating only if files have changed."""
+    global _trace_state_file_mtime_ns_by_device, _latest_user_id_file_mtime_ns
 
-    states_snapshot, latest_snapshot, mtime_ns = _load_trace_state_snapshot_from_disk()
-    if mtime_ns is None:
-        return
+    states_snapshot, latest_snapshot, mtime_ns_by_device = _load_trace_state_snapshot_from_disk()
 
     with _trace_state_lock:
-        if not force and _trace_state_file_mtime_ns == mtime_ns:
-            return
-
+        # Sync device states - only update if file is newer
         for device_key, restored in states_snapshot.items():
-            current = _trace_state_by_device.get(device_key)
-            if current is None or restored.sequence >= current.sequence:
-                _trace_state_by_device[device_key] = restored
+            new_mtime = mtime_ns_by_device.get(device_key)
+            if new_mtime is None:
+                continue
 
+            if force or _trace_state_file_mtime_ns_by_device.get(device_key) != new_mtime:
+                current = _trace_state_by_device.get(device_key)
+                if current is None or restored.sequence >= current.sequence:
+                    _trace_state_by_device[device_key] = restored
+                _trace_state_file_mtime_ns_by_device[device_key] = new_mtime
+
+        # Sync latest_user_id_by_channel
         for channel, user_id in latest_snapshot.items():
             if channel and user_id:
                 _latest_user_id_by_channel[channel] = user_id
 
-        _trace_state_file_mtime_ns = mtime_ns
+        # Update latest_user_id file mtime
+        try:
+            if _LATEST_USER_ID_FILE.exists():
+                _latest_user_id_file_mtime_ns = _LATEST_USER_ID_FILE.stat().st_mtime_ns
+        except Exception:
+            pass
 
 
-def _persist_trace_state_to_disk() -> None:
-    global _trace_state_file_mtime_ns
+def _persist_trace_state_to_disk(device_key: Optional[str] = None) -> None:
+    """Persist trace state(s) to disk.
+
+    Args:
+        device_key: If provided, only persist this specific device's state.
+                   If None, persist all device states.
+    """
+    global _trace_state_file_mtime_ns_by_device, _latest_user_id_file_mtime_ns
+
+    if device_key is not None:
+        # Persist single device state
+        with _trace_state_lock:
+            state = _trace_state_by_device.get(device_key)
+            if state is None:
+                return
+            state_dict = _trace_state_to_dict(state)
+            trace_id = state.trace_id
+
+        trace_file = _get_trace_state_file(trace_id)
+        tmp_path = trace_file.with_suffix(".tmp")
+
+        try:
+            # Collect unique models used across all rounds
+            models_used = list(set(
+                model
+                for round_data in state_dict.get("token_usage_rounds", [])
+                for model in round_data.get("models_used", [])
+                if isinstance(model, str)
+            ))
+
+            # Add top-level summary for quick visibility
+            payload = {
+                "version": 1,
+                "updated_at": datetime.now().isoformat(),
+                "summary": {
+                    "total_tokens": state_dict.get("trace_total_tokens", 0),
+                    "total_cost_usd": state_dict.get("trace_total_cost_usd", 0.0),
+                    "rounds_count": len(state_dict.get("token_usage_rounds", [])),
+                    "models_used": models_used,
+                    "trace_id": state_dict.get("trace_id"),
+                    "device_key": state_dict.get("device_key"),
+                },
+                **state_dict,
+            }
+            tmp_path.write_text(
+                json.dumps(payload, ensure_ascii=False, default=str),
+                encoding="utf-8",
+            )
+            tmp_path.replace(trace_file)
+            mtime_ns = trace_file.stat().st_mtime_ns
+
+            with _trace_state_lock:
+                _trace_state_file_mtime_ns_by_device[device_key] = mtime_ns
+        except Exception as exc:
+            _save_json("trace_state_persist_error", {"device_key": device_key, "error": str(exc)})
+            return
+    else:
+        # Legacy path: persist all states (for migration or full dump)
+        with _trace_state_lock:
+            states_to_persist = dict(_trace_state_by_device.items())
+
+        for dev_key, state in states_to_persist.items():
+            trace_file = _get_trace_state_file(state.trace_id)
+            tmp_path = trace_file.with_suffix(".tmp")
+
+            try:
+                state_dict = _trace_state_to_dict(state)
+
+                # Collect unique models used across all rounds
+                models_used = list(set(
+                    model
+                    for round_data in state_dict.get("token_usage_rounds", [])
+                    for model in round_data.get("models_used", [])
+                    if isinstance(model, str)
+                ))
+
+                # Add top-level summary for quick visibility
+                payload = {
+                    "version": 1,
+                    "updated_at": datetime.now().isoformat(),
+                    "summary": {
+                        "total_tokens": state_dict.get("trace_total_tokens", 0),
+                        "total_cost_usd": state_dict.get("trace_total_cost_usd", 0.0),
+                        "rounds_count": len(state_dict.get("token_usage_rounds", [])),
+                        "models_used": models_used,
+                        "trace_id": state_dict.get("trace_id"),
+                        "device_key": state_dict.get("device_key"),
+                    },
+                    **state_dict,
+                }
+                tmp_path.write_text(
+                    json.dumps(payload, ensure_ascii=False, default=str),
+                    encoding="utf-8",
+                )
+                tmp_path.replace(trace_file)
+                mtime_ns = trace_file.stat().st_mtime_ns
+
+                with _trace_state_lock:
+                    _trace_state_file_mtime_ns_by_device[dev_key] = mtime_ns
+            except Exception as exc:
+                _save_json("trace_state_persist_error", {"device_key": dev_key, "error": str(exc)})
+                continue
+
+    # Always persist latest_user_id_by_channel to its own file
+    _persist_latest_user_id_by_channel()
+
+
+def _persist_latest_user_id_by_channel() -> None:
+    """Persist the latest_user_id_by_channel mapping to its dedicated file."""
+    global _latest_user_id_file_mtime_ns
 
     with _trace_state_lock:
-        states_payload = {
-            device_key: _trace_state_to_dict(state)
-            for device_key, state in _trace_state_by_device.items()
-        }
         latest_payload = dict(_latest_user_id_by_channel)
 
     payload = {
         "version": 1,
         "updated_at": datetime.now().isoformat(),
-        "states": states_payload,
         "latest_user_id_by_channel": latest_payload,
     }
-    tmp_path = _TRACE_STATE_FILE.with_suffix(".tmp")
+    tmp_path = _LATEST_USER_ID_FILE.with_suffix(".tmp")
 
     try:
         tmp_path.write_text(
             json.dumps(payload, ensure_ascii=False, default=str),
             encoding="utf-8",
         )
-        tmp_path.replace(_TRACE_STATE_FILE)
-        mtime_ns = _TRACE_STATE_FILE.stat().st_mtime_ns
-    except Exception as exc:
-        _save_json("trace_state_persist_error", {"error": str(exc)})
-        return
+        tmp_path.replace(_LATEST_USER_ID_FILE)
+        mtime_ns = _LATEST_USER_ID_FILE.stat().st_mtime_ns
 
-    with _trace_state_lock:
-        _trace_state_file_mtime_ns = mtime_ns
+        with _trace_state_lock:
+            _latest_user_id_file_mtime_ns = mtime_ns
+    except Exception as exc:
+        _save_json("latest_user_id_persist_error", {"error": str(exc)})
+        return
 
 
 def _to_json(obj: Any) -> Any:
@@ -1757,10 +1898,14 @@ def _compute_round_cost_usd(
       - cache_hit_tokens      × cache_read_input_token_cost
       - cache_miss_tokens     × cache_creation_input_token_cost  (Anthropic only)
       - output_tokens         × output_cost_per_token
+
+    Returns:
+      - float('-inf') if the model has no pricing spec (sentinel for "unknown cost")
+      - computed cost otherwise
     """
     spec = _get_model_price_spec(model)
     if spec is None:
-        return 0.0
+        return float('-inf')
 
     def _rate(key: str) -> float:
         v = spec.get(key)
@@ -1939,14 +2084,15 @@ def _record_trace_token_usage(
                 uncached_input_tokens=cache_counts["uncached_input_tokens"],
                 output_tokens=_output_tokens,
             )
-            state.trace_total_cost_usd = round(
-                max(0.0, float(state.trace_total_cost_usd)) + round_cost, 10
+            # Allow -inf to propagate: if round_cost is -inf, the trace total becomes -inf
+            state.trace_total_cost_usd = (
+                float(state.trace_total_cost_usd) + round_cost
             )
 
             # Accumulate per-turn metrics
             state.pending_round_total_tokens += delta
-            state.pending_round_total_cost_usd = round(
-                state.pending_round_total_cost_usd + round_cost, 10
+            state.pending_round_total_cost_usd = (
+                state.pending_round_total_cost_usd + round_cost
             )
             if model:
                 state.pending_round_models.append(model)
@@ -1980,7 +2126,18 @@ def _record_trace_token_usage(
 
     if round_record is None:
         return
-    _persist_trace_state_to_disk()
+
+    # Find the device_key for this trace_id to persist only that device's state
+    device_key_to_persist: Optional[str] = None
+    with _trace_state_lock:
+        for dev_key, state in _trace_state_by_device.items():
+            if state.trace_id == tid:
+                device_key_to_persist = dev_key
+                break
+
+    if device_key_to_persist:
+        _persist_trace_state_to_disk(device_key_to_persist)
+
     _save_json(
         "token_usage_round",
         {"trace_id": tid, **round_record},
@@ -2010,7 +2167,21 @@ def _persist_trace_backup_state(
     trace_id: Optional[str], *, metadata: Optional[dict[str, Any]] = None
 ) -> None:
     _snapshot_trace_backup_state(trace_id, metadata=metadata)
-    _persist_trace_state_to_disk()
+
+    # Find device_key for this trace_id and persist only that device
+    if isinstance(trace_id, str) and trace_id.strip():
+        tid = trace_id.strip()
+        device_key_to_persist: Optional[str] = None
+        with _trace_state_lock:
+            for dev_key, state in _trace_state_by_device.items():
+                if state.trace_id == tid:
+                    device_key_to_persist = dev_key
+                    break
+
+        if device_key_to_persist:
+            _persist_trace_state_to_disk(device_key_to_persist)
+    else:
+        _persist_trace_state_to_disk()
 
 
 def _build_policy_runtime_context(
@@ -3003,7 +3174,7 @@ def _ensure_trace_state(context: _DeviceContext) -> tuple[_TraceState, bool]:
                     persist_needed = True
 
     if persist_needed:
-        _persist_trace_state_to_disk()
+        _persist_trace_state_to_disk(context.device_key)
     return current, created_new_trace
 
 
@@ -3095,7 +3266,7 @@ def _resolve_trace_state_from_metadata(
                 persist_needed = True
 
     if persist_needed:
-        _persist_trace_state_to_disk()
+        _persist_trace_state_to_disk(device_key)
     return result
 
 
@@ -4687,7 +4858,7 @@ def _emit_tool_result_nodes_if_needed(request_data: dict, state: _TraceState) ->
 
     if emitted_any:
         # Persist counters so tool result numbering stays monotonic across restarts.
-        _persist_trace_state_to_disk()
+        _persist_trace_state_to_disk(state.device_key)
         _flush_langfuse()
 
 
@@ -5088,7 +5259,7 @@ def _emit_response_nodes(
                         state.latest_topic_summary = trace_topic
                         persist_topic_needed = True
             if persist_topic_needed:
-                _persist_trace_state_to_disk()
+                _persist_trace_state_to_disk(state.device_key)
 
             _emit_langfuse_node(
                 state=state,
@@ -5262,7 +5433,7 @@ def _emit_response_nodes(
                 state.latest_topic_summary = trace_topic
                 persist_topic_needed = True
     if persist_topic_needed:
-        _persist_trace_state_to_disk()
+        _persist_trace_state_to_disk(state.device_key)
 
     output_name = f"{_NODE_NAMESPACE_PREFIX}.output.turn_{max(state.turn_index, 1):03d}"
     _emit_langfuse_node(
@@ -5387,10 +5558,19 @@ def _ensure_non_empty_assistant_message(
     fallback_text: str,
 ) -> Optional[dict]:
     """Guardrail: never return/emit an assistant message with empty textual content."""
+    from litellm.types.utils import ModelResponse
+
     if not isinstance(message_dict, dict):
+        logger.warning(
+            f"[DEBUG _ensure_non_empty_assistant_message] message_dict is not a dict: "
+            f"type={type(message_dict).__name__}, value={repr(message_dict)[:500]}"
+        )
         return message_dict
     # Tool calls (or legacy function_call) legitimately have no content.
     if message_dict.get("tool_calls") or message_dict.get("function_call"):
+        logger.debug(
+            f"[DEBUG _ensure_non_empty_assistant_message] has tool_calls/function_call, skip"
+        )
         return message_dict
 
     def _is_valid_text_content(text: str) -> bool:
@@ -5401,11 +5581,24 @@ def _ensure_non_empty_assistant_message(
 
     content = message_dict.get("content")
     if isinstance(content, str) and _is_valid_text_content(content):
+        logger.debug(
+            f"[DEBUG _ensure_non_empty_assistant_message] content is valid str, "
+            f"len={len(content)}, preview={repr(content[:200])}"
+        )
         return message_dict
     if isinstance(content, list):
         extracted = _extract_text_from_message_content(content)
         if _is_valid_text_content(extracted):
+            logger.debug(
+                f"[DEBUG _ensure_non_empty_assistant_message] content is valid list, "
+                f"extracted_len={len(extracted)}, preview={repr(extracted[:200])}"
+            )
             return message_dict
+    logger.warning(
+        f"[DEBUG _ensure_non_empty_assistant_message] REPLACING content with fallback! "
+        f"content_type={type(content).__name__}, content_repr={repr(content)[:300]}, "
+        f"message_keys={list(message_dict.keys())}"
+    )
     if not fallback_text or not isinstance(fallback_text, str):
         fallback_text = "抱歉，我这次没有生成有效回复，请重试。"
     return {**message_dict, "content": fallback_text}
@@ -6839,6 +7032,42 @@ response_transform: Optional[Any] = _response_transform_content_only
 stream_chunk_transform: Optional[Any] = None
 
 
+_ROUTING_ROUNDS_DIR = Path(__file__).resolve().parent.parent / "log" / "routing_rounds"
+_ROUTING_ROUNDS_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _save_routing_round(
+    data: dict,
+    routed_model: str,
+    route_info: str,
+) -> None:
+    """Save per-turn routing decision + messages to a trace-scoped JSONL log."""
+    metadata = data.get("metadata") if isinstance(data, dict) else {}
+    trace_id = (
+        metadata.get("arbiteros_trace_id")
+        if isinstance(metadata, dict)
+        else None
+    )
+    if not isinstance(trace_id, str) or not trace_id.strip():
+        return
+    messages = data.get("messages") if isinstance(data, dict) else []
+    original_model = data.get("model") if isinstance(data, dict) else None
+    record = {
+        "ts": datetime.now().isoformat(),
+        "trace_id": trace_id.strip(),
+        "request_model": original_model,
+        "routed_model": routed_model,
+        "route_info": route_info.strip(),
+        "messages": messages,
+    }
+    round_file = _ROUTING_ROUNDS_DIR / f"{trace_id.strip()}.jsonl"
+    try:
+        with round_file.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+    except Exception:
+        pass
+
+
 # This file includes the custom callbacks for LiteLLM Proxy
 # Once defined, these can be passed in proxy_config.yaml
 class MyCustomHandler(CustomLogger):
@@ -7011,7 +7240,7 @@ class MyCustomHandler(CustomLogger):
         if cleaned_previous_topic != previous_topic_summary:
             with _trace_state_lock:
                 state.latest_topic_summary = cleaned_previous_topic
-            _persist_trace_state_to_disk()
+            _persist_trace_state_to_disk(state.device_key)
         data = _inject_topic_summary_hint(data, state=state, context=context)
 
         if created_new_trace:
@@ -7072,7 +7301,7 @@ class MyCustomHandler(CustomLogger):
                             current = _trace_state_by_device.get(state.device_key)
                             if current is not None:
                                 current.trace_id = actual_tid
-                        _persist_trace_state_to_disk()
+                        _persist_trace_state_to_disk(state.device_key)
             if pending is not None and trace_id_for_cache:
                 apply = _policy_confirm_apply
                 cached = (
@@ -7239,6 +7468,9 @@ class MyCustomHandler(CustomLogger):
             if routed_model != original_model:
                 data = {**data, "model": routed_model}
 
+            # 记录每个 turn 的路由决策 + messages
+            _save_routing_round(data, routed_model, route_info)
+
             # 保存详细的路由信息到 metadata（供 feedback daemon 使用）
             routing_result = _llm_router.get_last_routing_result()
             if routing_result:
@@ -7283,6 +7515,30 @@ class MyCustomHandler(CustomLogger):
         canonical_response = _to_canonical_assistant_message(response)
         is_chat_completion = canonical_response.is_chat_completion
         msg = canonical_response.message
+        logger.warning(
+            f"[DEBUG post_call_success] is_chat_completion={is_chat_completion}, "
+            f"msg_type={type(msg).__name__}, "
+            f"msg_keys={list(msg.keys()) if isinstance(msg, dict) else 'N/A'}, "
+            f"msg_content_type={type(msg.get('content')).__name__ if isinstance(msg, dict) else 'N/A'}, "
+            f"msg_content_repr={repr(msg.get('content'))[:500] if isinstance(msg, dict) else 'N/A'}, "
+            f"response_type={type(response).__name__}"
+        )
+        # Dump raw response to see what LLM actually returned
+        if hasattr(response, 'choices') and response.choices:
+            choice = response.choices[0]
+            raw_msg = getattr(choice, 'message', None)
+            if raw_msg:
+                logger.warning(
+                    f"[DEBUG post_call_success RAW] type={type(raw_msg).__name__}, "
+                    f"content_type={type(getattr(raw_msg, 'content', None)).__name__}, "
+                    f"content_repr={repr(getattr(raw_msg, 'content', None))[:500]}"
+                )
+        if hasattr(response, 'model_dump'):
+            try:
+                dumped = response.model_dump()
+                logger.warning(f"[DEBUG post_call_success DUMP] {json.dumps(dumped, ensure_ascii=False, default=str)[:2000]}")
+            except Exception:
+                pass
         if os.getenv("ARBITEROS_LITELLM_CALLBACK_DEBUG", "").strip() == "1":
             _console.print(
                 Panel(

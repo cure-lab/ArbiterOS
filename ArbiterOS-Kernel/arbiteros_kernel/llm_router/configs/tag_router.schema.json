@@ -1,0 +1,126 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "tag_router_config",
+  "title": "TagRouter Configuration",
+  "description": "Configuration schema for TagRouter, an adaptive LLM routing engine that uses lightweight LLM tag extraction and Bayesian Logistic Bandit with Thompson Sampling for model selection.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "tag_schema": {
+      "type": "object",
+      "description": "Defines the semantic tags that the tagger LLM extracts from user queries. Each key is a tag name whose value is a spec defining the tag's type, description, and allowed values.",
+      "additionalProperties": { "$ref": "#/$defs/tagSpec" }
+    },
+    "candidate_models": {
+      "type": "array",
+      "description": "List of model IDs available for routing. The bandit learns per-model success probabilities over the tag feature space.",
+      "items": { "type": "string" },
+      "minItems": 1
+    },
+    "model_costs": {
+      "type": "object",
+      "description": "Per-model cost values used for cost-aware scoring. score = p_success - cost_weight * (cost / max_cost).",
+      "additionalProperties": {
+        "type": "number",
+        "minimum": 0.0
+      }
+    },
+    "bayesian_bandit": {
+      "type": "object",
+      "description": "Configuration for the Bayesian Logistic Bandit (per-model logistic regression + Thompson Sampling).",
+      "additionalProperties": false,
+      "properties": {
+        "prior_var": {
+          "type": "number",
+          "minimum": 0.0,
+          "default": 1.0,
+          "description": "Prior variance for the weight posterior N(0, prior_var * I). Larger values = more initial exploration."
+        },
+        "cost_weight": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "default": 0.3,
+          "description": "Weight for the cost penalty in the Thompson Sampling score. 0 = ignore cost entirely."
+        }
+      }
+    },
+    "database_path": {
+      "type": "string",
+      "description": "Path to the tagged prompts database (JSON array of {model, success, tags, prompt}). Resolved relative to this YAML file's directory."
+    },
+    "tagger": {
+      "type": "object",
+      "description": "Configuration for the lightweight LLM tagger that extracts semantic tags from user queries.",
+      "additionalProperties": false,
+      "properties": {
+        "model": {
+          "type": "string",
+          "default": "gpt-4o-mini",
+          "description": "The litellm model ID for the tagger LLM."
+        },
+        "api_base": {
+          "type": "string",
+          "description": "API base URL. Supports ${ENV_VAR} references."
+        },
+        "api_key": {
+          "type": "string",
+          "description": "API key. Supports ${ENV_VAR} references."
+        },
+        "temperature": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 2.0,
+          "default": 0.0,
+          "description": "LLM temperature for tag extraction."
+        },
+        "max_tokens": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 256,
+          "description": "Maximum output tokens for the tagger's JSON response."
+        },
+        "strict_json": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether to use strict JSON Schema response_format. Requires model support."
+        }
+      }
+    }
+  },
+  "$defs": {
+    "tagSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["bool", "enum", "int", "string"],
+          "default": "string",
+          "description": "The data type of this tag. Currently only 'bool' is fully supported by the Bayesian bandit's _featurize()."
+        },
+        "required": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether this tag must be present in the LLM's JSON output."
+        },
+        "description": {
+          "type": "string",
+          "description": "Human-readable description. Included verbatim in the tagger's system prompt."
+        },
+        "values": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1,
+          "description": "List of allowed values for enum-type tags. Required when type is 'enum'."
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "type": { "const": "enum" } } },
+          "then": { "required": ["values"] }
+        }
+      ]
+    }
+  }
+}
