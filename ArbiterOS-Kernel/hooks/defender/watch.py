@@ -29,7 +29,8 @@ def _print_banner() -> None:
     print(f"queue: {LOG_DIR / 'pending'}")
     print("Kernel auto-allows Gateway-known actions.")
     print("Only unknown / mismatched actions land here.")
-    print("Type 1 + Enter to ALLOW. Anything else DENIES.")
+    print("Prefer ArbiterOS TUI: attach <trace_id> then Y/N (Y=deny, N=allow).")
+    print("This watch is a fallback. Type 1 + Enter to ALLOW. Anything else DENIES.")
     print("Ctrl+C to quit.")
     print("=" * 60)
     print("Ready — idle until an escalated action needs approval.")
@@ -104,6 +105,17 @@ def _handle_one(req: dict[str, Any], auto: str | None) -> None:
     try:
         pending_path(rid).unlink(missing_ok=True)
     except OSError:
+        pass
+
+    # Keep ArbiterOS TUI queue in sync when watch answers first.
+    try:
+        from common import ensure_kernel_on_path
+
+        ensure_kernel_on_path()
+        from arbiteros_kernel.tui_bridge import clear_pending_confirm
+
+        clear_pending_confirm(rid)
+    except Exception:
         pass
 
 

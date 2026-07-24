@@ -26,7 +26,7 @@ Kernel traces are keyed by **session identity** (`device_key`), not by individua
 
 ## Said / Done defender (PreToolUse)
 
-Kernel records Gateway-declared `TOOLCALL`s and a session→trace index under `log/said_done/`. The ArbiterOS defender hook (`hooks/defender/`) auto-allows PreToolUse actions that match a pending declaration on the same trace; unknown or mismatched actions escalate to `hooks/defender/watch.py`. See [`hooks/defender/README.md`](hooks/defender/README.md).
+Kernel records Gateway-declared `TOOLCALL`s and a session→trace index under `log/said_done/`. The ArbiterOS defender hook (`hooks/defender/`) auto-allows PreToolUse actions that match a pending declaration on the same trace; unknown or mismatched actions escalate to ArbiterOS TUI (`attach <trace_id>` then Y=deny / N=allow), with optional `hooks/defender/watch.py` fallback. Codex and Claude Code share the same hook. See [`hooks/defender/README.md`](hooks/defender/README.md).
 
 ## Setup and Run
 

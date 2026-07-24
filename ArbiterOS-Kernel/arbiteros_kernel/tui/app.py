@@ -16,7 +16,14 @@ from arbiteros_kernel.tui.trace_catalog import (
     load_trace_rows,
     resolve_trace_id,
 )
-from arbiteros_kernel.tui_bridge import list_pending_confirms, read_events, submit_confirm_answer
+from arbiteros_kernel.tui_bridge import (
+    KIND_SAID_DONE,
+    list_pending_confirms,
+    pending_kind,
+    read_events,
+    sort_pending_confirms,
+    submit_confirm_answer,
+)
 from arbiteros_kernel.tui.proxy_launcher import ProxyProcess, is_proxy_ready
 
 
@@ -75,8 +82,10 @@ class ArbiterTuiApp:
             Panel(
                 "Commands: [bold]list[/bold]  |  [bold]attach <trace_id>[/bold]  |  "
                 "[bold]sw[/bold] (sandbox wizard)  |  [bold]quit[/bold] (q)\n"
-                "If a policy block needs your decision, [bold]attach[/bold] that trace and answer "
-                "[bold]Y[/bold]/[bold]N[/bold] inside it. "
+                "If policy or said/done needs your decision, [bold]attach[/bold] that trace and answer "
+                "[bold]Y[/bold]/[bold]N[/bold] inside it "
+                "([bold]Y[/bold]=deny/keep block, [bold]N[/bold]=allow). "
+                "Same trace: policy first, then said/done. "
                 "`list` shows a [bold]block[/bold] column when confirmation is pending. "
                 "`sw` configures Codex sandbox profiles and applies them to ~/.codex/config.toml.",
                 title="How to use",
@@ -86,17 +95,21 @@ class ArbiterTuiApp:
         self._render_pending_hints()
 
     def _render_pending_hints(self) -> None:
-        pending = list_pending_confirms()
+        pending = sort_pending_confirms(list_pending_confirms())
         if not pending:
             return
         self.console.print()
         self.console.print("[bold yellow]Needs confirmation[/bold yellow]")
         for item in pending:
             trace_id = item.get("trace_id", "?")
-            policies = item.get("policy_names") or []
-            policy_text = ", ".join(policies) if policies else "(unknown)"
+            kind = pending_kind(item)
+            if kind == KIND_SAID_DONE:
+                label = "said/done"
+            else:
+                policies = item.get("policy_names") or []
+                label = f"policy={', '.join(policies) if policies else '(unknown)'}"
             self.console.print(
-                f"  [!] trace [bold]{trace_id}[/bold]  policies={policy_text}"
+                f"  [!] trace [bold]{trace_id}[/bold]  {label}"
             )
             self.console.print(
                 f"      → run [bold]attach {trace_id}[/bold] then answer Y/N inside that view"
@@ -188,18 +201,54 @@ class ArbiterTuiApp:
         )
 
     def _render_pending_for_trace(self, trace_id: str) -> None:
-        pending = [p for p in list_pending_confirms() if p.get("trace_id") == trace_id]
+        pending = sort_pending_confirms(
+            [p for p in list_pending_confirms() if p.get("trace_id") == trace_id]
+        )
         if not pending:
             return
         self.console.print()
-        self.console.print("[bold yellow]Policy confirmation required[/bold yellow]")
         for item in pending:
-            policies = item.get("policy_names") or []
-            self.console.print(f"  policies: {', '.join(policies) if policies else '(unknown)'}")
-            err = str(item.get("error_type") or "").strip()
-            if err:
-                self.console.print(f"  reason: {err[:500]}")
-            self.console.print("  Answer [bold]Y[/bold] (keep block) or [bold]N[/bold] (allow original)")
+            kind = pending_kind(item)
+            if kind == KIND_SAID_DONE:
+                self.console.print(
+                    "[bold yellow]Said/Done confirmation required[/bold yellow]"
+                )
+                err = str(item.get("error_type") or "").strip()
+                if err:
+                    self.console.print(f"  reason: {err[:500]}")
+                extra = item.get("extra") if isinstance(item.get("extra"), dict) else {}
+                said = extra.get("said_summary")
+                done = extra.get("done_summary")
+                diff = extra.get("diff")
+                if said:
+                    self.console.print(f"  said:  {str(said)[:400]}")
+                if done:
+                    self.console.print(f"  done:  {str(done)[:400]}")
+                if diff:
+                    self.console.print(f"  diff:  {str(diff)[:400]}")
+                self.console.print(
+                    "  Answer [bold]Y[/bold] (deny this tool) or "
+                    "[bold]N[/bold] (allow mismatched Done)"
+                )
+            else:
+                self.console.print(
+                    "[bold yellow]Policy confirmation required[/bold yellow]"
+                )
+                policies = item.get("policy_names") or []
+                self.console.print(
+                    f"  policies: {', '.join(policies) if policies else '(unknown)'}"
+                )
+                err = str(item.get("error_type") or "").strip()
+                if err:
+                    self.console.print(f"  reason: {err[:500]}")
+                self.console.print(
+                    "  Answer [bold]Y[/bold] (keep block) or [bold]N[/bold] (allow original)"
+                )
+            if len(pending) > 1:
+                self.console.print(
+                    "[dim]  (policy is answered before said/done on this trace)[/dim]"
+                )
+                break
 
     def _render_trace_events(self, trace_id: str) -> None:
         events = read_events(trace_id=trace_id, limit=40)
@@ -216,9 +265,9 @@ class ArbiterTuiApp:
             self.console.print(f"  [{ts}] [{style}]{level}[/]: {message}")
 
     def _answer_pending(self, keep_block: bool, *, trace_id: str) -> bool:
-        pending = [
-            p for p in list_pending_confirms() if p.get("trace_id") == trace_id
-        ]
+        pending = sort_pending_confirms(
+            [p for p in list_pending_confirms() if p.get("trace_id") == trace_id]
+        )
         if not pending:
             self.console.print("[dim]No pending confirmations for this trace.[/dim]")
             return False
@@ -226,9 +275,16 @@ class ArbiterTuiApp:
         request_id = item.get("request_id")
         if not isinstance(request_id, str) or not request_id:
             return False
+        kind = pending_kind(item)
         submit_confirm_answer(request_id=request_id, keep_block=keep_block)
-        decision = "keep block" if keep_block else "allow original"
-        self.console.print(f"[green]Recorded confirmation:[/green] {decision}")
+        if kind == KIND_SAID_DONE:
+            decision = "deny tool" if keep_block else "allow mismatched Done"
+        else:
+            decision = "keep block" if keep_block else "allow original"
+        label = "said/done" if kind == KIND_SAID_DONE else "policy"
+        self.console.print(
+            f"[green]Recorded {label} confirmation:[/green] {decision}"
+        )
         return True
 
     @staticmethod

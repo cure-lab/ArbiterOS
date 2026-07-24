@@ -102,7 +102,11 @@ def _wait_for_watch(request_id: str) -> tuple[bool, str]:
 
         if deadline is not None and time.monotonic() >= deadline:
             cleanup_request(request_id)
-            return False, f"timeout after {PROMPT_TIMEOUT_SEC}s (is watch.py running?)"
+            return (
+                False,
+                f"timeout after {PROMPT_TIMEOUT_SEC}s "
+                "(attach trace in ArbiterOS TUI and answer Y/N, or run watch.py)",
+            )
 
         time.sleep(POLL_INTERVAL_SEC)
 
@@ -137,6 +141,39 @@ def _request_watch_approval(
         "diff": details.get("diff"),
     }
     write_pending(request)
+
+    # Primary UX: ArbiterOS TUI attach Y/N. watch.py remains as fallback.
+    try:
+        ensure_kernel_on_path()
+        from arbiteros_kernel.tui_bridge import KIND_SAID_DONE, enqueue_confirm
+
+        trace_id = details.get("trace_id")
+        if not isinstance(trace_id, str) or not trace_id.strip():
+            session_id = payload.get("session_id")
+            trace_id = (
+                str(session_id).strip()
+                if isinstance(session_id, str) and session_id.strip()
+                else "unknown"
+            )
+        enqueue_confirm(
+            trace_id=str(trace_id).strip(),
+            error_type=str(escalate_reason or "said_done_mismatch"),
+            policy_names=["said_done"],
+            kind=KIND_SAID_DONE,
+            request_id=request_id,
+            extra={
+                "summary": summary,
+                "said_summary": details.get("said_summary"),
+                "done_summary": details.get("done_summary"),
+                "diff": details.get("diff"),
+                "tool_name": payload.get("tool_name"),
+                "tool_use_id": payload.get("tool_use_id"),
+                "session_id": payload.get("session_id"),
+            },
+        )
+    except Exception as exc:
+        sys.stderr.write(f"arbiteros-defender tui enqueue failed: {exc}\n")
+
     return _wait_for_watch(request_id)
 
 

@@ -1,4 +1,9 @@
-"""File-based bridge between Kernel policy confirm and the ArbiterOS TUI shell."""
+"""File-based bridge between Kernel confirms and the ArbiterOS TUI shell.
+
+Supports:
+- ``kind=policy`` (default): Gateway policy Yes/No
+- ``kind=said_done``: PreToolUse said/done escalate Yes/No (Y=deny, N=allow)
+"""
 
 from __future__ import annotations
 
@@ -15,6 +20,9 @@ _PENDING_FILE = "pending_confirm.json"
 _ANSWERS_DIR = "answers"
 _EVENTS_FILE = "events.jsonl"
 _ENABLED_MARKER = "shell.enabled"
+
+KIND_POLICY = "policy"
+KIND_SAID_DONE = "said_done"
 
 
 def _kernel_root() -> Path:
@@ -109,34 +117,123 @@ def list_pending_confirms() -> list[dict[str, Any]]:
     return list(_read_pending().get("items", []))
 
 
+def pending_kind(item: dict[str, Any]) -> str:
+    kind = item.get("kind")
+    if isinstance(kind, str) and kind.strip():
+        return kind.strip()
+    return KIND_POLICY
+
+
+def sort_pending_confirms(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Policy first, then said/done; stable by created_at within each kind."""
+
+    def _key(item: dict[str, Any]) -> tuple[int, str]:
+        kind = pending_kind(item)
+        order = 0 if kind == KIND_POLICY else 1
+        return (order, str(item.get("created_at") or ""))
+
+    return sorted(
+        [i for i in items if isinstance(i, dict)],
+        key=_key,
+    )
+
+
+def _defender_hook_dir() -> Path:
+    override = (
+        os.environ.get("ARBITEROS_DEFENDER_HOOK_DIR", "").strip()
+        or os.environ.get("CODEX_DEFENDER_HOOK_DIR", "").strip()
+    )
+    if override:
+        return Path(override).expanduser().resolve()
+    return Path.home() / ".arbiteros" / "defender-hook"
+
+
+def _write_defender_decision(request_id: str, decision: str, reason: str) -> None:
+    """Notify waiting PreToolUse hook (same files as hooks/defender/common.py)."""
+    base = _defender_hook_dir()
+    decisions = base / "decisions"
+    pending = base / "pending"
+    decisions.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "request_id": request_id,
+        "decision": decision,
+        "reason": reason,
+        "decided_at": datetime.now(timezone.utc).isoformat(),
+    }
+    path = decisions / f"{request_id}.json"
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False) + "\n", encoding="utf-8")
+    tmp.replace(path)
+    try:
+        (pending / f"{request_id}.json").unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def clear_pending_confirm(request_id: str) -> bool:
+    """Drop a TUI pending item without writing an answer (e.g. watch.py answered)."""
+    items = list(_read_pending().get("items", []))
+    remaining: list[dict[str, Any]] = []
+    removed = False
+    for item in items:
+        if isinstance(item, dict) and item.get("request_id") == request_id:
+            removed = True
+            continue
+        remaining.append(item)
+    if removed:
+        _write_pending(remaining)
+    return removed
+
+
 def enqueue_confirm(
     *,
     trace_id: str,
     error_type: str,
     policy_names: list[str],
+    kind: str = KIND_POLICY,
+    request_id: Optional[str] = None,
+    extra: Optional[dict[str, Any]] = None,
 ) -> str:
-    request_id = str(uuid.uuid4())
+    rid = (request_id or "").strip() or str(uuid.uuid4())
+    kind_norm = (kind or KIND_POLICY).strip() or KIND_POLICY
     items = list(_read_pending().get("items", []))
-    items.append(
-        {
-            "request_id": request_id,
-            "trace_id": trace_id,
-            "error_type": error_type,
-            "policy_names": policy_names,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-        }
-    )
+    # Replace existing row with same request_id (idempotent re-enqueue).
+    items = [
+        i
+        for i in items
+        if not (isinstance(i, dict) and i.get("request_id") == rid)
+    ]
+    row: dict[str, Any] = {
+        "request_id": rid,
+        "trace_id": trace_id,
+        "error_type": error_type,
+        "policy_names": policy_names,
+        "kind": kind_norm,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if extra:
+        row["extra"] = extra
+    items.append(row)
     _write_pending(items)
+    if kind_norm == KIND_SAID_DONE:
+        message = "Said/Done mismatch needs confirmation (Y=deny, N=allow)."
+    else:
+        message = "Policy block needs confirmation (Y/N)."
     emit_event(
         trace_id=trace_id,
         level="confirm",
-        message="Policy block needs confirmation (Y/N).",
-        extra={"request_id": request_id, "policy_names": policy_names},
+        message=message,
+        extra={
+            "request_id": rid,
+            "policy_names": policy_names,
+            "kind": kind_norm,
+        },
     )
-    return request_id
+    return rid
 
 
 def submit_confirm_answer(*, request_id: str, keep_block: bool) -> bool:
+    """Record Y/N. keep_block=True means Y (deny / keep block); False means N (allow)."""
     items = list(_read_pending().get("items", []))
     matched = None
     remaining: list[dict[str, Any]] = []
@@ -148,6 +245,7 @@ def submit_confirm_answer(*, request_id: str, keep_block: bool) -> bool:
     if matched is None:
         return False
     _write_pending(remaining)
+    kind = pending_kind(matched)
     answers_dir = tui_dir() / _ANSWERS_DIR
     answers_dir.mkdir(parents=True, exist_ok=True)
     answer_path = answers_dir / f"{request_id}.json"
@@ -157,12 +255,22 @@ def submit_confirm_answer(*, request_id: str, keep_block: bool) -> bool:
                 "request_id": request_id,
                 "trace_id": matched.get("trace_id"),
                 "keep_block": keep_block,
+                "kind": kind,
                 "answered_at": datetime.now(timezone.utc).isoformat(),
             },
             ensure_ascii=False,
         ),
         encoding="utf-8",
     )
+    if kind == KIND_SAID_DONE:
+        # Align with policy: Y keep_block → deny tool; N → allow mismatched Done.
+        decision = "deny" if keep_block else "allow"
+        reason = (
+            "user_denied_in_tui_said_done"
+            if keep_block
+            else "user_allowed_in_tui_said_done"
+        )
+        _write_defender_decision(request_id, decision, reason)
     return True
 
 
@@ -179,6 +287,7 @@ def request_confirm_via_tui(
         trace_id=trace_id,
         error_type=error_type,
         policy_names=policy_names,
+        kind=KIND_POLICY,
     )
     answer_path = tui_dir() / _ANSWERS_DIR / f"{request_id}.json"
     deadline = time.monotonic() + max(1.0, timeout_sec)
