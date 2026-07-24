@@ -19,6 +19,7 @@ def analyze(filepath):
     asst_with_raw = 0
     total_prompt = 0
     total_cached = 0
+    total_completion = 0
 
     samples_shown = 0
 
@@ -37,8 +38,10 @@ def analyze(filepath):
             pt = ru.get('prompt_tokens', 0)
             details = ru.get('prompt_tokens_details', {})
             cached = details.get('cached_tokens', 0)
+            ct = ru.get('completion_tokens', 0)
             total_prompt += pt
             total_cached += cached
+            total_completion += ct
 
             if samples_shown < 3:
                 samples_shown += 1
@@ -51,6 +54,7 @@ def analyze(filepath):
     print(f'Total assistant messages:        {total_asst}')
     print(f'Assistant msgs with raw_data:    {asst_with_raw}')
     print(f'Total prompt_tokens:             {total_prompt:>12,d}')
+    print(f'Total completion_tokens:         {total_completion:>12,d}')
     print(f'Total cached_tokens:             {total_cached:>12,d}')
     print(f'Total non-cached tokens:         {total_prompt - total_cached:>12,d}')
     print()

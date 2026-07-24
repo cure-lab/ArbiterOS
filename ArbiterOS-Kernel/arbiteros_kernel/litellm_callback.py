@@ -275,9 +275,6 @@ class _TraceState:
     bootstrap_scan_done: bool = False
     # Step1 backup-only fields (trace-id bound). Do not change runtime reads yet.
     trace_started_at: Optional[str] = None
-    trace_total_tokens: int = 0
-    trace_total_cost_usd: float = 0.0
-    token_usage_rounds: list[dict[str, Any]] = field(default_factory=list)
     backup_role_name_requested: Optional[str] = None
     backup_role_name_effective: Optional[str] = None
     backup_instruction_file: Optional[str] = None
@@ -292,10 +289,6 @@ class _TraceState:
     backup_updated_at: Optional[str] = None
     # Ephemeral handle to the current turn observation, for in-process updates.
     current_turn_handle: Any = None
-    # Per-turn accumulator: tokens/cost/latency for the current round (reset on new turn)
-    pending_round_total_tokens: int = 0
-    pending_round_total_cost_usd: float = 0.0
-    pending_round_models: list[str] = field(default_factory=list)
 
 
 _trace_state_lock = threading.Lock()
@@ -408,9 +401,6 @@ def _trace_state_to_dict(state: _TraceState) -> dict[str, Any]:
         "tool_result_alignment_by_call_id": state.tool_result_alignment_by_call_id,
         "bootstrap_scan_done": bool(state.bootstrap_scan_done),
         "trace_started_at": state.trace_started_at,
-        "trace_total_tokens": state.trace_total_tokens,
-        "trace_total_cost_usd": state.trace_total_cost_usd,
-        "token_usage_rounds": state.token_usage_rounds,
         "backup_role_name_requested": state.backup_role_name_requested,
         "backup_role_name_effective": state.backup_role_name_effective,
         "backup_instruction_file": state.backup_instruction_file,
@@ -515,18 +505,6 @@ def _trace_state_from_dict(device_key: str, payload: Any) -> Optional[_TraceStat
     trace_started_at = payload.get("trace_started_at")
     if not isinstance(trace_started_at, str) or not trace_started_at.strip():
         trace_started_at = datetime.now().isoformat()
-    trace_total_tokens = payload.get("trace_total_tokens")
-    if not isinstance(trace_total_tokens, int) or trace_total_tokens < 0:
-        trace_total_tokens = 0
-    trace_total_cost_usd = payload.get("trace_total_cost_usd")
-    if not isinstance(trace_total_cost_usd, (int, float)) or trace_total_cost_usd < 0:
-        trace_total_cost_usd = 0.0
-    token_usage_rounds = payload.get("token_usage_rounds")
-    if not isinstance(token_usage_rounds, list):
-        token_usage_rounds = []
-    cleaned_token_usage_rounds: list[dict[str, Any]] = [
-        dict(x) for x in token_usage_rounds if isinstance(x, dict)
-    ]
     backup_role_name_requested = payload.get("backup_role_name_requested")
     if (
         not isinstance(backup_role_name_requested, str)
@@ -614,9 +592,6 @@ def _trace_state_from_dict(device_key: str, payload: Any) -> Optional[_TraceStat
         pending_warning_texts=[],
         bootstrap_scan_done=bootstrap_scan_done,
         trace_started_at=trace_started_at,
-        trace_total_tokens=trace_total_tokens,
-        trace_total_cost_usd=float(trace_total_cost_usd),
-        token_usage_rounds=cleaned_token_usage_rounds,
         backup_role_name_requested=backup_role_name_requested,
         backup_role_name_effective=backup_role_name_effective,
         backup_instruction_file=backup_instruction_file,
@@ -1650,110 +1625,8 @@ def _sync_trace_state_from_disk(force: bool = False) -> None:
 
 
 def _persist_trace_state_to_disk(device_key: Optional[str] = None) -> None:
-    """Persist trace state(s) to disk.
-
-    Args:
-        device_key: If provided, only persist this specific device's state.
-                   If None, persist all device states.
-    """
-    global _trace_state_file_mtime_ns_by_device, _latest_user_id_file_mtime_ns
-
-    if device_key is not None:
-        # Persist single device state
-        with _trace_state_lock:
-            state = _trace_state_by_device.get(device_key)
-            if state is None:
-                return
-            state_dict = _trace_state_to_dict(state)
-            trace_id = state.trace_id
-
-        trace_file = _get_trace_state_file(trace_id)
-        tmp_path = trace_file.with_suffix(".tmp")
-
-        try:
-            # Collect unique models used across all rounds
-            models_used = list(set(
-                model
-                for round_data in state_dict.get("token_usage_rounds", [])
-                for model in round_data.get("models_used", [])
-                if isinstance(model, str)
-            ))
-
-            # Add top-level summary for quick visibility
-            payload = {
-                "version": 1,
-                "updated_at": datetime.now().isoformat(),
-                "summary": {
-                    "total_tokens": state_dict.get("trace_total_tokens", 0),
-                    "total_cost_usd": state_dict.get("trace_total_cost_usd", 0.0),
-                    "rounds_count": len(state_dict.get("token_usage_rounds", [])),
-                    "models_used": models_used,
-                    "trace_id": state_dict.get("trace_id"),
-                    "device_key": state_dict.get("device_key"),
-                },
-                **state_dict,
-            }
-            tmp_path.write_text(
-                json.dumps(payload, ensure_ascii=False, default=str),
-                encoding="utf-8",
-            )
-            tmp_path.replace(trace_file)
-            mtime_ns = trace_file.stat().st_mtime_ns
-
-            with _trace_state_lock:
-                _trace_state_file_mtime_ns_by_device[device_key] = mtime_ns
-        except Exception as exc:
-            _save_json("trace_state_persist_error", {"device_key": device_key, "error": str(exc)})
-            return
-    else:
-        # Legacy path: persist all states (for migration or full dump)
-        with _trace_state_lock:
-            states_to_persist = dict(_trace_state_by_device.items())
-
-        for dev_key, state in states_to_persist.items():
-            trace_file = _get_trace_state_file(state.trace_id)
-            tmp_path = trace_file.with_suffix(".tmp")
-
-            try:
-                state_dict = _trace_state_to_dict(state)
-
-                # Collect unique models used across all rounds
-                models_used = list(set(
-                    model
-                    for round_data in state_dict.get("token_usage_rounds", [])
-                    for model in round_data.get("models_used", [])
-                    if isinstance(model, str)
-                ))
-
-                # Add top-level summary for quick visibility
-                payload = {
-                    "version": 1,
-                    "updated_at": datetime.now().isoformat(),
-                    "summary": {
-                        "total_tokens": state_dict.get("trace_total_tokens", 0),
-                        "total_cost_usd": state_dict.get("trace_total_cost_usd", 0.0),
-                        "rounds_count": len(state_dict.get("token_usage_rounds", [])),
-                        "models_used": models_used,
-                        "trace_id": state_dict.get("trace_id"),
-                        "device_key": state_dict.get("device_key"),
-                    },
-                    **state_dict,
-                }
-                tmp_path.write_text(
-                    json.dumps(payload, ensure_ascii=False, default=str),
-                    encoding="utf-8",
-                )
-                tmp_path.replace(trace_file)
-                mtime_ns = trace_file.stat().st_mtime_ns
-
-                with _trace_state_lock:
-                    _trace_state_file_mtime_ns_by_device[dev_key] = mtime_ns
-            except Exception as exc:
-                _save_json("trace_state_persist_error", {"device_key": dev_key, "error": str(exc)})
-                continue
-
-    # Always persist latest_user_id_by_channel to its own file
-    _persist_latest_user_id_by_channel()
+    """No-op: trace state is no longer persisted to disk (all data in JSONL)."""
+    return
 
 
 def _persist_latest_user_id_by_channel() -> None:
@@ -1836,30 +1709,18 @@ def _extract_total_tokens_from_usage_dict(usage: dict[str, Any]) -> int:
 
 
 def _normalize_usage_dict_for_storage(usage: dict[str, Any]) -> dict[str, Any]:
-    """Keep a JSON-serializable usage snapshot for per-round trace records."""
+    """Keep full usage snapshot, dropping only non-serializable values."""
     out: dict[str, Any] = {}
-    for key in (
-        "total_tokens",
-        "prompt_tokens",
-        "completion_tokens",
-        "input_tokens",
-        "output_tokens",
-        "cache_read_input_tokens",
-        "cache_creation_input_tokens",
-        "cost",
-    ):
-        value = usage.get(key)
-        if isinstance(value, (int, float)) and not isinstance(value, bool):
-            out[key] = value
-    for details_key in ("input_tokens_details", "output_tokens_details"):
-        details = usage.get(details_key)
-        if isinstance(details, dict):
-            cleaned_details: dict[str, Any] = {}
-            for dk, dv in details.items():
-                if isinstance(dv, (int, float)) and not isinstance(dv, bool):
-                    cleaned_details[str(dk)] = dv
-            if cleaned_details:
-                out[details_key] = cleaned_details
+    for k, v in usage.items():
+        if isinstance(v, (int, float, str, bool, type(None))):
+            out[k] = v
+        elif isinstance(v, dict):
+            out[k] = _normalize_usage_dict_for_storage(v)
+        elif isinstance(v, list):
+            out[k] = [
+                _normalize_usage_dict_for_storage(x) if isinstance(x, dict) else x
+                for x in v
+            ]
     return out
 
 
@@ -2125,151 +1986,23 @@ def _record_trace_token_usage(
     model: Optional[str] = None,
     source: str = "post_call_success",
 ) -> Optional[dict[str, Any]]:
+    """Extract usage and cost from LLM response. Pure function, no side effects."""
     if not isinstance(trace_id, str) or not trace_id.strip():
         return None
     usage_dict = _extract_usage_dict_from_response_obj(response_obj)
-    delta = (
-        _extract_total_tokens_from_usage_dict(usage_dict)
-        if isinstance(usage_dict, dict)
-        else 0
-    )
-    if delta <= 0:
+    if not isinstance(usage_dict, dict):
         return None
 
-    tid = trace_id.strip()
-
-    # Check if response has tool_calls
-    response_dict = _to_json(response_obj)
-    has_tool_calls = False
-    if isinstance(response_dict, dict):
-        choices = response_dict.get("choices")
-        if isinstance(choices, list) and len(choices) > 0:
-            first_choice = choices[0]
-            if isinstance(first_choice, dict):
-                message = first_choice.get("message")
-                if isinstance(message, dict):
-                    tool_calls = _extract_tool_calls(message)
-                    has_tool_calls = len(tool_calls) > 0
-
-    round_record: Optional[dict[str, Any]] = None
-    with _trace_state_lock:
-        for state in _trace_state_by_device.values():
-            if state.trace_id != tid:
-                continue
-            if not isinstance(state.trace_started_at, str) or not state.trace_started_at:
-                state.trace_started_at = datetime.now().isoformat()
-            state.trace_total_tokens = max(0, int(state.trace_total_tokens)) + delta
-            cache_counts = (
-                _extract_cache_token_counts(usage_dict)
-                if isinstance(usage_dict, dict)
-                else {"cache_hit_tokens": 0, "cache_miss_tokens": 0, "uncached_input_tokens": 0}
-            )
-            _normalized_usage = (
-                _normalize_usage_dict_for_storage(usage_dict)
-                if isinstance(usage_dict, dict)
-                else {}
-            )
-            _output_tokens = int(
-                _normalized_usage.get("completion_tokens")
-                or _normalized_usage.get("output_tokens")
-                or 0
-            )
-            round_cost = _compute_round_cost_usd(
-                model=model,
-                cache_hit_tokens=cache_counts["cache_hit_tokens"],
-                cache_miss_tokens=cache_counts["cache_miss_tokens"],
-                uncached_input_tokens=cache_counts["uncached_input_tokens"],
-                output_tokens=_output_tokens,
-            )
-            # Allow -inf to propagate: if round_cost is -inf, the trace total becomes -inf
-            state.trace_total_cost_usd = (
-                float(state.trace_total_cost_usd) + round_cost
-            )
-
-            # Accumulate per-turn metrics
-            state.pending_round_total_tokens += delta
-            state.pending_round_total_cost_usd = (
-                state.pending_round_total_cost_usd + round_cost
-            )
-            if model:
-                state.pending_round_models.append(model)
-
-            # Only record and emit round if response has NO tool_calls
-            if not has_tool_calls:
-                llm_call_seq = len(state.token_usage_rounds) + 1
-                round_record = {
-                    "recorded_at": datetime.now().isoformat(),
-                    "turn_index": int(state.turn_index),
-                    "model": model,
-                    "models_used": list(state.pending_round_models),
-                    "source": source,
-                    "usage": _normalized_usage,
-                    "round_total_tokens": state.pending_round_total_tokens,
-                    "trace_total_tokens_after": int(state.trace_total_tokens),
-                    "cache_hit_tokens": cache_counts["cache_hit_tokens"],
-                    "cache_miss_tokens": cache_counts["cache_miss_tokens"],
-                    "uncached_input_tokens": cache_counts["uncached_input_tokens"],
-                    "round_cost_usd": state.pending_round_total_cost_usd,
-                    "trace_total_cost_usd_after": state.trace_total_cost_usd,
-                    "llm_call_seq": llm_call_seq,
-                }
-                state.token_usage_rounds.append(round_record)
-                state.backup_updated_at = datetime.now().isoformat()
-
-                # Reset per-turn accumulator
-                state.pending_round_total_tokens = 0
-                state.pending_round_total_cost_usd = 0.0
-                state.pending_round_models = []
-
-            break
-
-    if round_record is None:
-        return None
-
-    # Find the device_key for this trace_id to persist only that device's state
-    device_key_to_persist: Optional[str] = None
-    with _trace_state_lock:
-        for dev_key, state in _trace_state_by_device.items():
-            if state.trace_id == tid:
-                device_key_to_persist = dev_key
-                break
-
-    if device_key_to_persist:
-        _persist_trace_state_to_disk(device_key_to_persist)
-    _save_json(
-        "token_usage_round",
-        {"trace_id": tid, **round_record},
+    cache_counts = _extract_cache_token_counts(usage_dict)
+    _output_tokens = int(usage_dict.get("completion_tokens") or usage_dict.get("output_tokens") or 0)
+    cost = _compute_round_cost_usd(
+        model=model,
+        cache_hit_tokens=cache_counts["cache_hit_tokens"],
+        cache_miss_tokens=cache_counts["cache_miss_tokens"],
+        uncached_input_tokens=cache_counts["uncached_input_tokens"],
+        output_tokens=_output_tokens,
     )
-    token_usage = _instruction_token_usage_from_round_record(round_record)
-    _set_pending_instruction_token_usage(tid, token_usage)
-    return round_record
-
-
-def _instruction_token_usage_from_round_record(
-    round_record: dict[str, Any],
-) -> dict[str, Any]:
-    usage = round_record.get("usage")
-    if not isinstance(usage, dict):
-        usage = {}
-    prompt_tokens = usage.get("prompt_tokens")
-    if prompt_tokens is None:
-        prompt_tokens = usage.get("input_tokens")
-    completion_tokens = usage.get("completion_tokens")
-    if completion_tokens is None:
-        completion_tokens = usage.get("output_tokens")
-    return {
-        "llm_call_seq": round_record.get("llm_call_seq"),
-        "model": round_record.get("model"),
-        "turn_index": round_record.get("turn_index"),
-        "prompt_tokens": prompt_tokens,
-        "completion_tokens": completion_tokens,
-        "total_tokens": round_record.get("round_total_tokens"),
-        "cache_hit_tokens": round_record.get("cache_hit_tokens"),
-        "cache_miss_tokens": round_record.get("cache_miss_tokens"),
-        "uncached_input_tokens": round_record.get("uncached_input_tokens"),
-        "cost_usd": round_record.get("round_cost_usd"),
-        "recorded_at": round_record.get("recorded_at"),
-    }
+    return {"usage": usage_dict, "cost_usd": cost, "model": model}
 
 
 def _set_pending_instruction_token_usage(
@@ -5474,10 +5207,6 @@ def _ensure_turn_node_if_needed(context: _DeviceContext, state: _TraceState) -> 
             state.current_turn_observation_id = None
             state.turn_index += 1
             next_turn_index = state.turn_index
-            # Reset per-turn accumulator for the new round
-            state.pending_round_total_tokens = 0
-            state.pending_round_total_cost_usd = 0.0
-            state.pending_round_models = []
             should_emit = True
 
     if not should_emit:
@@ -9900,7 +9629,9 @@ class MyCustomHandler(CustomLogger):
             _context = _build_device_context(data)
             _state, _ = _ensure_trace_state(_context)
             _trace_id = _state.trace_id if _state is not None else None
-        _accumulate_trace_total_tokens(_trace_id, response)
+        _token_usage = _accumulate_trace_total_tokens(_trace_id, response)
+        if isinstance(_token_usage, dict) and isinstance(_trace_id, str) and _trace_id.strip():
+            _set_pending_instruction_token_usage(_trace_id.strip(), _token_usage["usage"])
         _is_mock_response_path = False
         if isinstance(_trace_id, str) and _trace_id.strip():
             with _policy_confirmation_lock:
@@ -9909,7 +9640,11 @@ class MyCustomHandler(CustomLogger):
                     or _trace_id.strip() in _policy_confirmation_no_apply
                 )
         if not _is_mock_response_path:
-            _save_json("post_call_success", {"response": msg})
+            _save_json("post_call_success", {
+                "response": msg,
+                "trace_id": _trace_id,
+                **(dict(_token_usage) if isinstance(_token_usage, dict) else {}),
+            })
 
         raw_msg_dict = msg if isinstance(msg, dict) else None
         final_msg_dict = raw_msg_dict

@@ -117,13 +117,9 @@ class LogParser:
 
     async def _parse_api_calls_logs(self) -> AsyncIterator[Round]:
         """
-        Parse api_calls.jsonl to extract completions and yield complete rounds.
+        Parse api_calls.jsonl. post_call_success now includes usage/cost_usd directly.
 
-        Log structure:
-        1. token_usage_round (has trace_id, usage, turn_index)
-        2. post_call_success (has response content, tool_calls) - immediately follows
-
-        We need to pair them by sequence.
+        A complete round = consecutive LLM calls ending with a non-tool-call response.
         """
         if not self.api_calls_log.exists():
             return
@@ -133,7 +129,7 @@ class LogParser:
             content = f.read()
             self._last_positions["api_calls"] = f.tell()
 
-            pending_token_usage = None  # Store the last token_usage_round event
+            round_seq = 0
 
             for line in content.splitlines():
                 line = line.strip()
@@ -146,74 +142,52 @@ class LogParser:
                     continue
 
                 hook = log_entry.get("hook")
+                if hook != "post_call_success":
+                    continue
+
                 data = log_entry.get("data", {})
+                trace_id = data.get("trace_id")
+                round_seq += 1
 
-                if hook == "token_usage_round":
-                    # Store this event, waiting for the next post_call_success
-                    pending_token_usage = log_entry
+                if not trace_id or trace_id not in self._trace_cache:
+                    continue
 
-                elif hook == "post_call_success" and pending_token_usage:
-                    # Pair with previous token_usage_round
-                    token_data = pending_token_usage.get("data", {})
-                    trace_id = token_data.get("trace_id")
-                    turn_index = token_data.get("turn_index", 0)
+                cached = self._trace_cache[trace_id]
+                response = data.get("response", {})
 
-                    if not trace_id or trace_id not in self._trace_cache:
-                        pending_token_usage = None
-                        continue
+                # Append assistant response to messages
+                messages = list(cached.get("messages", []))
+                messages.append({
+                    "role": "assistant",
+                    "content": response.get("content", ""),
+                    "tool_calls": response.get("tool_calls"),
+                })
+                cached["messages"] = messages
 
-                    cached = self._trace_cache[trace_id]
-                    response = data.get("response", {})
+                # Check if round is complete (no tool calls)
+                if response.get("tool_calls"):
+                    continue
 
-                    # Append assistant response to messages
-                    messages = list(cached.get("messages", []))  # Copy to avoid mutation
-                    messages.append({
-                        "role": "assistant",
-                        "content": response.get("content", ""),
-                        "tool_calls": response.get("tool_calls"),
-                    })
+                # Extract token usage and cost (now embedded in post_call_success)
+                usage = data.get("usage", {})
+                tokens = {
+                    "input_tokens": usage.get("prompt_tokens", 0),
+                    "output_tokens": usage.get("completion_tokens", 0),
+                    "total_tokens": usage.get("total_tokens", 0),
+                }
+                cost = data.get("cost_usd") or tokens["total_tokens"] * 0.00001
 
-                    # Update cache with new messages
-                    cached["messages"] = messages
+                round_obj = Round(
+                    round_id=f"{trace_id}_round{round_seq}",
+                    messages=messages,
+                    routing_info=self._extract_routing_info(cached.get("metadata", {})),
+                    tokens=tokens,
+                    cost=cost,
+                    latency_ms=0.0,
+                    timestamp=log_entry.get("ts", ""),
+                )
 
-                    # Check if round is complete (no tool calls)
-                    if response.get("tool_calls"):
-                        # Not complete, has tool calls - wait for next turn
-                        pending_token_usage = None
-                        continue
-
-                    # Extract token usage and cost
-                    usage = token_data.get("usage", {})
-                    tokens = {
-                        "input_tokens": usage.get("prompt_tokens", 0),
-                        "output_tokens": usage.get("completion_tokens", 0),
-                        "total_tokens": usage.get("total_tokens", 0),
-                    }
-
-                    # 优先使用日志中的实际成本
-                    cost = token_data.get("round_cost_usd")
-                    if cost is None or cost == 0:
-                        # 回退：基于 token 估算（$0.01 per 1K tokens）
-                        cost = tokens["total_tokens"] * 0.00001
-                        logger.debug(f"Using estimated cost for {trace_id}_turn{turn_index}: ${cost:.6f}")
-                    else:
-                        logger.debug(f"Using actual cost for {trace_id}_turn{turn_index}: ${cost:.6f}")
-
-                    round_obj = Round(
-                        round_id=f"{trace_id}_turn{turn_index}",
-                        messages=messages,
-                        routing_info=self._extract_routing_info(cached.get("metadata", {})),
-                        tokens=tokens,
-                        cost=cost,  # 使用实际成本或估算
-                        latency_ms=0.0,
-                        timestamp=pending_token_usage.get("ts", ""),
-                    )
-
-                    yield round_obj
-
-                    # Clean up
-                    pending_token_usage = None
-                    # Don't delete trace_cache yet - might have more turns
+                yield round_obj
 
     def _extract_routing_info(self, metadata: dict) -> dict:
         """Extract routing info from metadata if available."""

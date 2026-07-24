@@ -116,8 +116,34 @@ class LightweightTagger:
         """Extract tags from query. Raises exception if LLM fails."""
         return self._llm_extract_tags(query)
 
+    def _log_tagger_call(self, query: str, result: dict[str, Any], raw_response: str, elapsed_ms: float, error: Optional[str] = None) -> None:
+        """Log tagger request and response to JSONL for debugging."""
+        import json as _json
+        from datetime import datetime as _dt
+        from pathlib import Path as _Path
+
+        log_dir = _Path(__file__).resolve().parent.parent.parent.parent / "log"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_path = log_dir / "tagger_calls.jsonl"
+
+        entry = {
+            "ts": _dt.now().isoformat(),
+            "query": query,
+            "model": self.model,
+            "system_prompt": self.system_prompt,
+            "raw_response": raw_response,
+            "tags": result,
+            "elapsed_ms": round(elapsed_ms, 2),
+        }
+        if error:
+            entry["error"] = error
+
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(_json.dumps(entry, ensure_ascii=False) + "\n")
+
     def _llm_extract_tags(self, query: str) -> dict[str, Any]:
         import litellm
+        import time as _time
 
         response_schema = self._json_schema
 
@@ -147,9 +173,14 @@ class LightweightTagger:
                 },
             }
 
+        t_start = _time.perf_counter()
         resp = litellm.completion(**kwargs)
+        elapsed = (_time.perf_counter() - t_start) * 1000
+
         content = resp.choices[0].message.content
+        raw_response = content or ""
         if not content:
+            self._log_tagger_call(query, {}, raw_response, elapsed, error="empty response")
             raise RuntimeError(f"Tagger LLM returned empty content (model={self.model})")
 
         # Strip markdown code fences if present
@@ -162,6 +193,12 @@ class LightweightTagger:
                 lines = lines[:-1]
             content = "\n".join(lines)
 
-        tags = json.loads(content)
+        try:
+            tags = json.loads(content)
+        except json.JSONDecodeError as e:
+            self._log_tagger_call(query, {}, raw_response, elapsed, error=f"JSON parse error: {e}")
+            raise
+
+        self._log_tagger_call(query, tags, raw_response, elapsed)
         logger.debug(f"[Tagger] LLM tags: {tags}")
         return tags
