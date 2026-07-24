@@ -1,4 +1,7 @@
-"""English Codex sandbox wizard with step-back support (type b / back)."""
+"""English sandbox wizard with step-back support (type b / back).
+
+Logical steps are shared; apply/load target Codex or Claude Code via ``agent``.
+"""
 
 from __future__ import annotations
 
@@ -9,11 +12,12 @@ from typing import Any, Optional
 from rich.console import Console
 
 from arbiteros_kernel.tui.sandbox.config_io import (
-    CONFIG_PATH,
+    CONFIG_PATH as CODEX_CONFIG_PATH,
     SandboxSettings,
-    apply_settings,
-    load_settings,
+    apply_settings as apply_codex_settings,
+    load_settings as load_codex_settings,
 )
+from arbiteros_kernel.tui.sandbox.profiles import normalize_agent
 
 BACK = object()
 CANCEL = object()
@@ -140,12 +144,25 @@ class WizardIO:
             self.say("Invalid choice, try again.")
 
 
-def show_settings(io: WizardIO, title: str, settings: SandboxSettings) -> None:
+def show_settings(
+    io: WizardIO,
+    title: str,
+    settings: SandboxSettings,
+    *,
+    agent: str = "codex",
+) -> None:
+    agent_n = normalize_agent(agent)
     io.say()
     io.say(title)
     io.say("-" * 50)
-    for line in settings.summary_lines():
-        io.say(f"  {line}")
+    if agent_n == "claude":
+        from arbiteros_kernel.tui.sandbox.claude_config_io import claude_summary_lines
+
+        for line in claude_summary_lines(settings):
+            io.say(f"  {line}")
+    else:
+        for line in settings.summary_lines():
+            io.say(f"  {line}")
     io.say("-" * 50)
 
 
@@ -283,13 +300,18 @@ def _collect_network_policy(io: WizardIO, current: SandboxSettings) -> Any:
     return current
 
 
-def run_custom_wizard(io: WizardIO, seed: SandboxSettings) -> SandboxSettings | None:
+def run_custom_wizard(
+    io: WizardIO,
+    seed: SandboxSettings,
+    *,
+    agent: str = "codex",
+) -> SandboxSettings | None:
     """Step machine with back navigation. Returns None if cancelled.
 
-    Writes Codex permission profiles (not legacy sandbox_mode). Access modes map to
-    built-ins `:read-only` / `:workspace` / `:danger-full-access`, or a custom
-    profile that extends one of the first two when denials/network/roots are set.
+    Codex: permission profiles (:read-only / :workspace / :danger-full-access).
+    Claude: same logical modes map to sandbox.enabled / autoAllow / filesystem.
     """
+    agent_n = normalize_agent(agent)
     s = _clone(seed)
     step = 0
 
@@ -299,7 +321,10 @@ def run_custom_wizard(io: WizardIO, seed: SandboxSettings) -> SandboxSettings | 
             return ["mode", "approval"]
         base = ["mode", "approval", "globs", "paths", "network"]
         if mode == "workspace-write":
-            base.extend(["writable", "tmpdir"])
+            if agent_n == "claude":
+                base.append("writable")
+            else:
+                base.extend(["writable", "tmpdir"])
         return base
 
     while True:
@@ -314,13 +339,23 @@ def run_custom_wizard(io: WizardIO, seed: SandboxSettings) -> SandboxSettings | 
 
         result: Any = None
         if name == "mode":
-            choice = io.ask_choice(
-                "Access mode (Codex permission profile)",
-                {
+            if agent_n == "claude":
+                mode_prompt = "Access mode (maps to Claude Code sandbox)"
+                mode_opts = {
+                    "1": "read-only → enabled, prompts (no auto-allow)",
+                    "2": "workspace-write → enabled + auto-allow when not untrusted",
+                    "3": "danger-full-access → sandbox.enabled=false",
+                }
+            else:
+                mode_prompt = "Access mode (Codex permission profile)"
+                mode_opts = {
                     "1": "read-only → :read-only (inspect only)",
                     "2": "workspace-write → :workspace (typical)",
                     "3": "danger-full-access → no sandbox",
-                },
+                }
+            choice = io.ask_choice(
+                mode_prompt,
+                mode_opts,
                 default={"read-only": "1", "workspace-write": "2", "danger-full-access": "3"}.get(
                     s.sandbox_mode, "2"
                 ),
@@ -359,13 +394,28 @@ def run_custom_wizard(io: WizardIO, seed: SandboxSettings) -> SandboxSettings | 
             continue
 
         if name == "approval":
-            choice = io.ask_choice(
-                "Codex built-in approval policy (separate from ArbiterOS defender)",
-                {
+            if agent_n == "claude":
+                approval_prompt = (
+                    "Claude bash approval inside sandbox "
+                    "(separate from ArbiterOS defender)"
+                )
+                approval_opts = {
+                    "1": "untrusted — no auto-allow, fail if sandbox unavailable",
+                    "2": "on-request — auto-allow only for workspace-write",
+                    "3": "never — autoAllowBashIfSandboxed=true",
+                }
+            else:
+                approval_prompt = (
+                    "Codex built-in approval policy (separate from ArbiterOS defender)"
+                )
+                approval_opts = {
                     "1": "untrusted — strictest",
                     "2": "on-request — default",
                     "3": "never — never ask (dangerous)",
-                },
+                }
+            choice = io.ask_choice(
+                approval_prompt,
+                approval_opts,
                 default={"untrusted": "1", "on-request": "2", "never": "3"}.get(
                     s.approval_policy, "2"
                 ),
@@ -432,8 +482,13 @@ def run_custom_wizard(io: WizardIO, seed: SandboxSettings) -> SandboxSettings | 
             continue
 
         if name == "writable":
+            writable_q = (
+                "Add extra writable roots (sandbox.filesystem.allowWrite)"
+                if agent_n == "claude"
+                else "Add extra workspace roots (permissions.workspace_roots)"
+            )
             conf = io.ask_yes_no(
-                "Add extra workspace roots (permissions.workspace_roots)",
+                writable_q,
                 default=bool(s.writable_roots),
             )
             if conf is BACK:
@@ -478,7 +533,8 @@ def run_custom_wizard(io: WizardIO, seed: SandboxSettings) -> SandboxSettings | 
         return None
 
 
-def run_preset_picker(io: WizardIO) -> SandboxSettings | None:
+def run_preset_picker(io: WizardIO, *, agent: str = "codex") -> SandboxSettings | None:
+    _ = normalize_agent(agent)
     io.say()
     io.say("=== Quick presets ===")
     for key, (label, _) in PRESETS.items():
@@ -494,22 +550,45 @@ def run_preset_picker(io: WizardIO) -> SandboxSettings | None:
     return _clone(preset)
 
 
-def confirm_and_apply(io: WizardIO, settings: SandboxSettings) -> bool:
-    show_settings(io, "About to write", settings)
-    io.say(f"Target: {CONFIG_PATH}")
-    io.say("Writes permission profiles only; removes legacy sandbox_mode if present.")
+def confirm_and_apply(
+    io: WizardIO,
+    settings: SandboxSettings,
+    *,
+    agent: str = "codex",
+) -> bool:
+    agent_n = normalize_agent(agent)
+    show_settings(io, "About to write", settings, agent=agent_n)
+    if agent_n == "claude":
+        from arbiteros_kernel.tui.sandbox import claude_config_io as claude_io
+
+        target = claude_io.CONFIG_PATH
+        io.say(f"Target: {target}")
+        io.say("Merges/replaces the sandbox object in Claude settings.json.")
+        restart = "Claude Code"
+        apply_fn = claude_io.apply_settings
+    else:
+        target = CODEX_CONFIG_PATH
+        io.say(f"Target: {target}")
+        io.say("Writes permission profiles only; removes legacy sandbox_mode if present.")
+        restart = "Codex"
+        apply_fn = apply_codex_settings
     ok = io.ask_yes_no("Confirm write", default=False, allow_back=False)
     if ok is CANCEL or not ok:
         io.say("Cancelled — config unchanged.")
         return False
-    backup = apply_settings(settings)
+    backup = apply_fn(settings)
     io.say()
-    io.say(f"Wrote {CONFIG_PATH}")
-    if backup != CONFIG_PATH:
+    io.say(f"Wrote {target}")
+    if backup != target:
         io.say(f"Backup: {backup}")
-    io.say("Restart Codex for changes to take effect.")
+    io.say(f"Restart {restart} for changes to take effect.")
     return True
 
 
-def current_settings() -> SandboxSettings:
-    return load_settings()
+def current_settings(agent: str = "codex") -> SandboxSettings:
+    agent_n = normalize_agent(agent)
+    if agent_n == "claude":
+        from arbiteros_kernel.tui.sandbox.claude_config_io import load_settings as load_claude
+
+        return load_claude()
+    return load_codex_settings()

@@ -1,4 +1,4 @@
-"""Codex sandbox wizard integrated into the ArbiterOS TUI (`sw`)."""
+"""Sandbox wizard integrated into the ArbiterOS TUI (`sw`) for Codex and Claude Code."""
 
 from __future__ import annotations
 

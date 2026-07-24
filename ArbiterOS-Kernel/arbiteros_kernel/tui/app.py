@@ -87,7 +87,8 @@ class ArbiterTuiApp:
                 "([bold]Y[/bold]=deny/keep block, [bold]N[/bold]=allow). "
                 "Same trace: policy first, then said/done. "
                 "`list` shows a [bold]block[/bold] column when confirmation is pending. "
-                "`sw` configures Codex sandbox profiles and applies them to ~/.codex/config.toml.",
+                "`sw` configures Codex or Claude Code sandbox profiles "
+                "(pick agent, then list/show/new/use).",
                 title="How to use",
                 border_style="white",
             )
