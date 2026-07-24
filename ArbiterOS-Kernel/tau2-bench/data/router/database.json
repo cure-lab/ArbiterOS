@@ -1,0 +1,5117 @@
+[
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": true,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": true,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": true,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": true,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": true,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": true,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": true,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": true,
+                        "is_multi_reservation": true,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": true,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": true,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": true,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": true,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": true,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": true,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": true,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": true,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": true,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": true,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": true,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": true,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": true,
+                        "is_multi_reservation": true,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": true,
+                        "is_multi_reservation": true,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": true,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": true,
+                        "is_multi_reservation": true,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": true,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": true,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": true,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": true,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": true,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": true,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": true,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": true,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": true,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": true,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": true,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": true,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": true,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": true,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": true
+                }
+        },
+        {
+                "model": "gpt-5-nano",
+                "success": false,
+                "tags": {
+                        "has_conditional_request": false,
+                        "is_emotional_or_complaint": false,
+                        "is_multi_action": false,
+                        "is_multi_reservation": false,
+                        "requires_policy_reasoning": false
+                }
+        }
+]

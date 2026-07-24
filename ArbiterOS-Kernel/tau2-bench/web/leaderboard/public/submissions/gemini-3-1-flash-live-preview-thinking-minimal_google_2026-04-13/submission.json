@@ -1,0 +1,53 @@
+{
+  "model_name": "gemini-3.1-flash-live-preview-thinking-minimal",
+  "model_organization": "Google",
+  "submitting_organization": "Sierra",
+  "submission_date": "2026-04-13",
+  "submission_type": "standard",
+  "modality": "voice",
+  "contact_info": {
+    "email": "keshav@sierra.ai",
+    "name": "Sierra Research Team"
+  },
+  "results": {
+    "retail": {
+      "pass_1": 26.31578947368421
+    },
+    "airline": {
+      "pass_1": 42.0
+    },
+    "telecom": {
+      "pass_1": 17.543859649122805
+    }
+  },
+  "is_new": true,
+  "trajectories_available": true,
+  "trajectory_files": {
+    "airline": "airline_regular_gemini_gemini-3.1-flash-live-preview",
+    "retail": "retail_regular_gemini_gemini-3.1-flash-live-preview",
+    "telecom": "telecom_regular_gemini_gemini-3.1-flash-live-preview"
+  },
+  "reasoning_effort": "minimal",
+  "methodology": {
+    "evaluation_date": "2026-04-13",
+    "tau2_bench_version": "1.0.0",
+    "user_simulator": "v1.0",
+    "notes": "Evaluated using Gemini 3.1 Flash Live Preview with thinking = MINIMAL.",
+    "verification": {
+      "modified_prompts": false,
+      "omitted_questions": false
+    }
+  },
+  "voice_config": {
+    "provider": "Google",
+    "model": "gemini-3.1-flash-live-preview-thinking-minimal",
+    "tick_duration_seconds": 0.2,
+    "max_steps_seconds": 600.0,
+    "user_tts_provider": "elevenlabs/eleven_v3"
+  },
+  "model_release": {
+    "release_date": "2026-03-26",
+    "announcement_url": "https://blog.google/innovation-and-ai/models-and-research/gemini-models/gemini-3-1-flash-live/",
+    "announcement_title": "Gemini 3.1 Flash Live: Google's latest AI audio model"
+  }
+}

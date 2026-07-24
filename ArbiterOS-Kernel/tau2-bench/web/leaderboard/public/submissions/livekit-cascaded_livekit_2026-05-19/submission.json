@@ -1,0 +1,56 @@
+{
+  "model_name": "Cascaded baseline",
+  "model_organization": "Multiple providers",
+  "submitting_organization": "Sierra",
+  "submission_date": "2026-05-19",
+  "submission_type": "standard",
+  "modality": "voice",
+  "contact_info": {
+    "email": "ben.s@sierra.ai",
+    "name": "Sierra Research Team"
+  },
+  "results": {
+    "retail": {
+      "pass_1": 28.947368421052634
+    },
+    "airline": {
+      "pass_1": 48.0
+    },
+    "telecom": {
+      "pass_1": 16.666666666666664
+    }
+  },
+  "is_new": true,
+  "trajectories_available": true,
+  "trajectory_files": {
+    "airline": "airline_regular_livekit",
+    "retail": "retail_regular_livekit",
+    "telecom": "telecom_regular_livekit"
+  },
+  "methodology": {
+    "evaluation_date": "2026-04-20",
+    "tau2_bench_version": "1.0.0",
+    "user_simulator": "v1.0",
+    "notes": "Cascaded STT-LLM-TTS pipeline using Deepgram nova-3 STT, OpenAI gpt-4.1 LLM, and Deepgram aura-asteria-en TTS. Full-duplex audio-native evaluation using regular speech complexity (realistic audio conditions). 1 trial per task.",
+    "verification": {
+      "modified_prompts": false,
+      "omitted_questions": false
+    }
+  },
+  "voice_config": {
+    "provider": "Cascaded",
+    "model": "STT-LLM-TTS",
+    "pipeline": {
+      "asr": "Deepgram nova-3",
+      "llm": "OpenAI gpt-4.1",
+      "tts": "Deepgram aura-asteria-en"
+    },
+    "tick_duration_seconds": 0.2,
+    "max_steps_seconds": 1200.0,
+    "user_tts_provider": "elevenlabs/eleven_v3"
+  },
+  "model_release": {
+    "release_date": "2026-05-19"
+  },
+  "references": []
+}

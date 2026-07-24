@@ -1,35 +1,35 @@
 model_list:
-  - model_name: deepseek-v4-pro;nanobot
+  - model_name: deepseek-v4-pro
     litellm_params:
       model: openai/deepseek-v4-pro
-      api_key: os.environ/DEEPSEEK_API_KEY
-      api_base: os.environ/DEEPSEEK_API_BASE
-  - model_name: deepseek-v4-flash;nanobot
+      api_key: os.environ/OPENAI_API_KEY
+      api_base: os.environ/OPENAI_API_BASE
+  - model_name: deepseek-v4-flash
     litellm_params:
       model: openai/deepseek-v4-flash
-      api_key: os.environ/DEEPSEEK_API_KEY
-      api_base: os.environ/DEEPSEEK_API_BASE
-  - model_name: gpt-5;nanobot
+      api_key: os.environ/OPENAI_API_KEY
+      api_base: os.environ/OPENAI_API_BASE
+  - model_name: gpt-5
     litellm_params:
       model: openai/gpt-5
       api_key: os.environ/OPENAI_API_KEY
       api_base: os.environ/OPENAI_API_BASE
-  - model_name: gpt-5-mini;nanobot
+  - model_name: gpt-5-mini
     litellm_params:
       model: openai/gpt-5-mini
       api_key: os.environ/OPENAI_API_KEY
       api_base: os.environ/OPENAI_API_BASE
-  - model_name: gpt-5-nano;nanobot
+  - model_name: gpt-5-nano
     litellm_params:
       model: openai/gpt-5-nano
       api_key: os.environ/OPENAI_API_KEY
       api_base: os.environ/OPENAI_API_BASE
-  - model_name: gpt-4o;nanobot
+  - model_name: gpt-4o
     litellm_params:
       model: openai/gpt-4o
       api_key: os.environ/OPENAI_API_KEY
       api_base: os.environ/OPENAI_API_BASE
-  - model_name: gpt-4o-mini;nanobot
+  - model_name: gpt-4o-mini
     litellm_params:
       model: openai/gpt-4o-mini
       api_key: os.environ/OPENAI_API_KEY

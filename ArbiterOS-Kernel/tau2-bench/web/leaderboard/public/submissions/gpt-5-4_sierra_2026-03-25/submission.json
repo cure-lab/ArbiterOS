@@ -1,0 +1,50 @@
+{
+  "model_name": "GPT-5.4",
+  "model_organization": "OpenAI",
+  "submitting_organization": "Sierra",
+  "submission_date": "2026-03-25",
+  "submission_type": "standard",
+  "contact_info": {
+    "email": "victor@sierra.ai, ben.s@sierra.ai",
+    "name": "Sierra Research Team"
+  },
+  "is_new": true,
+  "reasoning_effort": "xhigh",
+  "trajectories_available": true,
+  "trajectory_files": {
+    "banking_knowledge": "gpt-5.4_xhigh_banking_knowledge_gpt-5.2_4trials.json"
+  },
+  "references": [
+    {
+      "title": "Trajectory Data (Google Drive)",
+      "url": "https://drive.google.com/file/d/1Um1lWa6IsfPgiW01E-5G4ikdtymDGcRt/view?usp=sharing",
+      "type": "trajectories"
+    }
+  ],
+  "results": {
+    "banking_knowledge": {
+      "pass_1": 30.67,
+      "pass_2": 22.68,
+      "pass_3": 18.56,
+      "pass_4": 16.49,
+      "cost": 1.8423,
+      "retrieval_config": "alltools"
+    }
+  },
+  "methodology": {
+    "evaluation_date": "2026-05-06",
+    "tau2_bench_version": "0.2.1-dev",
+    "user_simulator": "gpt-5.2",
+    "notes": "Evaluated with reasoning_effort 'xhigh' (the highest effort level this model supports). Retrieval: AllTools (BM25 + dense OpenAI text-embedding-3-large + sandboxed shell). User simulator: gpt-5.2 with reasoning_effort: low. 4 trials. Seed: 300. Banking_knowledge domain only — other domains intentionally excluded from this comparison; the AllTools setting standardizes retrieval across models.",
+    "verification": {
+      "modified_prompts": false,
+      "omitted_questions": false,
+      "details": "Full evaluation on all 97 banking_knowledge tasks with 4 trials each. Standard tau-bench scaffold."
+    }
+  },
+  "model_release": {
+    "release_date": "2026-03-05",
+    "announcement_url": "https://openai.com/index/introducing-gpt-5-4/",
+    "announcement_title": "Introducing GPT-5.4"
+  }
+}

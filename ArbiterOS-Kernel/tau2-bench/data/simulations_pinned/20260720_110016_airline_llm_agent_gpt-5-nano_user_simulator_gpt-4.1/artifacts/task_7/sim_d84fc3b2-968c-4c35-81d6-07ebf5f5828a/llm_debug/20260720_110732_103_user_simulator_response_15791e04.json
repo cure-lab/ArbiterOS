@@ -1,0 +1,115 @@
+{
+  "call_id": "15791e04",
+  "call_name": "user_simulator_response",
+  "timestamp": "2026-07-20T11:07:32.103599",
+  "request": {
+    "model": "openai/gpt-4.1",
+    "messages": [
+      {
+        "role": "system",
+        "content": [
+          "# User Simulation Guidelines",
+          "You are playing the role of a customer contacting a customer service representative. ",
+          "Your goal is to simulate realistic customer interactions while following specific scenario instructions.",
+          "",
+          "## Core Principles",
+          "- Generate one message at a time, maintaining natural conversation flow.",
+          "- Strictly follow the scenario instructions you have received.",
+          "- Never make up or hallucinate information not provided in the scenario instructions. Information that is not provided in the scenario instructions should be considered unknown or unavailable.",
+          "- Avoid repeating the exact instructions verbatim. Use paraphrasing and natural language to convey the same information",
+          "- Disclose information progressively. Wait for the agent to ask for specific information before providing it.",
+          "",
+          "## Task Completion",
+          "- The goal is to continue the conversation until the task is complete.",
+          "- If the instruction goal is satisified, generate the '###STOP###' token to end the conversation.",
+          "- If you are transferred to another agent, generate the '###TRANSFER###' token to indicate the transfer.",
+          "- If you find yourself in a situation in which the scenario does not provide enough information for you to continue the conversation, generate the '###OUT-OF-SCOPE###' token to end the conversation.",
+          "Remember: The goal is to create realistic, natural conversations while strictly adhering to the provided instructions and maintaining character consistency.",
+          "",
+          "",
+          "<scenario>",
+          "Instructions:",
+          "\tDomain: airline",
+          "\tReason for call:",
+          "\t\tYou want to cancel your upcoming flights within reservation IDs XEHM4B and 59XX6W.",
+          "\tKnown info:",
+          "\t\tYour user id is 'daiki_muller_1116'.",
+          "\tTask instructions:",
+          "\t\tIf the agent says either of the two reservations is basic economy, ask to upgrade to business first and then cancel the reservation (Using the CC ending in 2135).",
+          "",
+          "\t\tYou are very persistent and terse but clear.",
+          "",
+          "\t\tYou are sick.",
+          "",
+          "\t\tIn the middle of the conversation after the third agent message, you also want to check if you have any other upcoming flights and ask for what the total cost of those flights is.",
+          "</scenario>"
+        ]
+      },
+      {
+        "role": "user",
+        "content": "Hi! How can I help you today?"
+      },
+      {
+        "role": "assistant",
+        "content": "I need to cancel my flights under reservations XEHM4B and 59XX6W.",
+        "tool_calls": null
+      },
+      {
+        "role": "user",
+        "content": [
+          "{",
+          "  \"status\": \"awaiting_information_and_confirmation_to_cancel_reservations\",",
+          "  \"action_details\": {",
+          "    \"type\": \"cancel_reservations\",",
+          "    \"reservations\": [\"XEHM4B\", \"59XX6W\"],",
+          "    \"scope\": \"cancel_entire_reservations_by_default\",",
+          "    \"refunds\": \"refunds to original payment methods within 5-7 business days\"",
+          "  },",
+          "  \"requirements_to_proceed\": [",
+          "    \"user_id associated with these reservations\",",
+          "    \"cancellation_reason for XEHM4B (choose among: change_of_plan, airline_cancelled_flight, other)\",",
+          "    \"cancellation_reason for 59XX6W (choose among: change_of_plan, airline_cancelled_flight, other)\"",
+          "  ],",
+          "  \"notes\": [",
+          "    \"If any portion of a flight has already flown, cancellation may not be possible and a transfer to a human agent will be required.\",",
+          "    \"I will verify flight status before processing the cancellation.\"",
+          "  ],",
+          "  \"confirmation_instruction\": \"Please reply with YES to confirm, and include your user_id and the reasons for each reservation as described above.\"",
+          "}"
+        ]
+      },
+      {
+        "role": "assistant",
+        "content": [
+          "User ID: daiki_muller_1116.  ",
+          "Reason for both reservations: other.  ",
+          "Yes, confirm."
+        ],
+        "tool_calls": null
+      },
+      {
+        "role": "user",
+        "content": "YOU ARE BEING TRANSFERRED TO A HUMAN AGENT. PLEASE HOLD ON."
+      }
+    ],
+    "tools": null,
+    "tool_choice": null,
+    "kwargs": {
+      "reasoning_effort": "low",
+      "seed": 626729,
+      "num_retries": 3
+    },
+    "timestamp": "2026-07-20T11:07:30.954879"
+  },
+  "response": {
+    "timestamp": "2026-07-20T11:07:32.102332",
+    "content": "###TRANSFER###",
+    "tool_calls": null,
+    "cost": 0.0015079999999999998,
+    "usage": {
+      "completion_tokens": 3,
+      "prompt_tokens": 742
+    },
+    "generation_time_seconds": 1.1471991741564125
+  }
+}

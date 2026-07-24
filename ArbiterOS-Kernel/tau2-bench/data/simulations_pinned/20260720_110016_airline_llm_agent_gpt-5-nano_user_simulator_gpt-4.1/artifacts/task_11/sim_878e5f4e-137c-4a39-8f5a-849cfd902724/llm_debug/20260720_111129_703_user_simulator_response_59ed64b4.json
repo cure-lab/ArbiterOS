@@ -1,0 +1,88 @@
+{
+  "call_id": "59ed64b4",
+  "call_name": "user_simulator_response",
+  "timestamp": "2026-07-20T11:11:29.703760",
+  "request": {
+    "model": "openai/gpt-4.1",
+    "messages": [
+      {
+        "role": "system",
+        "content": [
+          "# User Simulation Guidelines",
+          "You are playing the role of a customer contacting a customer service representative. ",
+          "Your goal is to simulate realistic customer interactions while following specific scenario instructions.",
+          "",
+          "## Core Principles",
+          "- Generate one message at a time, maintaining natural conversation flow.",
+          "- Strictly follow the scenario instructions you have received.",
+          "- Never make up or hallucinate information not provided in the scenario instructions. Information that is not provided in the scenario instructions should be considered unknown or unavailable.",
+          "- Avoid repeating the exact instructions verbatim. Use paraphrasing and natural language to convey the same information",
+          "- Disclose information progressively. Wait for the agent to ask for specific information before providing it.",
+          "",
+          "## Task Completion",
+          "- The goal is to continue the conversation until the task is complete.",
+          "- If the instruction goal is satisified, generate the '###STOP###' token to end the conversation.",
+          "- If you are transferred to another agent, generate the '###TRANSFER###' token to indicate the transfer.",
+          "- If you find yourself in a situation in which the scenario does not provide enough information for you to continue the conversation, generate the '###OUT-OF-SCOPE###' token to end the conversation.",
+          "Remember: The goal is to create realistic, natural conversations while strictly adhering to the provided instructions and maintaining character consistency.",
+          "",
+          "",
+          "<scenario>",
+          "Instructions:",
+          "\tDomain: airline",
+          "\tReason for call:",
+          "\t\tYou want to remove passenger Sophia from your upcoming round trip flights from LAS to DEN, departure May 19, return is May 20.",
+          "\tKnown info:",
+          "\t\tYour name is James Patel.",
+          "",
+          "\t\tYour user id is james_patel_9828.",
+          "\tTask instructions:",
+          "\t\tYou don't remember your reservation ID for the first 2 rounds of interaction but then suddenly find it in your email: it is GV1N64.",
+          "",
+          "\t\tYou are impatient and want the change to be done quickly. ",
+          "",
+          "\t\tYou want the entire amount refunded to original payment method. ",
+          "",
+          "\t\tIf and only if the agent says you cannot remove just one passenger, you want to downgrade all passengers to basic economy. ",
+          "",
+          "\t\tAsk how much the refund would be.",
+          "",
+          "\t\tMake sure to ask the refund to be processed to the original payment method.",
+          "</scenario>"
+        ]
+      },
+      {
+        "role": "user",
+        "content": "Hi! How can I help you today?"
+      },
+      {
+        "role": "assistant",
+        "content": "Hi, I need to remove a passenger, Sophia, from my round trip flights from Las Vegas to Denver. The outbound is on May 19 and the return on May 20. Please handle this quickly, and I want a full refund for her ticket to my original payment method. How much would that refund be?",
+        "tool_calls": null
+      },
+      {
+        "role": "user",
+        "content": "YOU ARE BEING TRANSFERRED TO A HUMAN AGENT. PLEASE HOLD ON."
+      }
+    ],
+    "tools": null,
+    "tool_choice": null,
+    "kwargs": {
+      "reasoning_effort": "low",
+      "seed": 626729,
+      "num_retries": 3
+    },
+    "timestamp": "2026-07-20T11:11:28.841344"
+  },
+  "response": {
+    "timestamp": "2026-07-20T11:11:29.702364",
+    "content": "###TRANSFER###",
+    "tool_calls": null,
+    "cost": 0.0011419999999999998,
+    "usage": {
+      "completion_tokens": 3,
+      "prompt_tokens": 559
+    },
+    "generation_time_seconds": 0.8607920401263982
+  }
+}

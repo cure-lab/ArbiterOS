@@ -1,0 +1,99 @@
+Provider Suite — 2026-04-16 16:52 
+
+[gemini]
+  ✅ PASS  test_connect_disconnect
+  ✅ PASS  test_reconnect_after_disconnect
+  ✅ PASS  test_single_turn_reply[medium-1120ms]
+  ✅ PASS  test_single_turn_reply[short-720ms]
+  ✅ PASS  test_multi_turn_reply
+  ✅ PASS  test_tool_call_round_trip
+  ✅ PASS  test_tick_duration_bounds
+  ✅ PASS  test_barge_in_baseline
+  ✅ PASS  test_barge_in_agent_yields
+  ✅ PASS  test_barge_in_detected[medium-1120ms]
+  ✅ PASS  test_barge_in_detected[short-720ms]
+
+[livekit]
+  ✅ PASS  test_connect_disconnect
+  ✅ PASS  test_reconnect_after_disconnect
+  ✅ PASS  test_single_turn_reply[medium-1120ms]
+  ✅ PASS  test_single_turn_reply[short-720ms]
+  ✅ PASS  test_multi_turn_reply
+  ✅ PASS  test_tool_call_round_trip
+  ✅ PASS  test_tick_duration_bounds
+  ✅ PASS  test_barge_in_baseline
+  ✅ PASS  test_barge_in_agent_yields
+  ✅ PASS  test_barge_in_detected[medium-1120ms]
+  ✅ PASS  test_barge_in_detected[short-720ms]
+
+[livekit-thinking]
+  ✅ PASS  test_connect_disconnect
+  ✅ PASS  test_reconnect_after_disconnect
+  ✅ PASS  test_single_turn_reply[medium-1120ms]
+  ✅ PASS  test_single_turn_reply[short-720ms]
+  ✅ PASS  test_multi_turn_reply
+  ✅ PASS  test_tool_call_round_trip
+  ✅ PASS  test_tick_duration_bounds
+  ✅ PASS  test_barge_in_baseline
+  ✅ PASS  test_barge_in_agent_yields
+  ✅ PASS  test_barge_in_detected[medium-1120ms]
+  ✅ PASS  test_barge_in_detected[short-720ms]
+
+[nova]
+  ⏭️ SKIP  test_connect_disconnect
+  ⏭️ SKIP  test_reconnect_after_disconnect
+  ⏭️ SKIP  test_single_turn_reply[medium-1120ms]
+  ⏭️ SKIP  test_single_turn_reply[short-720ms]
+  ⏭️ SKIP  test_multi_turn_reply
+  ⏭️ SKIP  test_tool_call_round_trip
+  ⏭️ SKIP  test_tick_duration_bounds
+  ⏭️ SKIP  test_barge_in_baseline
+  ⏭️ SKIP  test_barge_in_agent_yields
+  ⏭️ SKIP  test_barge_in_detected[medium-1120ms]
+  ⏭️ SKIP  test_barge_in_detected[short-720ms]
+
+[openai]
+  ✅ PASS  test_connect_disconnect
+  ✅ PASS  test_reconnect_after_disconnect
+  ✅ PASS  test_single_turn_reply[medium-1120ms]
+  ✅ PASS  test_single_turn_reply[short-720ms]
+  ✅ PASS  test_multi_turn_reply
+  ✅ PASS  test_tool_call_round_trip
+  ✅ PASS  test_tick_duration_bounds
+  ✅ PASS  test_barge_in_baseline
+  ✅ PASS  test_barge_in_agent_yields
+  ✅ PASS  test_barge_in_detected[medium-1120ms]
+  ✅ PASS  test_barge_in_detected[short-720ms]
+
+[qwen]
+  ✅ PASS  test_connect_disconnect
+  ✅ PASS  test_reconnect_after_disconnect
+  ✅ PASS  test_single_turn_reply[medium-1120ms]
+  ✅ PASS  test_single_turn_reply[short-720ms]
+  ✅ PASS  test_multi_turn_reply
+  ❌ FAIL  test_tool_call_round_trip
+  ✅ PASS  test_tick_duration_bounds
+  ✅ PASS  test_barge_in_baseline
+  ✅ PASS  test_barge_in_agent_yields
+  ✅ PASS  test_barge_in_detected[medium-1120ms]
+  ✅ PASS  test_barge_in_detected[short-720ms]
+
+[xai]
+  ✅ PASS  test_connect_disconnect
+  ✅ PASS  test_reconnect_after_disconnect
+  ✅ PASS  test_single_turn_reply[medium-1120ms]
+  ❌ FAIL  test_single_turn_reply[short-720ms]
+  ✅ PASS  test_multi_turn_reply
+  ✅ PASS  test_tool_call_round_trip
+  ✅ PASS  test_tick_duration_bounds
+  ✅ PASS  test_barge_in_baseline
+  ✅ PASS  test_barge_in_agent_yields
+  ✅ PASS  test_barge_in_detected[medium-1120ms]
+  ❌ FAIL  test_barge_in_detected[short-720ms]
+
+Failure details:
+  [qwen] test_tool_call_round_trip: RuntimeError: QWEN REALTIME API LIMITATION: tool/function calling does NOT work with qwen3-omni-flash-realtime.
+  [xai] test_single_turn_reply[short-720ms]: Agent did not produce audio within 75 ticks (15000ms) for hello.ulaw
+  [xai] test_barge_in_detected[short-720ms]: Agent never started speaking for hello.ulaw
+
+63 passed, 3 failed, 11 skipped in 66s

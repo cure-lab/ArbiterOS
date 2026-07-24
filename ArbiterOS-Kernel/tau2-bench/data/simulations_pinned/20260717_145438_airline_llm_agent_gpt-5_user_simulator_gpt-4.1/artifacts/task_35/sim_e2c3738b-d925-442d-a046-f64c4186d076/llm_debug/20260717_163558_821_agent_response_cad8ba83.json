@@ -1,0 +1,1097 @@
+{
+  "call_id": "cad8ba83",
+  "call_name": "agent_response",
+  "timestamp": "2026-07-17T16:35:58.821941",
+  "request": {
+    "model": "openai/gpt-5",
+    "messages": [
+      {
+        "role": "system",
+        "content": [
+          "<instructions>",
+          "You are a customer service agent that helps the user according to the <policy> provided below.",
+          "In each turn you can either:",
+          "- Send a message to the user.",
+          "- Make a tool call.",
+          "You cannot do both at the same time.",
+          "",
+          "Try to be helpful and always follow the policy. Always make sure you generate valid JSON only.",
+          "</instructions>",
+          "<policy>",
+          "# Airline Agent Policy",
+          "",
+          "The current time is 2024-05-15 15:00:00 EST.",
+          "",
+          "As an airline agent, you can help users **book**, **modify**, or **cancel** flight reservations. You also handle **refunds and compensation**.",
+          "",
+          "Before taking any actions that update the booking database (booking, modifying flights, editing baggage, changing cabin class, or updating passenger information), you must list the action details and obtain explicit user confirmation (yes) to proceed.",
+          "",
+          "You should not provide any information, knowledge, or procedures not provided by the user or available tools, or give subjective recommendations or comments.",
+          "",
+          "You should only make one tool call at a time, and if you make a tool call, you should not respond to the user simultaneously. If you respond to the user, you should not make a tool call at the same time.",
+          "",
+          "You should deny user requests that are against this policy.",
+          "",
+          "You should transfer the user to a human agent if and only if the request cannot be handled within the scope of your actions. To transfer, first make a tool call to transfer_to_human_agents, and then send the message 'YOU ARE BEING TRANSFERRED TO A HUMAN AGENT. PLEASE HOLD ON.' to the user.",
+          "",
+          "## Domain Basic",
+          "",
+          "### User",
+          "Each user has a profile containing:",
+          "- user id",
+          "- email",
+          "- addresses",
+          "- date of birth",
+          "- payment methods",
+          "- membership level",
+          "- reservation numbers",
+          "",
+          "There are three types of payment methods: **credit card**, **gift card**, **travel certificate**.",
+          "",
+          "There are three membership levels: **regular**, **silver**, **gold**.",
+          "",
+          "### Flight",
+          "Each flight has the following attributes:",
+          "- flight number",
+          "- origin",
+          "- destination",
+          "- scheduled departure and arrival time (local time)",
+          "",
+          "A flight can be available at multiple dates. For each date:",
+          "- If the status is **available**, the flight has not taken off, available seats and prices are listed.",
+          "- If the status is **delayed** or **on time**, the flight has not taken off, cannot be booked.",
+          "- If the status is **flying**, the flight has taken off but not landed, cannot be booked.",
+          "",
+          "There are three cabin classes: **basic economy**, **economy**, **business**. **basic economy** is its own class, completely distinct from **economy**.",
+          "",
+          "Seat availability and prices are listed for each cabin class.",
+          "",
+          "### Reservation",
+          "Each reservation specifies the following:",
+          "- reservation id",
+          "- user id",
+          "- trip type",
+          "- flights",
+          "- passengers",
+          "- payment methods",
+          "- created time",
+          "- baggages",
+          "- travel insurance information",
+          "",
+          "There are two types of trip: **one way** and **round trip**.",
+          "",
+          "## Book flight",
+          "",
+          "The agent must first obtain the user id from the user. ",
+          "",
+          "The agent should then ask for the trip type, origin, destination.",
+          "",
+          "Cabin:",
+          "- Cabin class must be the same across all the flights in a reservation. ",
+          "",
+          "Passengers: ",
+          "- Each reservation can have at most five passengers. ",
+          "- The agent needs to collect the first name, last name, and date of birth for each passenger. ",
+          "- All passengers must fly the same flights in the same cabin.",
+          "",
+          "Payment: ",
+          "- Each reservation can use at most one travel certificate, at most one credit card, and at most three gift cards. ",
+          "- The remaining amount of a travel certificate is not refundable. ",
+          "- All payment methods must already be in user profile for safety reasons.",
+          "",
+          "Checked bag allowance: ",
+          "- If the booking user is a regular member:",
+          "  - 0 free checked bag for each basic economy passenger",
+          "  - 1 free checked bag for each economy passenger",
+          "  - 2 free checked bags for each business passenger",
+          "- If the booking user is a silver member:",
+          "  - 1 free checked bag for each basic economy passenger",
+          "  - 2 free checked bag for each economy passenger",
+          "  - 3 free checked bags for each business passenger",
+          "- If the booking user is a gold member:",
+          "  - 2 free checked bag for each basic economy passenger",
+          "  - 3 free checked bag for each economy passenger",
+          "  - 4 free checked bags for each business passenger",
+          "- Each extra baggage is 50 dollars.",
+          "",
+          "Do not add checked bags that the user does not need.",
+          "",
+          "Travel insurance: ",
+          "- The agent should ask if the user wants to buy the travel insurance.",
+          "- The travel insurance is 30 dollars per passenger and enables full refund if the user needs to cancel the flight given health or weather reasons.",
+          "",
+          "## Modify flight",
+          "",
+          "First, the agent must obtain the user id and reservation id. ",
+          "- The user must provide their user id. ",
+          "- If the user doesn't know their reservation id, the agent should help locate it using available tools.",
+          "",
+          "Change flights: ",
+          "- Basic economy flights cannot be modified.",
+          "- Other reservations can be modified without changing the origin, destination, and trip type.",
+          "- Some flight segments can be kept, but their prices will not be updated based on the current price.",
+          "- The API does not check these for the agent, so the agent must make sure the rules apply before calling the API!",
+          "",
+          "Change cabin: ",
+          "- Cabin cannot be changed if any flight in the reservation has already been flown.",
+          "- In other cases, all reservations, including basic economy, can change cabin without changing the flights.",
+          "- Cabin class must remain the same across all the flights in the same reservation; changing cabin for just one flight segment is not possible.",
+          "- If the price after cabin change is higher than the original price, the user is required to pay for the difference.",
+          "- If the price after cabin change is lower than the original price, the user is should be refunded the difference.",
+          "",
+          "Change baggage and insurance: ",
+          "- The user can add but not remove checked bags.",
+          "- The user cannot add insurance after initial booking.",
+          "",
+          "Change passengers:",
+          "- The user can modify passengers but cannot modify the number of passengers.",
+          "- Even a human agent cannot modify the number of passengers.",
+          "",
+          "Payment: ",
+          "- If the flights are changed, the user needs to provide a single gift card or credit card for payment or refund method. The payment method must already be in user profile for safety reasons.",
+          "",
+          "## Cancel flight",
+          "",
+          "First, the agent must obtain the user id and reservation id. ",
+          "- The user must provide their user id. ",
+          "- If the user doesn't know their reservation id, the agent should help locate it using available tools.",
+          "",
+          "The agent must also obtain the reason for cancellation (change of plan, airline cancelled flight, or other reasons)",
+          "",
+          "If any portion of the flight has already been flown, the agent cannot help and transfer is needed.",
+          "",
+          "Otherwise, flight can be cancelled if any of the following is true:",
+          "- The booking was made within the last 24 hrs",
+          "- The flight is cancelled by airline",
+          "- It is a business flight",
+          "- The user has travel insurance and the reason for cancellation is covered by insurance.",
+          "",
+          "The API does not check that cancellation rules are met, so the agent must make sure the rules apply before calling the API!",
+          "",
+          "Refund:",
+          "- The refund will go to original payment methods within 5 to 7 business days.",
+          "",
+          "## Refunds and Compensation",
+          "Do not proactively offer a compensation unless the user explicitly asks for one.",
+          "",
+          "Do not compensate if the user is regular member and has no travel insurance and flies (basic) economy.",
+          "",
+          "Always confirms the facts before offering compensation.",
+          "",
+          "Only compensate if the user is a silver/gold member or has travel insurance or flies business.",
+          "",
+          "- If the user complains about cancelled flights in a reservation, the agent can offer a certificate as a gesture after confirming the facts, with the amount being $100 times the number of passengers.",
+          "",
+          "- If the user complains about delayed flights in a reservation and wants to change or cancel the reservation, the agent can offer a certificate as a gesture after confirming the facts and changing or cancelling the reservation, with the amount being $50 times the number of passengers.",
+          "",
+          "Do not offer compensation for any other reason than the ones listed above.",
+          "</policy>"
+        ]
+      },
+      {
+        "role": "assistant",
+        "content": "Hi! How can I help you today?",
+        "tool_calls": null
+      },
+      {
+        "role": "user",
+        "content": "Hi, I need to cancel my upcoming flight from JFK to Orlando on May 22. And just so you know, I\u2019m a silver member, so I believe I should get a full refund. Can you help me with that?"
+      },
+      {
+        "role": "assistant",
+        "content": [
+          "{",
+          "  \"message\": \"I can help with that. To proceed and check refund eligibility, please share:\\n- Your user ID\\n- Your reservation ID for this JFK \u2192 Orlando (MCO) flight on May 22 (if you don\u2019t have it, I can look it up once you provide your user ID)\\n- Your reason for cancellation: change of plan, airline canceled the flight, or other\\n- Whether you purchased travel insurance for this reservation (yes/no)\\n- Whether this was booked in business cabin (yes/no)\\n- Whether the booking was made within the last 24 hours (yes/no)\\n\\nNote: Silver membership alone doesn\u2019t guarantee a refund. A full refund is available if one of the following applies: the booking was made within 24 hours, the airline canceled the flight, it\u2019s a business reservation, or you purchased travel insurance and your reason is covered (health or weather).\\n\\nOnce I have the details, I\u2019ll summarize the cancellation and ask for your confirmation before proceeding.\"",
+          "}"
+        ],
+        "tool_calls": null
+      },
+      {
+        "role": "user",
+        "content": [
+          "Sure, my user ID is aarav_ahmed_6699. I don\u2019t have the reservation ID handy right now, but please look it up with my user ID.",
+          "",
+          "My reason for cancellation is a change of plans. I didn\u2019t purchase travel insurance for this reservation, it was not booked in business class, and the booking was made more than 24 hours ago.",
+          "",
+          "But as a silver member, I think I should qualify for a full refund. Can you please process the cancellation and refund?"
+        ]
+      },
+      {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "call_GNHn8ES5RZ65KlmuE2j4Mizu",
+            "name": "get_user_details",
+            "function": {
+              "name": "get_user_details",
+              "arguments": "{\"user_id\": \"aarav_ahmed_6699\"}"
+            },
+            "type": "function"
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "content": "{\"user_id\": \"aarav_ahmed_6699\", \"name\": {\"first_name\": \"Aarav\", \"last_name\": \"Ahmed\"}, \"address\": {\"address1\": \"176 Willow Lane\", \"address2\": \"Suite 431\", \"city\": \"Jacksonville\", \"country\": \"USA\", \"state\": \"FL\", \"zip\": \"32131\"}, \"email\": \"aarav.ahmed6812@example.com\", \"dob\": \"1981-05-26\", \"payment_methods\": {\"credit_card_9074831\": {\"source\": \"credit_card\", \"id\": \"credit_card_9074831\", \"brand\": \"mastercard\", \"last_four\": \"7334\"}, \"certificate_9645872\": {\"source\": \"certificate\", \"id\": \"certificate_9645872\", \"amount\": 250.0}, \"credit_card_4959530\": {\"source\": \"credit_card\", \"id\": \"credit_card_4959530\", \"brand\": \"mastercard\", \"last_four\": \"5018\"}}, \"saved_passengers\": [{\"first_name\": \"Aarav\", \"last_name\": \"Patel\", \"dob\": \"1980-12-03\"}], \"membership\": \"silver\", \"reservations\": [\"M20IZO\", \"N6F783\", \"IFOYYZ\", \"NQNU5R\"]}",
+        "tool_call_id": "call_GNHn8ES5RZ65KlmuE2j4Mizu"
+      },
+      {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "call_7ZsYqIGjavGHjMx4rrvzB4rp",
+            "name": "get_reservation_details",
+            "function": {
+              "name": "get_reservation_details",
+              "arguments": "{\"reservation_id\": \"M20IZO\"}"
+            },
+            "type": "function"
+          },
+          {
+            "id": "call_4rSB7B5ztzqiwlOVfpihcmA9",
+            "name": "get_reservation_details",
+            "function": {
+              "name": "get_reservation_details",
+              "arguments": "{\"reservation_id\": \"N6F783\"}"
+            },
+            "type": "function"
+          },
+          {
+            "id": "call_M1IXwiLobNJaH43RFi3JLKQn",
+            "name": "get_reservation_details",
+            "function": {
+              "name": "get_reservation_details",
+              "arguments": "{\"reservation_id\": \"IFOYYZ\"}"
+            },
+            "type": "function"
+          },
+          {
+            "id": "call_SC6M9DM3BDXboVELWD6GwMTB",
+            "name": "get_reservation_details",
+            "function": {
+              "name": "get_reservation_details",
+              "arguments": "{\"reservation_id\": \"NQNU5R\"}"
+            },
+            "type": "function"
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "content": "{\"reservation_id\": \"M20IZO\", \"user_id\": \"aarav_ahmed_6699\", \"origin\": \"JFK\", \"destination\": \"MCO\", \"flight_type\": \"one_way\", \"cabin\": \"economy\", \"flights\": [{\"flight_number\": \"HAT268\", \"origin\": \"JFK\", \"destination\": \"ATL\", \"date\": \"2024-05-22\", \"price\": 136}, {\"flight_number\": \"HAT010\", \"origin\": \"ATL\", \"destination\": \"MCO\", \"date\": \"2024-05-22\", \"price\": 109}], \"passengers\": [{\"first_name\": \"Aarav\", \"last_name\": \"Ahmed\", \"dob\": \"1981-05-26\"}, {\"first_name\": \"Daiki\", \"last_name\": \"Li\", \"dob\": \"1980-12-24\"}], \"payment_history\": [{\"payment_id\": \"credit_card_4959530\", \"amount\": 490}], \"created_at\": \"2024-05-12T09:36:29\", \"total_baggages\": 1, \"nonfree_baggages\": 0, \"insurance\": \"no\", \"status\": null}",
+        "tool_call_id": "call_7ZsYqIGjavGHjMx4rrvzB4rp"
+      },
+      {
+        "role": "tool",
+        "content": "{\"reservation_id\": \"N6F783\", \"user_id\": \"aarav_ahmed_6699\", \"origin\": \"IAH\", \"destination\": \"EWR\", \"flight_type\": \"round_trip\", \"cabin\": \"business\", \"flights\": [{\"flight_number\": \"HAT195\", \"origin\": \"IAH\", \"destination\": \"EWR\", \"date\": \"2024-05-18\", \"price\": 1268}, {\"flight_number\": \"HAT166\", \"origin\": \"EWR\", \"destination\": \"IAH\", \"date\": \"2024-05-21\", \"price\": 867}], \"passengers\": [{\"first_name\": \"Aarav\", \"last_name\": \"Ahmed\", \"dob\": \"1981-05-26\"}], \"payment_history\": [{\"payment_id\": \"credit_card_9074831\", \"amount\": 2135}], \"created_at\": \"2024-05-08T09:17:09\", \"total_baggages\": 2, \"nonfree_baggages\": 0, \"insurance\": \"no\", \"status\": null}",
+        "tool_call_id": "call_4rSB7B5ztzqiwlOVfpihcmA9"
+      },
+      {
+        "role": "tool",
+        "content": "{\"reservation_id\": \"IFOYYZ\", \"user_id\": \"aarav_ahmed_6699\", \"origin\": \"CLT\", \"destination\": \"EWR\", \"flight_type\": \"round_trip\", \"cabin\": \"basic_economy\", \"flights\": [{\"flight_number\": \"HAT157\", \"origin\": \"CLT\", \"destination\": \"EWR\", \"date\": \"2024-05-28\", \"price\": 51}, {\"flight_number\": \"HAT215\", \"origin\": \"EWR\", \"destination\": \"CLT\", \"date\": \"2024-05-30\", \"price\": 65}], \"passengers\": [{\"first_name\": \"Aarav\", \"last_name\": \"Ahmed\", \"dob\": \"1981-05-26\"}], \"payment_history\": [{\"payment_id\": \"credit_card_4959530\", \"amount\": 116}], \"created_at\": \"2024-05-12T00:14:30\", \"total_baggages\": 0, \"nonfree_baggages\": 0, \"insurance\": \"no\", \"status\": null}",
+        "tool_call_id": "call_M1IXwiLobNJaH43RFi3JLKQn"
+      },
+      {
+        "role": "tool",
+        "content": "{\"reservation_id\": \"NQNU5R\", \"user_id\": \"aarav_ahmed_6699\", \"origin\": \"MCO\", \"destination\": \"SEA\", \"flight_type\": \"one_way\", \"cabin\": \"business\", \"flights\": [{\"flight_number\": \"HAT214\", \"origin\": \"MCO\", \"destination\": \"PHX\", \"date\": \"2024-05-13\", \"price\": 1377}, {\"flight_number\": \"HAT045\", \"origin\": \"PHX\", \"destination\": \"SEA\", \"date\": \"2024-05-14\", \"price\": 1712}], \"passengers\": [{\"first_name\": \"Aarav\", \"last_name\": \"Ahmed\", \"dob\": \"1981-05-26\"}, {\"first_name\": \"Aarav\", \"last_name\": \"Patel\", \"dob\": \"1980-12-03\"}], \"payment_history\": [{\"payment_id\": \"credit_card_4959530\", \"amount\": 6178}], \"created_at\": \"2024-05-13T05:37:57\", \"total_baggages\": 1, \"nonfree_baggages\": 0, \"insurance\": \"no\", \"status\": null}",
+        "tool_call_id": "call_SC6M9DM3BDXboVELWD6GwMTB"
+      },
+      {
+        "role": "assistant",
+        "content": [
+          "{",
+          "  \"message\": \"I located your JFK \u2192 Orlando reservation: M20IZO. It\u2019s a one\u2011way economy ticket for two passengers on May 22 (no travel insurance).\\n\\nBased on what you shared\u2014change of plans, booked more than 24 hours ago, not business class, and not airline\u2011canceled\u2014I\u2019m not allowed to cancel this reservation or issue a refund. Silver status alone doesn\u2019t qualify for a refund under our policy.\\n\\nI can help you change the flights (same route and trip type). If you\u2019d like me to search options, please tell me:\\n- Your new preferred travel date(s)/time window\\n- Nonstop only or 1\u2011stop is okay\\n- Which saved payment method to use for any fare difference or refund (one credit card or one gift card on file)\\n\\nIf any segment has been canceled by the airline, let me know and I\u2019ll verify and proceed with a refundable cancellation.\"",
+          "}"
+        ],
+        "tool_calls": null
+      },
+      {
+        "role": "user",
+        "content": "I\u2019d really appreciate it if you could make an exception and process a full refund for me. I\u2019m a silver member and have been very loyal to the airline, so I was under the impression that I\u2019d get refunded in cases like this. Is there any way you can make it work and issue the refund? I don\u2019t want to change flights; I just want to cancel and get my money back, please."
+      },
+      {
+        "role": "assistant",
+        "content": [
+          "{",
+          "  \"message\": \"I\u2019ve found your reservation M20IZO (JFK \u2192 MCO, May 22, one\u2011way economy, 2 passengers, no insurance). Per policy, I can only cancel with a refund if one of these applies: booked within 24 hours, airline canceled the flight, business cabin, or travel insurance covers the reason. Based on your details (change of plans, booked >24 hours ago, economy, no insurance), I\u2019m not authorized to cancel or issue a refund, and I don\u2019t have discretion to make exceptions.\\n\\nIf you\u2019d like, I can help you change the flights on the same route and trip type. Please share your new preferred date/time window, whether a 1\u2011stop is okay, and confirm which saved payment method to use for any fare difference. If you believe the airline has canceled any segment, tell me and I\u2019ll verify immediately.\"",
+          "}"
+        ],
+        "tool_calls": null
+      },
+      {
+        "role": "user",
+        "content": "I\u2019d really like you to check again. I was under the impression that as a silver member, there were additional benefits, especially regarding refunds. Are you absolutely sure there\u2019s no way to process my cancellation with a full refund? Silver members should have some flexibility, and it feels unfair if that\u2019s not the case. Can you please double-check if there is any exception at all for silver members in situations like this?"
+      },
+      {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "call_SgUHB2WAD1yQAPLndr7IbEV7",
+            "name": "transfer_to_human_agents",
+            "function": {
+              "name": "transfer_to_human_agents",
+              "arguments": "{\"summary\": \"User aarav_ahmed_6699 requests a full refund exception for reservation M20IZO (JFK \\u2192 MCO on 2024-05-22). Details: one-way, economy, 2 passengers (Aarav Ahmed DOB 1981-05-26; Daiki Li DOB 1980-12-24), flights HAT268 (JFK\\u2192ATL) and HAT010 (ATL\\u2192MCO) both on 2024-05-22, no travel insurance, booked on 2024-05-12 (>24 hours ago), payment via credit_card_4959530 ($490), total bags 1. Reason for cancellation: change of plans. Flight not reported canceled by airline. Per policy, agent cannot cancel with refund. User (silver member) is insisting on an exception and does not want to change flights. Please review for goodwill/exception handling.\"}"
+            },
+            "type": "function"
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "content": "Transfer successful",
+        "tool_call_id": "call_SgUHB2WAD1yQAPLndr7IbEV7"
+      },
+      {
+        "role": "assistant",
+        "content": [
+          "{",
+          "  \"message\": \"YOU ARE BEING TRANSFERRED TO A HUMAN AGENT. PLEASE HOLD ON.\"",
+          "}"
+        ],
+        "tool_calls": null
+      },
+      {
+        "role": "user",
+        "content": "Actually, I really don\u2019t want to be transferred to a human agent. I would rather work this out with you. Is there truly no way for you to process my cancellation and give me a refund as a silver member? If not, I\u2019d like to move on and book a different flight."
+      },
+      {
+        "role": "assistant",
+        "content": [
+          "{",
+          "  \"message\": \"I\u2019ve double-checked reservation M20IZO. Under our policy, I can only cancel with a refund if the booking was made within 24 hours, the airline canceled the flight, it\u2019s booked in business, or you purchased travel insurance and the reason is covered. None of these applies here, so I\u2019m not authorized to cancel with a refund, and I can\u2019t make exceptions\u2014even for silver members.\\n\\nIf you\u2019d like to book a different flight, I\u2019m ready to help using your user ID aarav_ahmed_6699. Please share:\\n- Trip type (one way or round trip)\\n- Origin and destination\\n- Travel date(s) and preferred time window\\n- Cabin class (basic economy, economy, or business)\\n- Number of passengers and full name + date of birth for each (you can confirm saved passengers: Aarav Ahmed 1981-05-26; Aarav Patel 1980-12-03)\\n- Nonstop only or 1-stop OK\\n- Checked bags per passenger (silver members get 1 free in basic economy, 2 in economy, 3 in business; extras are $50 each)\\n- Travel insurance? ($30 per passenger)\\n- Payment method(s) on file to use: credit_card_9074831 (Mastercard \u20227334), credit_card_4959530 (Mastercard \u20225018), and/or travel certificate 9645872 ($250 balance; unused certificate balance is not refundable)\\n\\nOnce I have these details, I\u2019ll search flight options and then summarize everything for your confirmation before I place the booking.\"",
+          "}"
+        ],
+        "tool_calls": null
+      },
+      {
+        "role": "user",
+        "content": [
+          "Okay, thanks for checking again. Since a refund isn\u2019t possible, I\u2019d like to book a new one-way flight from JFK to SFO on May 24 for both Aarav Ahmed and Aarav Patel. We want economy class, no checked bags or travel insurance. Also, I\u2019d prefer the second cheapest flight in economy class (I want to avoid the absolute cheapest option). A nonstop flight would be best, but 1-stop is okay if it\u2019s more affordable.",
+          "",
+          "Let me know what you find!"
+        ]
+      },
+      {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "call_xKYYOsCaH3SHLJON0vXXcM0I",
+            "name": "search_direct_flight",
+            "function": {
+              "name": "search_direct_flight",
+              "arguments": "{\"date\": \"2024-05-24\", \"origin\": \"JFK\", \"destination\": \"SFO\"}"
+            },
+            "type": "function"
+          },
+          {
+            "id": "call_yulTwWLNop1UZDdhVHMnFNsU",
+            "name": "search_onestop_flight",
+            "function": {
+              "name": "search_onestop_flight",
+              "arguments": "{\"date\": \"2024-05-24\", \"origin\": \"JFK\", \"destination\": \"SFO\"}"
+            },
+            "type": "function"
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "content": "[{\"flight_number\": \"HAT023\", \"origin\": \"JFK\", \"destination\": \"SFO\", \"status\": \"available\", \"scheduled_departure_time_est\": \"14:00:00\", \"scheduled_arrival_time_est\": \"20:00:00\", \"date\": null, \"available_seats\": {\"basic_economy\": 9, \"economy\": 2, \"business\": 1}, \"prices\": {\"basic_economy\": 63, \"economy\": 163, \"business\": 235}}]",
+        "tool_call_id": "call_xKYYOsCaH3SHLJON0vXXcM0I"
+      },
+      {
+        "role": "tool",
+        "content": "[[{\"flight_number\": \"HAT069\", \"origin\": \"JFK\", \"destination\": \"SEA\", \"status\": \"available\", \"scheduled_departure_time_est\": \"06:00:00\", \"scheduled_arrival_time_est\": \"12:00:00\", \"date\": \"2024-05-24\", \"available_seats\": {\"basic_economy\": 1, \"economy\": 7, \"business\": 11}, \"prices\": {\"basic_economy\": 86, \"economy\": 123, \"business\": 333}}, {\"flight_number\": \"HAT011\", \"origin\": \"SEA\", \"destination\": \"SFO\", \"status\": \"available\", \"scheduled_departure_time_est\": \"13:00:00\", \"scheduled_arrival_time_est\": \"15:00:00\", \"date\": \"2024-05-24\", \"available_seats\": {\"basic_economy\": 17, \"economy\": 9, \"business\": 20}, \"prices\": {\"basic_economy\": 95, \"economy\": 177, \"business\": 294}}], [{\"flight_number\": \"HAT069\", \"origin\": \"JFK\", \"destination\": \"SEA\", \"status\": \"available\", \"scheduled_departure_time_est\": \"06:00:00\", \"scheduled_arrival_time_est\": \"12:00:00\", \"date\": \"2024-05-24\", \"available_seats\": {\"basic_economy\": 1, \"economy\": 7, \"business\": 11}, \"prices\": {\"basic_economy\": 86, \"economy\": 123, \"business\": 333}}, {\"flight_number\": \"HAT258\", \"origin\": \"SEA\", \"destination\": \"SFO\", \"status\": \"available\", \"scheduled_departure_time_est\": \"17:00:00\", \"scheduled_arrival_time_est\": \"19:00:00\", \"date\": \"2024-05-24\", \"available_seats\": {\"basic_economy\": 4, \"economy\": 15, \"business\": 11}, \"prices\": {\"basic_economy\": 88, \"economy\": 167, \"business\": 417}}], [{\"flight_number\": \"HAT069\", \"origin\": \"JFK\", \"destination\": \"SEA\", \"status\": \"available\", \"scheduled_departure_time_est\": \"06:00:00\", \"scheduled_arrival_time_est\": \"12:00:00\", \"date\": \"2024-05-24\", \"available_seats\": {\"basic_economy\": 1, \"economy\": 7, \"business\": 11}, \"prices\": {\"basic_economy\": 86, \"economy\": 123, \"business\": 333}}, {\"flight_number\": \"HAT274\", \"origin\": \"SEA\", \"destination\": \"SFO\", \"status\": \"available\", \"scheduled_departure_time_est\": \"20:00:00\", \"scheduled_arrival_time_est\": \"22:00:00\", \"date\": \"2024-05-24\", \"available_seats\": {\"basic_economy\": 12, \"economy\": 11, \"business\": 1}, \"prices\": {\"basic_economy\": 73, \"economy\": 198, \"business\": 349}}], [{\"flight_number\": \"HAT083\", \"origin\": \"JFK\", \"destination\": \"SEA\", \"status\": \"available\", \"scheduled_departure_time_est\": \"01:00:00\", \"scheduled_arrival_time_est\": \"07:00:00\", \"date\": \"2024-05-24\", \"available_seats\": {\"basic_economy\": 4, \"economy\": 8, \"business\": 17}, \"prices\": {\"basic_economy\": 74, \"economy\": 137, \"business\": 485}}, {\"flight_number\": \"HAT011\", \"origin\": \"SEA\", \"destination\": \"SFO\", \"status\": \"available\", \"scheduled_departure_time_est\": \"13:00:00\", \"scheduled_arrival_time_est\": \"15:00:00\", \"date\": \"2024-05-24\", \"available_seats\": {\"basic_economy\": 17, \"economy\": 9, \"business\": 20}, \"prices\": {\"basic_economy\": 95, \"economy\": 177, \"business\": 294}}], [{\"flight_number\": \"HAT083\", \"origin\": \"JFK\", \"destination\": \"SEA\", \"status\": \"available\", \"scheduled_departure_time_est\": \"01:00:00\", \"scheduled_arrival_time_est\": \"07:00:00\", \"date\": \"2024-05-24\", \"available_seats\": {\"basic_economy\": 4, \"economy\": 8, \"business\": 17}, \"prices\": {\"basic_economy\": 74, \"economy\": 137, \"business\": 485}}, {\"flight_number\": \"HAT107\", \"origin\": \"SEA\", \"destination\": \"SFO\", \"status\": \"available\", \"scheduled_departure_time_est\": \"09:00:00\", \"scheduled_arrival_time_est\": \"11:00:00\", \"date\": \"2024-05-24\", \"available_seats\": {\"basic_economy\": 7, \"economy\": 3, \"business\": 9}, \"prices\": {\"basic_economy\": 69, \"economy\": 194, \"business\": 315}}], [{\"flight_number\": \"HAT083\", \"origin\": \"JFK\", \"destination\": \"SEA\", \"status\": \"available\", \"scheduled_departure_time_est\": \"01:00:00\", \"scheduled_arrival_time_est\": \"07:00:00\", \"date\": \"2024-05-24\", \"available_seats\": {\"basic_economy\": 4, \"economy\": 8, \"business\": 17}, \"prices\": {\"basic_economy\": 74, \"economy\": 137, \"business\": 485}}, {\"flight_number\": \"HAT258\", \"origin\": \"SEA\", \"destination\": \"SFO\", \"status\": \"available\", \"scheduled_departure_time_est\": \"17:00:00\", \"scheduled_arrival_time_est\": \"19:00:00\", \"date\": \"2024-05-24\", \"available_seats\": {\"basic_economy\": 4, \"economy\": 15, \"business\": 11}, \"prices\": {\"basic_economy\": 88, \"economy\": 167, \"business\": 417}}], [{\"flight_number\": \"HAT083\", \"origin\": \"JFK\", \"destination\": \"SEA\", \"status\": \"available\", \"scheduled_departure_time_est\": \"01:00:00\", \"scheduled_arrival_time_est\": \"07:00:00\", \"date\": \"2024-05-24\", \"available_seats\": {\"basic_economy\": 4, \"economy\": 8, \"business\": 17}, \"prices\": {\"basic_economy\": 74, \"economy\": 137, \"business\": 485}}, {\"flight_number\": \"HAT274\", \"origin\": \"SEA\", \"destination\": \"SFO\", \"status\": \"available\", \"scheduled_departure_time_est\": \"20:00:00\", \"scheduled_arrival_time_est\": \"22:00:00\", \"date\": \"2024-05-24\", \"available_seats\": {\"basic_economy\": 12, \"economy\": 11, \"business\": 1}, \"prices\": {\"basic_economy\": 73, \"economy\": 198, \"business\": 349}}]]",
+        "tool_call_id": "call_yulTwWLNop1UZDdhVHMnFNsU"
+      },
+      {
+        "role": "assistant",
+        "content": [
+          "{",
+          "  \"message\": \"Here are the best economy options I found for Fri, May 24 (JFK \u2192 SFO) for 2 passengers:\\n\\n- Cheapest (nonstop): HAT023 JFK\u2192SFO, dep 14:00, arr 20:00 \u2014 $163 per passenger ($326 total for 2). Seats left in economy: 2.\\n- Second cheapest (1\u2011stop via SEA): HAT069 JFK\u2192SEA dep 06:00, arr 12:00 + HAT258 SEA\u2192SFO dep 17:00, arr 19:00 \u2014 $290 per passenger ($580 total for 2). Seats available on both segments.\\n\\nOther 1\u2011stop options range from $300\u2013$335 per passenger if you want alternatives.\\n\\nIf you want to proceed with the second\u2011cheapest option, I will book:\\n- Trip: one\u2011way, Fri May 24, cabin: economy\\n- Flights: HAT069 (JFK\u2192SEA) + HAT258 (SEA\u2192SFO)\\n- Passengers: Aarav Ahmed (1981\u201105\u201126) and Aarav Patel (1980\u201112\u201103)\\n- Checked bags: none; Insurance: no\\n- Total: $580\\n\\nPlease confirm:\\n1) \u201cYes, book the second\u2011cheapest option,\u201d or tell me another option number.\\n2) Payment method(s) from your profile to use: credit_card_9074831 (Mastercard \u20227334), credit_card_4959530 (Mastercard \u20225018), and/or apply travel certificate 9645872 ($250) plus a card for the remainder.\\n\\nOnce you confirm, I\u2019ll place the booking and send a final summary before ticketing.\"",
+          "}"
+        ],
+        "tool_calls": null
+      },
+      {
+        "role": "user",
+        "content": [
+          "Yes, please go ahead and book the second cheapest option\u2014the one-stop flight via SEA for both travelers on May 24, no bags or insurance.",
+          "",
+          "For payment, use my credit card ending in 7334."
+        ]
+      },
+      {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "call_koDmokQBIKJZBiATMZEUxxNh",
+            "name": "book_reservation",
+            "function": {
+              "name": "book_reservation",
+              "arguments": "{\"user_id\": \"aarav_ahmed_6699\", \"flight_type\": \"one_way\", \"origin\": \"JFK\", \"destination\": \"SFO\", \"cabin\": \"economy\", \"flights\": [{\"flight_number\": \"HAT069\", \"date\": \"2024-05-24\"}, {\"flight_number\": \"HAT258\", \"date\": \"2024-05-24\"}], \"passengers\": [{\"first_name\": \"Aarav\", \"last_name\": \"Ahmed\", \"dob\": \"1981-05-26\"}, {\"first_name\": \"Aarav\", \"last_name\": \"Patel\", \"dob\": \"1980-12-03\"}], \"payment_methods\": [{\"payment_id\": \"credit_card_9074831\", \"amount\": 580}], \"total_baggages\": 0, \"nonfree_baggages\": 0, \"insurance\": \"no\"}"
+            },
+            "type": "function"
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "content": "{\"reservation_id\": \"HATHAT\", \"user_id\": \"aarav_ahmed_6699\", \"origin\": \"JFK\", \"destination\": \"SFO\", \"flight_type\": \"one_way\", \"cabin\": \"economy\", \"flights\": [{\"flight_number\": \"HAT069\", \"origin\": \"JFK\", \"destination\": \"SEA\", \"date\": \"2024-05-24\", \"price\": 123}, {\"flight_number\": \"HAT258\", \"origin\": \"SEA\", \"destination\": \"SFO\", \"date\": \"2024-05-24\", \"price\": 167}], \"passengers\": [{\"first_name\": \"Aarav\", \"last_name\": \"Ahmed\", \"dob\": \"1981-05-26\"}, {\"first_name\": \"Aarav\", \"last_name\": \"Patel\", \"dob\": \"1980-12-03\"}], \"payment_history\": [{\"payment_id\": \"credit_card_9074831\", \"amount\": 580}], \"created_at\": \"2024-05-15T15:00:00\", \"total_baggages\": 0, \"nonfree_baggages\": 0, \"insurance\": \"no\", \"status\": null}",
+        "tool_call_id": "call_koDmokQBIKJZBiATMZEUxxNh"
+      },
+      {
+        "role": "assistant",
+        "content": [
+          "{",
+          "  \"message\": \"Booking confirmed. Here are the details:\\n\\nReservation ID: HATHAT\\n- Trip: One-way | JFK \u2192 SFO | Fri, May 24 | Cabin: Economy\\n- Flights:\\n  \u2022 HAT069 JFK \u2192 SEA | Dep 06:00, Arr 12:00 (economy fare $123 pp)\\n  \u2022 HAT258 SEA \u2192 SFO | Dep 17:00, Arr 19:00 (economy fare $167 pp)\\n- Passengers: Aarav Ahmed (DOB 1981-05-26), Aarav Patel (DOB 1980-12-03)\\n- Baggage: No checked bags\\n- Travel insurance: No\\n- Payment: $580 charged to credit_card_9074831 (Mastercard \u20227334)\\n\\nFree checked bag allowance for silver members in economy is 2 per passenger; since you opted for no checked bags, none were added.\\n\\nIf you need anything else\u2014seat selection, adding bags later (extra bags $50 each), or itinerary changes\u2014let me know.\"",
+          "}"
+        ],
+        "tool_calls": null
+      },
+      {
+        "role": "user",
+        "content": "Thanks for confirming the booking details. That\u2019s all I needed for now!"
+      }
+    ],
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "book_reservation",
+          "description": "Book a reservation.",
+          "parameters": {
+            "$defs": {
+              "FlightInfo": {
+                "properties": {
+                  "flight_number": {
+                    "description": "Flight number, such as 'HAT001'.",
+                    "title": "Flight Number",
+                    "type": "string"
+                  },
+                  "date": {
+                    "description": "The date for the flight in the format 'YYYY-MM-DD', such as '2024-05-01'.",
+                    "title": "Date",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "flight_number",
+                  "date"
+                ],
+                "title": "FlightInfo",
+                "type": "object"
+              },
+              "Passenger": {
+                "properties": {
+                  "first_name": {
+                    "description": "Passenger's first name",
+                    "title": "First Name",
+                    "type": "string"
+                  },
+                  "last_name": {
+                    "description": "Passenger's last name",
+                    "title": "Last Name",
+                    "type": "string"
+                  },
+                  "dob": {
+                    "description": "Date of birth in YYYY-MM-DD format",
+                    "title": "Dob",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "first_name",
+                  "last_name",
+                  "dob"
+                ],
+                "title": "Passenger",
+                "type": "object"
+              },
+              "Payment": {
+                "properties": {
+                  "payment_id": {
+                    "description": "Unique identifier for the payment",
+                    "title": "Payment Id",
+                    "type": "string"
+                  },
+                  "amount": {
+                    "description": "Payment amount in dollars",
+                    "title": "Amount",
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "payment_id",
+                  "amount"
+                ],
+                "title": "Payment",
+                "type": "object"
+              }
+            },
+            "properties": {
+              "user_id": {
+                "description": "The ID of the user to book the reservation such as 'sara_doe_496'`.",
+                "title": "User Id",
+                "type": "string"
+              },
+              "origin": {
+                "description": "The IATA code for the origin city such as 'SFO'.",
+                "title": "Origin",
+                "type": "string"
+              },
+              "destination": {
+                "description": "The IATA code for the destination city such as 'JFK'.",
+                "title": "Destination",
+                "type": "string"
+              },
+              "flight_type": {
+                "description": "The type of flight such as 'one_way' or 'round_trip'.",
+                "enum": [
+                  "round_trip",
+                  "one_way"
+                ],
+                "title": "Flight Type",
+                "type": "string"
+              },
+              "cabin": {
+                "description": "The cabin class such as 'basic_economy', 'economy', or 'business'.",
+                "enum": [
+                  "business",
+                  "economy",
+                  "basic_economy"
+                ],
+                "title": "Cabin",
+                "type": "string"
+              },
+              "flights": {
+                "description": "An array of objects containing details about each piece of flight.",
+                "items": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/FlightInfo"
+                    },
+                    {
+                      "additionalProperties": true,
+                      "type": "object"
+                    }
+                  ]
+                },
+                "title": "Flights",
+                "type": "array"
+              },
+              "passengers": {
+                "description": "An array of objects containing details about each passenger.",
+                "items": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/Passenger"
+                    },
+                    {
+                      "additionalProperties": true,
+                      "type": "object"
+                    }
+                  ]
+                },
+                "title": "Passengers",
+                "type": "array"
+              },
+              "payment_methods": {
+                "description": "An array of objects containing details about each payment method.",
+                "items": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/Payment"
+                    },
+                    {
+                      "additionalProperties": true,
+                      "type": "object"
+                    }
+                  ]
+                },
+                "title": "Payment Methods",
+                "type": "array"
+              },
+              "total_baggages": {
+                "description": "The total number of baggage items to book the reservation.",
+                "title": "Total Baggages",
+                "type": "integer"
+              },
+              "nonfree_baggages": {
+                "description": "The number of non-free baggage items to book the reservation.",
+                "title": "Nonfree Baggages",
+                "type": "integer"
+              },
+              "insurance": {
+                "description": "Whether the reservation has insurance.",
+                "enum": [
+                  "yes",
+                  "no"
+                ],
+                "title": "Insurance",
+                "type": "string"
+              }
+            },
+            "required": [
+              "user_id",
+              "origin",
+              "destination",
+              "flight_type",
+              "cabin",
+              "flights",
+              "passengers",
+              "payment_methods",
+              "total_baggages",
+              "nonfree_baggages",
+              "insurance"
+            ],
+            "title": "parameters",
+            "type": "object"
+          }
+        }
+      },
+      {
+        "type": "function",
+        "function": {
+          "name": "calculate",
+          "description": "Calculate the result of a mathematical expression.",
+          "parameters": {
+            "properties": {
+              "expression": {
+                "description": "The mathematical expression to calculate, such as '2 + 2'. The expression can contain numbers, operators (+, -, *, /), parentheses, and spaces.",
+                "title": "Expression",
+                "type": "string"
+              }
+            },
+            "required": [
+              "expression"
+            ],
+            "title": "parameters",
+            "type": "object"
+          }
+        }
+      },
+      {
+        "type": "function",
+        "function": {
+          "name": "cancel_reservation",
+          "description": "Cancel the whole reservation.",
+          "parameters": {
+            "properties": {
+              "reservation_id": {
+                "description": "The reservation ID, such as 'ZFA04Y'.",
+                "title": "Reservation Id",
+                "type": "string"
+              }
+            },
+            "required": [
+              "reservation_id"
+            ],
+            "title": "parameters",
+            "type": "object"
+          }
+        }
+      },
+      {
+        "type": "function",
+        "function": {
+          "name": "get_reservation_details",
+          "description": "Get the details of a reservation.",
+          "parameters": {
+            "properties": {
+              "reservation_id": {
+                "description": "The reservation ID, such as '8JX2WO'.",
+                "title": "Reservation Id",
+                "type": "string"
+              }
+            },
+            "required": [
+              "reservation_id"
+            ],
+            "title": "parameters",
+            "type": "object"
+          }
+        }
+      },
+      {
+        "type": "function",
+        "function": {
+          "name": "get_user_details",
+          "description": "Get the details of a user, including their reservations.",
+          "parameters": {
+            "properties": {
+              "user_id": {
+                "description": "The user ID, such as 'sara_doe_496'.",
+                "title": "User Id",
+                "type": "string"
+              }
+            },
+            "required": [
+              "user_id"
+            ],
+            "title": "parameters",
+            "type": "object"
+          }
+        }
+      },
+      {
+        "type": "function",
+        "function": {
+          "name": "list_all_airports",
+          "description": "Returns a list of all available airports.",
+          "parameters": {
+            "properties": {},
+            "title": "parameters",
+            "type": "object"
+          }
+        }
+      },
+      {
+        "type": "function",
+        "function": {
+          "name": "search_direct_flight",
+          "description": "Search for direct flights between two cities on a specific date.",
+          "parameters": {
+            "properties": {
+              "origin": {
+                "description": "The origin city airport in three letters, such as 'JFK'.",
+                "title": "Origin",
+                "type": "string"
+              },
+              "destination": {
+                "description": "The destination city airport in three letters, such as 'LAX'.",
+                "title": "Destination",
+                "type": "string"
+              },
+              "date": {
+                "description": "The date of the flight in the format 'YYYY-MM-DD', such as '2024-01-01'.",
+                "title": "Date",
+                "type": "string"
+              }
+            },
+            "required": [
+              "origin",
+              "destination",
+              "date"
+            ],
+            "title": "parameters",
+            "type": "object"
+          }
+        }
+      },
+      {
+        "type": "function",
+        "function": {
+          "name": "search_onestop_flight",
+          "description": "Search for one-stop flights between two cities on a specific date.",
+          "parameters": {
+            "properties": {
+              "origin": {
+                "description": "The origin city airport in three letters, such as 'JFK'.",
+                "title": "Origin",
+                "type": "string"
+              },
+              "destination": {
+                "description": "The destination city airport in three letters, such as 'LAX'.",
+                "title": "Destination",
+                "type": "string"
+              },
+              "date": {
+                "description": "The date of the flight in the format 'YYYY-MM-DD', such as '2024-05-01'.",
+                "title": "Date",
+                "type": "string"
+              }
+            },
+            "required": [
+              "origin",
+              "destination",
+              "date"
+            ],
+            "title": "parameters",
+            "type": "object"
+          }
+        }
+      },
+      {
+        "type": "function",
+        "function": {
+          "name": "send_certificate",
+          "description": "Send a certificate to a user. Be careful!",
+          "parameters": {
+            "properties": {
+              "user_id": {
+                "description": "The ID of the user to book the reservation, such as 'sara_doe_496'.",
+                "title": "User Id",
+                "type": "string"
+              },
+              "amount": {
+                "description": "The amount of the certificate to send.",
+                "title": "Amount",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "user_id",
+              "amount"
+            ],
+            "title": "parameters",
+            "type": "object"
+          }
+        }
+      },
+      {
+        "type": "function",
+        "function": {
+          "name": "transfer_to_human_agents",
+          "description": "Transfer the user to a human agent, with a summary of the user's issue.\n\nOnly transfer if\n -  the user explicitly asks for a human agent\n -  given the policy and the available tools, you cannot solve the user's issue.",
+          "parameters": {
+            "properties": {
+              "summary": {
+                "description": "A summary of the user's issue.",
+                "title": "Summary",
+                "type": "string"
+              }
+            },
+            "required": [
+              "summary"
+            ],
+            "title": "parameters",
+            "type": "object"
+          }
+        }
+      },
+      {
+        "type": "function",
+        "function": {
+          "name": "update_reservation_baggages",
+          "description": "Update the baggage information of a reservation.",
+          "parameters": {
+            "properties": {
+              "reservation_id": {
+                "description": "The reservation ID, such as 'ZFA04Y'",
+                "title": "Reservation Id",
+                "type": "string"
+              },
+              "total_baggages": {
+                "description": "The updated total number of baggage items included in the reservation.",
+                "title": "Total Baggages",
+                "type": "integer"
+              },
+              "nonfree_baggages": {
+                "description": "The updated number of non-free baggage items included in the reservation.",
+                "title": "Nonfree Baggages",
+                "type": "integer"
+              },
+              "payment_id": {
+                "description": "The payment id stored in user profile, such as 'credit_card_7815826', 'gift_card_7815826', 'certificate_7815826'.",
+                "title": "Payment Id",
+                "type": "string"
+              }
+            },
+            "required": [
+              "reservation_id",
+              "total_baggages",
+              "nonfree_baggages",
+              "payment_id"
+            ],
+            "title": "parameters",
+            "type": "object"
+          }
+        }
+      },
+      {
+        "type": "function",
+        "function": {
+          "name": "update_reservation_flights",
+          "description": "Update the flight information of a reservation.",
+          "parameters": {
+            "$defs": {
+              "FlightInfo": {
+                "properties": {
+                  "flight_number": {
+                    "description": "Flight number, such as 'HAT001'.",
+                    "title": "Flight Number",
+                    "type": "string"
+                  },
+                  "date": {
+                    "description": "The date for the flight in the format 'YYYY-MM-DD', such as '2024-05-01'.",
+                    "title": "Date",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "flight_number",
+                  "date"
+                ],
+                "title": "FlightInfo",
+                "type": "object"
+              }
+            },
+            "properties": {
+              "reservation_id": {
+                "description": "The reservation ID, such as 'ZFA04Y'.",
+                "title": "Reservation Id",
+                "type": "string"
+              },
+              "cabin": {
+                "description": "The cabin class of the reservation",
+                "enum": [
+                  "business",
+                  "economy",
+                  "basic_economy"
+                ],
+                "title": "Cabin",
+                "type": "string"
+              },
+              "flights": {
+                "description": "An array of objects containing details about each piece of flight in the ENTIRE new reservation. Even if the a flight segment is not changed, it should still be included in the array.",
+                "items": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/FlightInfo"
+                    },
+                    {
+                      "additionalProperties": true,
+                      "type": "object"
+                    }
+                  ]
+                },
+                "title": "Flights",
+                "type": "array"
+              },
+              "payment_id": {
+                "description": "The payment id stored in user profile, such as 'credit_card_7815826', 'gift_card_7815826', 'certificate_7815826'.",
+                "title": "Payment Id",
+                "type": "string"
+              }
+            },
+            "required": [
+              "reservation_id",
+              "cabin",
+              "flights",
+              "payment_id"
+            ],
+            "title": "parameters",
+            "type": "object"
+          }
+        }
+      },
+      {
+        "type": "function",
+        "function": {
+          "name": "update_reservation_passengers",
+          "description": "Update the passenger information of a reservation.",
+          "parameters": {
+            "$defs": {
+              "Passenger": {
+                "properties": {
+                  "first_name": {
+                    "description": "Passenger's first name",
+                    "title": "First Name",
+                    "type": "string"
+                  },
+                  "last_name": {
+                    "description": "Passenger's last name",
+                    "title": "Last Name",
+                    "type": "string"
+                  },
+                  "dob": {
+                    "description": "Date of birth in YYYY-MM-DD format",
+                    "title": "Dob",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "first_name",
+                  "last_name",
+                  "dob"
+                ],
+                "title": "Passenger",
+                "type": "object"
+              }
+            },
+            "properties": {
+              "reservation_id": {
+                "description": "The reservation ID, such as 'ZFA04Y'.",
+                "title": "Reservation Id",
+                "type": "string"
+              },
+              "passengers": {
+                "description": "An array of objects containing details about each passenger.",
+                "items": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/Passenger"
+                    },
+                    {
+                      "additionalProperties": true,
+                      "type": "object"
+                    }
+                  ]
+                },
+                "title": "Passengers",
+                "type": "array"
+              }
+            },
+            "required": [
+              "reservation_id",
+              "passengers"
+            ],
+            "title": "parameters",
+            "type": "object"
+          }
+        }
+      },
+      {
+        "type": "function",
+        "function": {
+          "name": "get_flight_status",
+          "description": "Get the status of a flight.",
+          "parameters": {
+            "properties": {
+              "flight_number": {
+                "description": "The flight number.",
+                "title": "Flight Number",
+                "type": "string"
+              },
+              "date": {
+                "description": "The date of the flight.",
+                "title": "Date",
+                "type": "string"
+              }
+            },
+            "required": [
+              "flight_number",
+              "date"
+            ],
+            "title": "parameters",
+            "type": "object"
+          }
+        }
+      }
+    ],
+    "tool_choice": "auto",
+    "kwargs": {
+      "reasoning_effort": "high",
+      "seed": 626729,
+      "num_retries": 3
+    },
+    "timestamp": "2026-07-17T16:35:46.910338"
+  },
+  "response": {
+    "timestamp": "2026-07-17T16:35:58.820881",
+    "content": "{\n  \"message\": \"You're welcome. If you need anything else later\u2014seat selection, adding bags, or itinerary changes\u2014just let me know.\"\n}",
+    "tool_calls": null,
+    "cost": 0.0069855,
+    "usage": {
+      "completion_tokens": 553,
+      "prompt_tokens": 9574
+    },
+    "generation_time_seconds": 11.910359929082915
+  }
+}

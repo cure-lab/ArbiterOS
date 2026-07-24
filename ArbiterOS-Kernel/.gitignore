@@ -212,6 +212,7 @@ mlflow.db*
 
 # ArbiterOS-Kernel
 log/
+log_*/
 
 # macOS
 .DS_Store

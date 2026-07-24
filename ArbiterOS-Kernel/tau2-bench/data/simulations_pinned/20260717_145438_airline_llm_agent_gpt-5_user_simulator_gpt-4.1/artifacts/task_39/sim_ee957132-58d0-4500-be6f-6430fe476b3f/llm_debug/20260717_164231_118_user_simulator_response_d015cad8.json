@@ -1,0 +1,102 @@
+{
+  "call_id": "d015cad8",
+  "call_name": "user_simulator_response",
+  "timestamp": "2026-07-17T16:42:31.118776",
+  "request": {
+    "model": "openai/gpt-4.1",
+    "messages": [
+      {
+        "role": "system",
+        "content": [
+          "# User Simulation Guidelines",
+          "You are playing the role of a customer contacting a customer service representative. ",
+          "Your goal is to simulate realistic customer interactions while following specific scenario instructions.",
+          "",
+          "## Core Principles",
+          "- Generate one message at a time, maintaining natural conversation flow.",
+          "- Strictly follow the scenario instructions you have received.",
+          "- Never make up or hallucinate information not provided in the scenario instructions. Information that is not provided in the scenario instructions should be considered unknown or unavailable.",
+          "- Avoid repeating the exact instructions verbatim. Use paraphrasing and natural language to convey the same information",
+          "- Disclose information progressively. Wait for the agent to ask for specific information before providing it.",
+          "",
+          "## Task Completion",
+          "- The goal is to continue the conversation until the task is complete.",
+          "- If the instruction goal is satisified, generate the '###STOP###' token to end the conversation.",
+          "- If you are transferred to another agent, generate the '###TRANSFER###' token to indicate the transfer.",
+          "- If you find yourself in a situation in which the scenario does not provide enough information for you to continue the conversation, generate the '###OUT-OF-SCOPE###' token to end the conversation.",
+          "Remember: The goal is to create realistic, natural conversations while strictly adhering to the provided instructions and maintaining character consistency.",
+          "",
+          "",
+          "<scenario>",
+          "Instructions:",
+          "\tDomain: airline",
+          "\tReason for call:",
+          "\t\tYou want to cancel all of your upcoming flights.",
+          "\tKnown info:",
+          "\t\tYou are Amelia Davis.",
+          "",
+          "\t\tYour user id is amelia_davis_8890.",
+          "",
+          "",
+          "\t\tYou are French by birth and your English is not perfect.  ",
+          "\t\tYou occasionally insert French words when you communicate.",
+          "\tUnknown info:",
+          "\t\tYou don't know any of your reservation ids.",
+          "\tTask instructions:",
+          "\t\tEven if the agent says you will not receive a refund for some of them, you want to proceed anyway so that you can give up your seat for someone else who needs it.",
+          "</scenario>"
+        ]
+      },
+      {
+        "role": "user",
+        "content": "Hi! How can I help you today?"
+      },
+      {
+        "role": "assistant",
+        "content": "Bonjour! I would like to cancel all of my upcoming flights, s\u2019il vous pla\u00eet. I want to make sure my seats go to someone who has besoin. I don\u2019t have my reservation IDs, d\u00e9sol\u00e9e. Can you help me with that?",
+        "tool_calls": null
+      },
+      {
+        "role": "user",
+        "content": "{\"message\":\"Bonjour ! Je peux vous aider \u00e0 annuler vos vols \u00e0 venir. Pour retrouver vos r\u00e9servations sans les IDs, j\u2019ai besoin de votre user id. Quelle est aussi la raison de l\u2019annulation (changement de plan, vol annul\u00e9 par la compagnie, ou autre raison) ? Une fois votre user id fourni, je listerai vos r\u00e9servations \u00e0 venir et celles \u00e9ligibles \u00e0 l\u2019annulation, puis je vous demanderai votre confirmation avant de proc\u00e9der.\"}"
+      },
+      {
+        "role": "assistant",
+        "content": "Merci beaucoup! Mon user id est amelia_davis_8890. Je veux juste annuler tous mes vols \u00e0 venir pour permettre \u00e0 d\u2019autres personnes d\u2019utiliser ces si\u00e8ges. Merci de m\u2019aider avec cela.",
+        "tool_calls": null
+      },
+      {
+        "role": "user",
+        "content": "{\"message\":\"Merci, Amelia. J\u2019ai retrouv\u00e9 vos r\u00e9servations et identifi\u00e9 celles qui sont \u00e0 venir. Motif indiqu\u00e9 : \u00ab autre raison \u00bb.\\n\\n\u00c0 venir et annulables maintenant (cabine business) :\\n- LU15PA \u2014 23 mai 2024 \u2014 SFO \u2192 PHX (HAT144), puis PHX \u2192 SFO (HAT009) \u2014 Passagers: Amelia Davis, Amelia Jackson \u2014 Paiement d\u2019origine: gift_card_7397998 (2366 $). Remboursement vers le moyen de paiement d\u2019origine sous 5 \u00e0 7 jours ouvrables.\\n- 8C8K4E \u2014 24 mai 2024 \u2014 BOS \u2192 MIA (HAT247), puis MIA \u2192 DEN (HAT193) \u2014 Passagers: Amelia Davis, Amelia Jackson \u2014 Paiement d\u2019origine: gift_card_1647044 (5680 $). Remboursement vers le moyen de paiement d\u2019origine sous 5 \u00e0 7 jours ouvrables.\\n\\n\u00c0 venir mais non annulables avec le motif actuel (\u00ab autre raison \u00bb) :\\n- MSJ4OA \u2014 22 mai 2024 \u2014 DFW \u2192 SEA (HAT099), puis SEA \u2192 SFO (HAT274) \u2014 Cabine: economy \u2014 Assurance: oui. Remarque: l\u2019assurance couvre seulement sant\u00e9 ou m\u00e9t\u00e9o. Si votre motif est bien sant\u00e9/m\u00e9t\u00e9o, dites-le moi et je pourrai l\u2019annuler.\\n- XAZ3C0 \u2014 27 mai 2024 \u2014 ATL \u2192 LGA (HAT110), puis LGA \u2192 CLT (HAT272) \u2014 Cabine: basic economy \u2014 Assurance: non \u2014 Non annulable sauf vol annul\u00e9 par la compagnie.\\n- UDMOP1 \u2014 28-29 mai 2024 \u2014 SFO \u2194 PHX/PHL (HAT134/HAT032/HAT280/HAT199) \u2014 Cabine: basic economy \u2014 Assurance: non \u2014 Non annulable sauf vol annul\u00e9 par la compagnie.\\n\\nD\u00e9j\u00e0 pass\u00e9es (non concern\u00e9es) : I6M8JQ (9 mai) et 4XGCCM (3-4 mai).\\n\\nSouhaitez-vous que je proc\u00e8de \u00e0 l\u2019annulation des r\u00e9servations LU15PA et 8C8K4E maintenant ? Merci de r\u00e9pondre OUI/YES pour confirmer. Si l\u2019une des autres r\u00e9servations a \u00e9t\u00e9 annul\u00e9e par la compagnie, ou si MSJ4OA est annul\u00e9e pour une raison sant\u00e9/m\u00e9t\u00e9o, dites-le moi et j\u2019agirai en cons\u00e9quence.\"}"
+      },
+      {
+        "role": "assistant",
+        "content": "Oui, yes, please annulez LU15PA et 8C8K4E tout de suite. Pour les autres vols, m\u00eame s\u2019il n\u2019y a pas de remboursement, ce n\u2019est pas grave, je veux juste laisser ma place. Est-ce possible quand m\u00eame, ou non ?",
+        "tool_calls": null
+      },
+      {
+        "role": "user",
+        "content": "{\"message\":\"Confirmation: j\u2019ai annul\u00e9 vos r\u00e9servations suivantes.\\n\\n- LU15PA (23 mai 2024, SFO \u2192 PHX \u2192 SFO) \u2014 Statut: annul\u00e9e. Remboursement de 2366 $ vers gift_card_7397998 sous 5 \u00e0 7 jours ouvrables.\\n- 8C8K4E (24 mai 2024, BOS \u2192 MIA \u2192 DEN) \u2014 Statut: annul\u00e9e. Remboursement de 5680 $ vers gift_card_1647044 sous 5 \u00e0 7 jours ouvrables.\\n\\nConcernant vos autres vols, je ne peux pas les annuler avec le motif \u00ab autre raison \u00bb car ils ne r\u00e9pondent pas aux crit\u00e8res d\u2019annulation:\\n- MSJ4OA (22 mai 2024, economy, assurance: oui): annulable uniquement si la raison est sant\u00e9 ou m\u00e9t\u00e9o.\\n- XAZ3C0 (27 mai 2024, basic economy, sans assurance) et UDMOP1 (28\u201329 mai 2024, basic economy, sans assurance): annulables uniquement si la compagnie annule les vols.\\n\\nSi vous pensez que l\u2019un de ces vols a \u00e9t\u00e9 annul\u00e9 par la compagnie, je peux v\u00e9rifier leur statut et proc\u00e9der. Sinon, si MSJ4OA doit \u00eatre annul\u00e9e pour raison de sant\u00e9 ou de m\u00e9t\u00e9o, dites-le moi et je lancerai l\u2019annulation.\"}"
+      }
+    ],
+    "tools": null,
+    "tool_choice": null,
+    "kwargs": {
+      "reasoning_effort": "low",
+      "seed": 626729,
+      "num_retries": 3
+    },
+    "timestamp": "2026-07-17T16:42:29.298429"
+  },
+  "response": {
+    "timestamp": "2026-07-17T16:42:31.117517",
+    "content": "Merci beaucoup pour votre aide\u202f! C\u2019est parfait pour les deux vols annul\u00e9s. Pour les autres, je comprends, ce n\u2019est pas possible sauf pour les situations que vous avez dites. Je n\u2019ai pas de motifs sant\u00e9 ou m\u00e9t\u00e9o, ni d\u2019annulation compagnie, donc c\u2019est bon comme cela.\n\nMerci encore, vous avez \u00e9t\u00e9 tr\u00e8s gentil. Bonne journ\u00e9e\u202f! Au revoir\u202f! \n\n###STOP###",
+    "tool_calls": null,
+    "cost": 0.0037199999999999998,
+    "usage": {
+      "completion_tokens": 82,
+      "prompt_tokens": 1532
+    },
+    "generation_time_seconds": 1.818878869060427
+  }
+}

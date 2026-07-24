@@ -1,0 +1,52 @@
+{
+  "model_name": "gpt-realtime-2",
+  "model_organization": "OpenAI",
+  "submitting_organization": "Sierra",
+  "submission_date": "2026-06-29",
+  "submission_type": "standard",
+  "modality": "voice",
+  "contact_info": {
+    "email": "soham@sierra.ai",
+    "name": "Sierra Research Team"
+  },
+  "results": {
+    "retail": {
+      "pass_1": 47.368421052631575
+    },
+    "airline": {
+      "pass_1": 57.99999999999999
+    },
+    "telecom": {
+      "pass_1": 21.929824561403507
+    }
+  },
+  "is_new": true,
+  "trajectories_available": true,
+  "trajectory_files": {
+    "airline": "gpt-realtime-2_voice_xhigh_airline",
+    "retail": "gpt-realtime-2_voice_xhigh_retail",
+    "telecom": "gpt-realtime-2_voice_xhigh_telecom"
+  },
+  "methodology": {
+    "evaluation_date": "2026-06-24",
+    "tau2_bench_version": "1.0.0",
+    "user_simulator": "v1.0",
+    "verification": {
+      "modified_prompts": false,
+      "omitted_questions": false
+    }
+  },
+  "voice_config": {
+    "provider": "openai",
+    "model": "gpt-realtime-2",
+    "tick_duration_seconds": 0.2,
+    "max_steps_seconds": 1200.0,
+    "user_tts_provider": "elevenlabs/eleven_v3"
+  },
+  "model_release": {
+    "release_date": "2026-05-07",
+    "announcement_url": "https://openai.com/index/advancing-voice-intelligence-with-new-models-in-the-api/",
+    "announcement_title": "Advancing voice intelligence with new models in the API"
+  },
+  "reasoning_effort": "xhigh"
+}

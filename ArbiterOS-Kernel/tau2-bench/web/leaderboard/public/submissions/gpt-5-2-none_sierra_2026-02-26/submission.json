@@ -1,0 +1,68 @@
+{
+  "model_name": "GPT-5.2",
+  "model_organization": "OpenAI",
+  "submitting_organization": "Sierra",
+  "submission_date": "2026-02-26",
+  "contact_info": {
+    "email": "victor@sierra.ai, ben.s@sierra.ai",
+    "name": "Sierra Research Team"
+  },
+  "is_new": false,
+  "submission_type": "standard",
+  "trajectories_available": true,
+  "trajectory_files": {
+    "airline": "gpt-5.2_none_airline_gpt-5.2_4trials.json",
+    "retail": "gpt-5.2_none_retail_gpt-5.2_4trials.json",
+    "telecom": "gpt-5.2_none_telecom_gpt-5.2_4trials.json",
+    "banking_knowledge": "gpt-5.2_none_banking_knowledge_gpt-5.2_4trials.json"
+  },
+  "references": [],
+  "results": {
+    "airline": {
+      "pass_1": 52.5,
+      "pass_2": 35.66666666666667,
+      "pass_3": 27.0,
+      "pass_4": 22.0,
+      "cost": 0.053692803500000004
+    },
+    "retail": {
+      "pass_1": 75.0,
+      "pass_2": 62.13450292397662,
+      "pass_3": 53.07017543859649,
+      "pass_4": 45.614035087719294,
+      "cost": 0.048219267434210525
+    },
+    "telecom": {
+      "pass_1": 57.23684210526315,
+      "pass_2": 42.83625730994152,
+      "pass_3": 35.526315789473685,
+      "pass_4": 30.701754385964914,
+      "cost": 0.04937742280701755
+    },
+    "banking_knowledge": {
+      "pass_1": 11.082474226804123,
+      "pass_2": 6.529209621993128,
+      "pass_3": 5.154639175257731,
+      "pass_4": 4.123711340206185,
+      "cost": 0.2433424974226804,
+      "retrieval_config": "qwen_embeddings"
+    }
+  },
+  "reasoning_effort": "none",
+  "methodology": {
+    "evaluation_date": "2026-05-26",
+    "tau2_bench_version": "0.2.1-dev",
+    "user_simulator": "gpt-5.2",
+    "notes": "Evaluated using GPT-5.2 with reasoning_effort: none. User simulator: gpt-5.2 with reasoning_effort: low. 4 trials. Seed: 300. Banking domain evaluated with retrieval_config: qwen_embeddings.",
+    "verification": {
+      "modified_prompts": false,
+      "omitted_questions": false,
+      "details": "Verified evaluation with full trajectory data available. Standard tau-bench scaffold."
+    }
+  },
+  "model_release": {
+    "release_date": "2025-12-11",
+    "announcement_url": "https://openai.com/index/introducing-gpt-5-2/",
+    "announcement_title": "Introducing GPT-5.2"
+  }
+}

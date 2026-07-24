@@ -1,0 +1,88 @@
+{
+  "call_id": "48fde9bb",
+  "call_name": "user_simulator_response",
+  "timestamp": "2026-07-20T11:12:24.355554",
+  "request": {
+    "model": "openai/gpt-4.1",
+    "messages": [
+      {
+        "role": "system",
+        "content": [
+          "# User Simulation Guidelines",
+          "You are playing the role of a customer contacting a customer service representative. ",
+          "Your goal is to simulate realistic customer interactions while following specific scenario instructions.",
+          "",
+          "## Core Principles",
+          "- Generate one message at a time, maintaining natural conversation flow.",
+          "- Strictly follow the scenario instructions you have received.",
+          "- Never make up or hallucinate information not provided in the scenario instructions. Information that is not provided in the scenario instructions should be considered unknown or unavailable.",
+          "- Avoid repeating the exact instructions verbatim. Use paraphrasing and natural language to convey the same information",
+          "- Disclose information progressively. Wait for the agent to ask for specific information before providing it.",
+          "",
+          "## Task Completion",
+          "- The goal is to continue the conversation until the task is complete.",
+          "- If the instruction goal is satisified, generate the '###STOP###' token to end the conversation.",
+          "- If you are transferred to another agent, generate the '###TRANSFER###' token to indicate the transfer.",
+          "- If you find yourself in a situation in which the scenario does not provide enough information for you to continue the conversation, generate the '###OUT-OF-SCOPE###' token to end the conversation.",
+          "Remember: The goal is to create realistic, natural conversations while strictly adhering to the provided instructions and maintaining character consistency.",
+          "",
+          "",
+          "<scenario>",
+          "Instructions:",
+          "\tDomain: airline",
+          "\tReason for call:",
+          "\t\tYou want to change your upcoming one stop return flight from ATL to LAX to a nonstop flight from ATL to LAS (Las Vegas).",
+          "\tKnown info:",
+          "\t\tYour name is James Lee.",
+          "",
+          "\t\tYour user id is james_lee_6136. ",
+          "",
+          "\t\tYour reservation number is XEWRD9",
+          "\tTask instructions:",
+          "\t\tYou do NOT want to book a new flight, you ONLY want to change the existing one.",
+          "",
+          "\t\tYou are fine with flights within 3-4 hours of your original departure time from ATL.",
+          "",
+          "\t\tYou are willing to pay a fee for the change, up to $100.",
+          "",
+          "\t\tIf the agent says your ticket is a basic economy, you are willing to upgrade to economy in order to make the change.",
+          "",
+          "\t\tIf the agent says that the change is not possible, you ask to be transferred.",
+          "</scenario>"
+        ]
+      },
+      {
+        "role": "user",
+        "content": "Hi! How can I help you today?"
+      },
+      {
+        "role": "assistant",
+        "content": "Hi there! I need some help changing an upcoming return flight. I currently have a one stop flight from Atlanta to Los Angeles, but I\u2019d like to switch it to a nonstop flight from Atlanta to Las Vegas instead.",
+        "tool_calls": null
+      },
+      {
+        "role": "user",
+        "content": "YOU ARE BEING TRANSFERRED TO A HUMAN AGENT. PLEASE HOLD ON."
+      }
+    ],
+    "tools": null,
+    "tool_choice": null,
+    "kwargs": {
+      "reasoning_effort": "low",
+      "seed": 626729,
+      "num_retries": 3
+    },
+    "timestamp": "2026-07-20T11:12:23.370807"
+  },
+  "response": {
+    "timestamp": "2026-07-20T11:12:24.354574",
+    "content": "###TRANSFER###",
+    "tool_calls": null,
+    "cost": 0.001104,
+    "usage": {
+      "completion_tokens": 3,
+      "prompt_tokens": 540
+    },
+    "generation_time_seconds": 0.9835465210489929
+  }
+}
