@@ -2,7 +2,7 @@
 """Analyze token cache hit rate from tau2-bench simulation results.json.
 
 Usage:
-    python3 scripts/analyze_cache.py <results.json>
+    python3 scripts/cache_hit_tau.py <results.json>
 """
 
 import json
