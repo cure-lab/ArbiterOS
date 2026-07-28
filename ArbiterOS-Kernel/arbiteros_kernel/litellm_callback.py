@@ -8,6 +8,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+import uuid
 from contextlib import nullcontext
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -213,6 +214,8 @@ class _DeviceContext:
     latest_user_fingerprint: Optional[str]
     latest_user_message_count: int
     reset_requested: bool
+    # How session identity was chosen (e.g. fallback_history_prefix / fallback_history_new).
+    trace_binding: Optional[str] = None
 
 
 @dataclass
@@ -723,6 +726,26 @@ def _precall_log_enabled_from_litellm_config() -> bool:
     if isinstance(value, bool):
         return value
     return True
+
+
+def _history_prefix_trace_fallback_enabled() -> bool:
+    """Whether last-resort USERINPUT history-prefix binding is on.
+
+    Stronger agent session signals always take precedence; this only runs when those
+    are absent. Default false preserves the older anonymous/channel fallbacks.
+    """
+    env = os.environ.get("ARBITEROS_HISTORY_PREFIX_TRACE_FALLBACK", "").strip().lower()
+    if env in ("0", "false", "no", "off"):
+        return False
+    if env in ("1", "true", "yes", "on"):
+        return True
+    cfg = _read_litellm_config_yaml()
+    if not isinstance(cfg, dict):
+        return False
+    value = cfg.get("history_prefix_trace_fallback_enabled")
+    if isinstance(value, bool):
+        return value
+    return False
 
 
 def _normalize_model_name_for_compat(raw_model: Any) -> str:
@@ -3062,6 +3085,118 @@ def _get_latest_user_id_for_channel_including_anonymous(channel: str) -> Optiona
         return latest_state.user_id
 
 
+_ARBITEROS_REF_LINE_RE = re.compile(r"^\[ARBITEROS_REF[^\]]*\]\s*", re.MULTILINE)
+
+
+def _normalize_history_fallback_text(text: str) -> str:
+    cleaned = _ARBITEROS_REF_LINE_RE.sub("", text or "")
+    return re.sub(r"\s+", " ", cleaned).strip()
+
+
+def _history_fallback_ttl_sec() -> float:
+    raw = os.getenv("ARBITEROS_HISTORY_FALLBACK_TTL_SEC", "7200").strip() or "7200"
+    try:
+        return max(float(raw), 1.0)
+    except ValueError:
+        return 7200.0
+
+
+def _history_fallback_max_scan() -> int:
+    raw = os.getenv("ARBITEROS_HISTORY_FALLBACK_MAX_SCAN", "64").strip() or "64"
+    try:
+        return max(int(raw), 1)
+    except ValueError:
+        return 64
+
+
+def _state_recency_ts(state: _TraceState) -> float:
+    for raw in (state.backup_updated_at, state.trace_started_at):
+        if not isinstance(raw, str) or not raw.strip():
+            continue
+        try:
+            return datetime.fromisoformat(raw.replace("Z", "+00:00")).timestamp()
+        except Exception:
+            continue
+    return 0.0
+
+
+def _load_userinput_sequence_from_instruction_file(trace_id: str) -> list[str]:
+    if not isinstance(trace_id, str) or not trace_id.strip():
+        return []
+    path = _instruction_trace_file_path(trace_id.strip())
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    instructions = payload.get("instructions") if isinstance(payload, dict) else None
+    if not isinstance(instructions, list):
+        return []
+    out: list[str] = []
+    for instr in instructions:
+        if not isinstance(instr, dict):
+            continue
+        itype = str(instr.get("instruction_type") or "").strip().upper()
+        kind = str(instr.get("arbiteros_ref_kind") or "").strip().upper()
+        if itype != "USERINPUT" and kind != "USERINPUT":
+            continue
+        content = instr.get("content")
+        if not isinstance(content, str):
+            continue
+        normalized = _normalize_history_fallback_text(content)
+        if normalized:
+            out.append(normalized)
+    return out
+
+
+def _is_history_sequence_prefix(prefix: list[str], full: list[str]) -> bool:
+    if not prefix or len(prefix) > len(full):
+        return False
+    return prefix == full[: len(prefix)]
+
+
+def _match_history_prefix_fallback(incoming: dict) -> Optional[_TraceState]:
+    """Match request user-text sequence against running instruction USERINPUT prefixes.
+
+    Last-resort only: caller must ensure stronger session signals are absent.
+    """
+    request_users = [
+        _normalize_history_fallback_text(text)
+        for text in _extract_all_user_messages_from_request(incoming)
+    ]
+    request_users = [text for text in request_users if text]
+    if not request_users:
+        return None
+
+    _sync_trace_state_from_disk()
+    now = time.time()
+    ttl = _history_fallback_ttl_sec()
+    max_scan = _history_fallback_max_scan()
+    with _trace_state_lock:
+        candidates = list(_trace_state_by_device.values())
+    candidates.sort(key=_state_recency_ts, reverse=True)
+
+    best: Optional[tuple[int, float, _TraceState]] = None
+    scanned = 0
+    for state in candidates:
+        if scanned >= max_scan:
+            break
+        recency = _state_recency_ts(state)
+        if recency > 0 and (now - recency) > ttl:
+            continue
+        scanned += 1
+        stored = _load_userinput_sequence_from_instruction_file(state.trace_id)
+        if not _is_history_sequence_prefix(stored, request_users):
+            continue
+        prefix_len = len(stored)
+        if (
+            best is None
+            or prefix_len > best[0]
+            or (prefix_len == best[0] and recency > best[1])
+        ):
+            best = (prefix_len, recency, state)
+    return best[2] if best is not None else None
+
+
 def _build_device_context(incoming: dict) -> _DeviceContext:
     messages = incoming.get("messages")
     if not isinstance(messages, list):
@@ -3151,6 +3286,30 @@ def _build_device_context(incoming: dict) -> _DeviceContext:
         or _is_reset_request_text(latest_user_text)
     )
 
+    trace_binding: Optional[str] = None
+    # Last-resort history prefix match before weak channel-reuse / system-hash anonymous.
+    # Only when explicitly enabled; Codex / Claude Code / OpenClaw (etc.) strong identity
+    # paths above still win whenever present.
+    if (
+        _history_prefix_trace_fallback_enabled()
+        and not has_explicit_user_id
+        and raw_user_id == "unknown-user"
+        and not reset_requested
+    ):
+        matched = _match_history_prefix_fallback(incoming)
+        if matched is not None:
+            if matched.channel and matched.channel != "unknown-channel":
+                channel = matched.channel
+            raw_user_id = matched.user_id
+            has_explicit_user_id = True
+            trace_binding = "fallback_history_prefix"
+        else:
+            raw_user_id = f"histfb-{uuid.uuid4().hex[:12]}"
+            has_explicit_user_id = True
+            trace_binding = "fallback_history_new"
+            if channel == "unknown-channel":
+                channel = "fallback"
+
     if raw_user_id == "unknown-user":
         # If this turn doesn't include a conversation_label / chat id (common for some
         # gateways), fall back to the last known non-anonymous user id on this channel.
@@ -3209,6 +3368,7 @@ def _build_device_context(incoming: dict) -> _DeviceContext:
         latest_user_fingerprint=latest_user_fingerprint,
         latest_user_message_count=latest_user_message_count,
         reset_requested=reset_requested,
+        trace_binding=trace_binding,
     )
 
 

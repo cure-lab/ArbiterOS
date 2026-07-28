@@ -88,6 +88,16 @@ precall_log_enabled: true
 # Env override: ARBITEROS_SAID_DONE_HOOK_ENABLED=0|1
 said_done_hook_enabled: false
 
+# Last-resort only: used when stronger session identity is absent
+# (Codex prompt_cache_key, Claude Code session id, OpenClaw message_id, metadata
+# device key, etc. always win first).
+# false (default): keep the older weak fallback (channel reuse / anonymous-system-hash).
+# true: enable USERINPUT history-prefix trace binding. When using this mode, start each
+# new dialog's first user message with a unique marker like [kitchen-fix] so unrelated
+# chats do not collide. Matching still uses full user-text prefix equality.
+# Env override: ARBITEROS_HISTORY_PREFIX_TRACE_FALLBACK=0|1
+history_prefix_trace_fallback_enabled: false
+
 litellm_settings:
   drop_params: true
   callbacks: arbiteros_kernel.litellm_callback.proxy_handler_instance
