@@ -66,14 +66,25 @@ def _status_for_trace(trace_id: str, running_ids: set[str]) -> str:
 
 
 def _agent_from_state(state: Optional[dict[str, Any]]) -> str:
+    """Prefer route agent (``model;agent``), never transport channel."""
     if not isinstance(state, dict):
         return "unknown"
-    channel = state.get("channel")
-    if isinstance(channel, str) and channel.strip() and channel != "unknown-channel":
-        return channel.strip()
-    device_key = state.get("device_key")
-    if isinstance(device_key, str) and ":" in device_key:
-        return device_key.split(":", 1)[0]
+    agent_name = state.get("agent_name")
+    if isinstance(agent_name, str) and agent_name.strip():
+        return agent_name.strip().lower()
+    rounds = state.get("token_usage_rounds")
+    if isinstance(rounds, list):
+        for round_record in reversed(rounds):
+            if not isinstance(round_record, dict):
+                continue
+            agent = round_record.get("agent")
+            if isinstance(agent, str) and agent.strip():
+                return agent.strip().lower()
+            raw_model = round_record.get("model")
+            if isinstance(raw_model, str) and ";" in raw_model:
+                parts = [p.strip() for p in raw_model.split(";")]
+                if len(parts) > 1 and parts[1]:
+                    return parts[1].lower()
     return "unknown"
 
 
@@ -90,22 +101,44 @@ def _tokens_from_state(state: Optional[dict[str, Any]]) -> str:
 
 
 def _infer_agent_from_instructions(instructions: list[Any]) -> str:
+    """Best-effort agent guess from early instruction text.
+
+    Prefer distinctive identity lines over tool-catalog mentions (OpenClaw system
+    prompts often name Codex/Claude Code as tools).
+    """
     for instr in instructions[:8]:
         if not isinstance(instr, dict):
             continue
         content = instr.get("content")
-        if isinstance(content, str):
-            lower = content.lower()
-            if "you are codex" in lower or "codex, a coding agent" in lower:
-                return "codex"
-            if "claude code" in lower or "anthropic's official cli" in lower:
-                return "claude_code"
-            if "openclaw" in lower:
-                return "openclaw"
-            if "nanobot" in lower:
-                return "nanobot"
-            if "hermes" in lower:
-                return "hermes"
+        if not isinstance(content, str) or not content.strip():
+            continue
+        lower = content.lower()
+        head = lower[:400]
+        # Strong identity markers first (usually near the top of system prompts).
+        if "running inside openclaw" in head or "you are a personal assistant running inside openclaw" in head:
+            return "openclaw"
+        if "you are codex" in head or "codex, a coding agent" in head:
+            return "codex"
+        if "claude code, anthropic's official cli" in head or (
+            "you are claude code" in head
+        ):
+            return "claude_code"
+        if "nanobot" in head and "you are" in head:
+            return "nanobot"
+        if "hermes" in head and "you are" in head:
+            return "hermes"
+    # Weaker fallbacks on full early content.
+    for instr in instructions[:3]:
+        if not isinstance(instr, dict):
+            continue
+        content = instr.get("content")
+        if not isinstance(content, str):
+            continue
+        lower = content.lower()
+        if "openclaw" in lower[:200]:
+            return "openclaw"
+        if "anthropic's official cli for claude" in lower:
+            return "claude_code"
     return "unknown"
 
 

@@ -216,6 +216,8 @@ class _DeviceContext:
     reset_requested: bool
     # How session identity was chosen (e.g. fallback_history_prefix / fallback_history_new).
     trace_binding: Optional[str] = None
+    # Route agent from ``model;agent;role`` (not transport channel).
+    agent_name: Optional[str] = None
 
 
 @dataclass
@@ -233,6 +235,8 @@ class _TraceState:
     turn_index: int = 0
     latest_user_preview: Optional[str] = None
     latest_topic_summary: Optional[str] = None
+    # Agent from request route ``model;agent;role`` (display / budget). Not channel.
+    agent_name: Optional[str] = None
     # Per-trace monotonically increasing tool result indices per tool name.
     tool_result_counter_by_tool: dict[str, int] = field(default_factory=dict)
     # Per-trace post-exec alignment screening cache: tool_call_id -> verdict snapshot.
@@ -359,6 +363,7 @@ def _trace_state_to_dict(state: _TraceState) -> dict[str, Any]:
         "device_key": state.device_key,
         "channel": state.channel,
         "user_id": state.user_id,
+        "agent_name": state.agent_name,
         "sequence": state.sequence,
         "last_user_fingerprint": state.last_user_fingerprint,
         "last_user_message_count": state.last_user_message_count,
@@ -418,6 +423,12 @@ def _trace_state_from_dict(device_key: str, payload: Any) -> Optional[_TraceStat
     if not isinstance(user_id, str) or not user_id.strip():
         user_id = derived_user_id or "unknown-user"
     user_id = _normalize_device_fragment(user_id)
+
+    agent_name = payload.get("agent_name")
+    if not isinstance(agent_name, str) or not agent_name.strip():
+        agent_name = None
+    else:
+        agent_name = agent_name.strip().lower()
 
     sequence = payload.get("sequence")
     if not isinstance(sequence, int) or sequence < 0:
@@ -573,6 +584,7 @@ def _trace_state_from_dict(device_key: str, payload: Any) -> Optional[_TraceStat
         turn_index=turn_index,
         latest_user_preview=latest_user_preview,
         latest_topic_summary=latest_topic_summary,
+        agent_name=agent_name,
         tool_result_counter_by_tool=cleaned_counters,
         tool_result_alignment_by_call_id=cleaned_alignment,
         pending_warning_texts=[],
@@ -2023,6 +2035,7 @@ def _record_trace_token_usage(
                 "recorded_at": datetime.now().isoformat(),
                 "turn_index": int(state.turn_index),
                 "model": model,
+                "agent": state.agent_name,
                 "source": source,
                 "usage": _normalized_usage,
                 "round_total_tokens": delta,
@@ -3369,6 +3382,11 @@ def _build_device_context(incoming: dict) -> _DeviceContext:
         latest_user_message_count=latest_user_message_count,
         reset_requested=reset_requested,
         trace_binding=trace_binding,
+        agent_name=(
+            tool_agent.strip().lower()
+            if isinstance(tool_agent, str) and tool_agent.strip()
+            else None
+        ),
     )
 
 
@@ -3418,6 +3436,7 @@ def _ensure_trace_state(context: _DeviceContext) -> tuple[_TraceState, bool]:
                 current_turn_observation_id=None,
                 turn_index=0,
                 latest_user_preview=None,
+                agent_name=context.agent_name,
                 trace_started_at=datetime.now().isoformat(),
             )
             _trace_state_by_device[context.device_key] = current
@@ -3431,6 +3450,12 @@ def _ensure_trace_state(context: _DeviceContext) -> tuple[_TraceState, bool]:
         else:
             if context.reset_requested and context.latest_user_fingerprint:
                 current.last_reset_fingerprint = context.latest_user_fingerprint
+            if (
+                context.agent_name
+                and current.agent_name != context.agent_name
+            ):
+                current.agent_name = context.agent_name
+                persist_needed = True
             if current.channel != "unknown-channel" and not current.user_id.startswith(
                 "anonymous-"
             ):
@@ -3517,6 +3542,7 @@ def _resolve_trace_state_from_metadata(
                 current_turn_observation_id=None,
                 turn_index=0,
                 latest_user_preview=None,
+                agent_name=context.agent_name,
                 trace_started_at=datetime.now().isoformat(),
             )
             _trace_state_by_device[device_key] = restored_state

@@ -11,6 +11,7 @@ from rich.table import Table
 
 from arbiteros_kernel.tui.banner import render_banner
 from arbiteros_kernel.tui.config_catalog import load_agents, load_models, registration_hints
+from arbiteros_kernel.tui.budget import build_budget_matrix, format_cell
 from arbiteros_kernel.tui.trace_catalog import (
     load_trace_detail,
     load_trace_rows,
@@ -80,7 +81,8 @@ class ArbiterTuiApp:
 
         self.console.print(
             Panel(
-                "Commands: [bold]list[/bold]  |  [bold]attach <trace_id>[/bold]  |  "
+                "Commands: [bold]list[/bold]  |  [bold]bg[/bold] (budget)  |  "
+                "[bold]attach <trace_id>[/bold]  |  "
                 "[bold]sw[/bold] (sandbox wizard)  |  [bold]quit[/bold] (q)\n"
                 "If policy or said/done needs your decision, [bold]attach[/bold] that trace and answer "
                 "[bold]Y[/bold]/[bold]N[/bold] inside it "
@@ -145,6 +147,46 @@ class ArbiterTuiApp:
                 row.tokens,
             )
         self.console.print(table)
+
+    def cmd_budget(self) -> None:
+        matrix = build_budget_matrix()
+        if not matrix.models:
+            self.console.print(
+                "[dim]No models in litellm_config.yaml model_list; nothing to show.[/dim]"
+            )
+            return
+        if not matrix.agents:
+            self.console.print(
+                "[dim]No agents registered under agents/; nothing to show.[/dim]"
+            )
+            return
+        table = Table(
+            title="Budget (model × agent) · same traces as list",
+            show_lines=True,
+            header_style="bold white",
+        )
+        table.add_column("model", style="bold", no_wrap=True)
+        for agent in matrix.agents:
+            table.add_column(agent, overflow="fold")
+        table.add_column("Σ model", style="bold", overflow="fold")
+
+        for model in matrix.models:
+            row_cells = [model]
+            for agent in matrix.agents:
+                row_cells.append(format_cell(matrix.cell(model, agent)))
+            row_cells.append(format_cell(matrix.row_total(model)))
+            table.add_row(*row_cells)
+
+        bottom = ["Σ agent"]
+        for agent in matrix.agents:
+            bottom.append(format_cell(matrix.col_total(agent)))
+        bottom.append(format_cell(matrix.grand_total()))
+        table.add_row(*bottom)
+        self.console.print(table)
+        self.console.print(
+            "[dim]Each cell: tokens / usd / context (instr + size). "
+            "Context uses each trace's list context, attributed to its last LLM round.[/dim]"
+        )
 
     def cmd_attach(self, trace_ref: str) -> bool:
         rows = load_trace_rows(include_tests=True)
@@ -319,6 +361,9 @@ class ArbiterTuiApp:
         if lower == "list":
             self.cmd_list()
             return True
+        if lower in {"bg", "budget"}:
+            self.cmd_budget()
+            return True
         if lower in {"sw", "sandbox", "sandbox_wizard"}:
             from arbiteros_kernel.tui.sandbox import run_sandbox_wizard_menu
 
@@ -334,7 +379,7 @@ class ArbiterTuiApp:
                 return self.attach_loop()
             return True
         self.console.print(
-            "[dim]Unknown command. Try list, attach <trace_id>, sw, quit.[/dim]"
+            "[dim]Unknown command. Try list, bg, attach <trace_id>, sw, quit.[/dim]"
         )
         return True
 
