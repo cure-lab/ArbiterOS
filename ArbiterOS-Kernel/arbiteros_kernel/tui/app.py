@@ -17,6 +17,8 @@ from arbiteros_kernel.tui.trace_catalog import (
     load_trace_rows,
     resolve_trace_id,
 )
+from arbiteros_kernel.policy_check import DEFAULT_ROLE_NAME, list_registered_roles
+from arbiteros_kernel.trace_roles import display_role_name, set_trace_role
 from arbiteros_kernel.tui_bridge import (
     KIND_SAID_DONE,
     list_pending_confirms,
@@ -82,6 +84,7 @@ class ArbiterTuiApp:
         self.console.print(
             Panel(
                 "Commands: [bold]list[/bold]  |  [bold]bg[/bold] (budget)  |  "
+                "[bold]role[/bold]  |  "
                 "[bold]attach <trace_id>[/bold]  |  "
                 "[bold]sw[/bold] (sandbox wizard)  |  [bold]quit[/bold] (q)\n"
                 "If policy or said/done needs your decision, [bold]attach[/bold] that trace and answer "
@@ -89,6 +92,7 @@ class ArbiterTuiApp:
                 "([bold]Y[/bold]=deny/keep block, [bold]N[/bold]=allow). "
                 "Same trace: policy first, then said/done. "
                 "`list` shows a [bold]block[/bold] column when confirmation is pending. "
+                "`role` assigns a governance role to a trace at runtime. "
                 "`sw` configures Codex or Claude Code sandbox profiles "
                 "(pick agent, then list/show/new/use).",
                 title="How to use",
@@ -127,6 +131,7 @@ class ArbiterTuiApp:
         table.add_column("status", style="bold")
         table.add_column("block")
         table.add_column("agent")
+        table.add_column("role")
         table.add_column("trace_id", no_wrap=True)
         table.add_column("created_at")
         table.add_column("context")
@@ -141,6 +146,7 @@ class ArbiterTuiApp:
                 f"[{status_style}]{row.status}[/{status_style}]",
                 block_cell,
                 row.agent,
+                row.role,
                 row.trace_id,
                 row.created_at,
                 row.context,
@@ -188,6 +194,107 @@ class ArbiterTuiApp:
             "Context uses each trace's list context, attributed to its last LLM round.[/dim]"
         )
 
+    def cmd_role(self) -> None:
+        self.console.print(
+            Panel(
+                "A [bold]role[/bold] = policy enable/observe table in "
+                "[bold]arbiteros_kernel/role_policy_sets.json[/bold]\n"
+                "+ parameter file under "
+                "[bold]arbiteros_kernel/role_policy_cfg/{role}_policy.json[/bold].\n\n"
+                f"[bold]{DEFAULT_ROLE_NAME}[/bold] uses global "
+                "[bold]policy_registry.json[/bold] + [bold]policy.json[/bold].\n"
+                "Agent may pass [bold]model;agent;role[/bold] only to initialize. "
+                "Once you set a role here, OS lock wins until you change it again.\n"
+                "Type [bold]quit[/bold] at any prompt to cancel.",
+                title="Configure / assign role",
+                border_style="white",
+            )
+        )
+
+        rows = load_trace_rows(include_tests=True)
+        if not rows:
+            self.console.print("[dim]No traces found in log/instruction/.[/dim]")
+            return
+
+        self.console.print("[bold]Select a trace[/bold]")
+        for idx, row in enumerate(rows, start=1):
+            status_style = "green" if row.status == "running" else "dim"
+            self.console.print(
+                f"  [{idx}] [{status_style}]{row.status}[/{status_style}]  "
+                f"agent={row.agent}  role={row.role}  {row.trace_id}"
+            )
+        choice = self.console.input(
+            "[bold cyan]trace # (or quit)[/bold cyan] "
+        ).strip()
+        if choice.lower() in {"q", "quit", "exit", ""}:
+            self.console.print("[dim]Cancelled.[/dim]")
+            return
+        try:
+            trace_idx = int(choice)
+        except ValueError:
+            resolved = resolve_trace_id(choice, rows)
+            if resolved is None:
+                self.console.print(f"[red]Invalid selection:[/red] {choice}")
+                return
+            trace_id = resolved
+        else:
+            if trace_idx < 1 or trace_idx > len(rows):
+                self.console.print(f"[red]Out of range:[/red] {choice}")
+                return
+            trace_id = rows[trace_idx - 1].trace_id
+
+        roles = list_registered_roles()
+        options: list[tuple[str, str]] = [
+            (DEFAULT_ROLE_NAME, "Global policy_registry.json + policy.json")
+        ]
+        for role in roles:
+            name = str(role.get("name") or "")
+            desc = str(role.get("description") or "").strip() or "(no description)"
+            options.append((name, desc))
+
+        self.console.print()
+        self.console.print(f"Trace [bold]{trace_id}[/bold] — select a role")
+        for idx, (name, desc) in enumerate(options, start=1):
+            self.console.print(f"  [{idx}] [bold]{name}[/bold]  {desc}")
+
+        role_choice = self.console.input(
+            "[bold cyan]role # (or quit)[/bold cyan] "
+        ).strip()
+        if role_choice.lower() in {"q", "quit", "exit", ""}:
+            self.console.print("[dim]Cancelled.[/dim]")
+            return
+        try:
+            role_idx = int(role_choice)
+        except ValueError:
+            needle = role_choice.strip()
+            matches = [name for name, _ in options if name == needle]
+            if len(matches) != 1:
+                self.console.print(f"[red]Invalid selection:[/red] {role_choice}")
+                return
+            selected_role = matches[0]
+        else:
+            if role_idx < 1 or role_idx > len(options):
+                self.console.print(f"[red]Out of range:[/red] {role_choice}")
+                return
+            selected_role = options[role_idx - 1][0]
+
+        try:
+            result = set_trace_role(
+                trace_id,
+                role_name=None if selected_role == DEFAULT_ROLE_NAME else selected_role,
+                source="os",
+                locked_by_os=True,
+            )
+        except ValueError as exc:
+            self.console.print(f"[red]Failed:[/red] {exc}")
+            return
+
+        self.console.print(
+            f"[green]OK[/green] trace [bold]{trace_id}[/bold] → role "
+            f"[bold]{result.get('display_role', display_role_name(selected_role))}[/bold] "
+            f"(source=os, locked)"
+        )
+
     def cmd_attach(self, trace_ref: str) -> bool:
         rows = load_trace_rows(include_tests=True)
         trace_id = resolve_trace_id(trace_ref, rows)
@@ -215,6 +322,7 @@ class ArbiterTuiApp:
             Panel(
                 f"trace_id: [bold]{trace_id}[/bold]\n"
                 f"agent: {detail.get('agent', 'unknown')}   "
+                f"role: {detail.get('role', 'default')}   "
                 f"status: {detail.get('status', 'unknown')}   "
                 f"block: {block_text}   "
                 f"tokens: {detail.get('tokens', '-')}   "
@@ -364,6 +472,9 @@ class ArbiterTuiApp:
         if lower in {"bg", "budget"}:
             self.cmd_budget()
             return True
+        if lower == "role":
+            self.cmd_role()
+            return True
         if lower in {"sw", "sandbox", "sandbox_wizard"}:
             from arbiteros_kernel.tui.sandbox import run_sandbox_wizard_menu
 
@@ -379,7 +490,7 @@ class ArbiterTuiApp:
                 return self.attach_loop()
             return True
         self.console.print(
-            "[dim]Unknown command. Try list, bg, attach <trace_id>, sw, quit.[/dim]"
+            "[dim]Unknown command. Try list, bg, role, attach <trace_id>, sw, quit.[/dim]"
         )
         return True
 

@@ -8,6 +8,7 @@ from typing import Any, Optional
 from arbiteros_kernel.tui.config_catalog import kernel_root
 from arbiteros_kernel.session_traces import load_running_trace_ids
 from arbiteros_kernel.tui_bridge import list_pending_confirms
+from arbiteros_kernel.trace_roles import display_role_name, get_trace_role
 
 
 @dataclass(frozen=True)
@@ -15,6 +16,7 @@ class TraceRow:
     trace_id: str
     status: str
     agent: str
+    role: str
     created_at: str
     context: str
     tokens: str
@@ -86,6 +88,15 @@ def _agent_from_state(state: Optional[dict[str, Any]]) -> str:
                 if len(parts) > 1 and parts[1]:
                     return parts[1].lower()
     return "unknown"
+
+
+def _role_from_state(trace_id: str, state: Optional[dict[str, Any]]) -> str:
+    record = get_trace_role(trace_id)
+    if record.get("role_name") or record.get("role_locked_by_os"):
+        return display_role_name(record.get("role_name"))
+    if isinstance(state, dict):
+        return display_role_name(state.get("role_name"))
+    return display_role_name(None)
 
 
 def _tokens_from_state(state: Optional[dict[str, Any]]) -> str:
@@ -202,6 +213,7 @@ def load_trace_rows(*, include_tests: bool = False) -> list[TraceRow]:
                 trace_id=trace_id,
                 status=status,
                 agent=agent,
+                role=_role_from_state(trace_id, state),
                 created_at=created_at,
                 context=_context_summary(instructions),
                 tokens=_tokens_from_state(state),
@@ -240,9 +252,11 @@ def load_trace_detail(trace_id: str) -> dict[str, Any]:
     if row is not None:
         detail["status"] = row.status
         detail["agent"] = row.agent
+        detail["role"] = row.role
         detail["tokens"] = row.tokens
         detail["context"] = row.context
         detail["pending_block"] = row.pending_block
     else:
         detail["pending_block"] = "-"
+        detail["role"] = display_role_name(None)
     return detail

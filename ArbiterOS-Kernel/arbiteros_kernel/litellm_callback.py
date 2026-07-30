@@ -68,11 +68,17 @@ from arbiteros_kernel.policy.defaults import (
     get_policy_registry,
 )
 from arbiteros_kernel.policy_check import (
+    DEFAULT_ROLE_NAME,
     check_response_policy,
     is_local_policy_confirm_enabled,
-    resolve_role_policy_enabled_override,
+    resolve_role_policy_entries,
     split_model_agent_role,
     split_model_and_role,
+)
+from arbiteros_kernel.trace_roles import (
+    display_role_name,
+    get_trace_role,
+    resolve_effective_role_for_request,
 )
 from arbiteros_kernel.precall_policy_check import check_precall_policy
 from arbiteros_kernel.protocol_adapter import (
@@ -237,6 +243,10 @@ class _TraceState:
     latest_topic_summary: Optional[str] = None
     # Agent from request route ``model;agent;role`` (display / budget). Not channel.
     agent_name: Optional[str] = None
+    # Effective governance role for this trace (None = default / global registry).
+    role_name: Optional[str] = None
+    role_source: Optional[str] = None  # "init" | "os"
+    role_locked_by_os: bool = False
     # Per-trace monotonically increasing tool result indices per tool name.
     tool_result_counter_by_tool: dict[str, int] = field(default_factory=dict)
     # Per-trace post-exec alignment screening cache: tool_call_id -> verdict snapshot.
@@ -364,6 +374,9 @@ def _trace_state_to_dict(state: _TraceState) -> dict[str, Any]:
         "channel": state.channel,
         "user_id": state.user_id,
         "agent_name": state.agent_name,
+        "role_name": state.role_name,
+        "role_source": state.role_source,
+        "role_locked_by_os": bool(state.role_locked_by_os),
         "sequence": state.sequence,
         "last_user_fingerprint": state.last_user_fingerprint,
         "last_user_message_count": state.last_user_message_count,
@@ -429,6 +442,21 @@ def _trace_state_from_dict(device_key: str, payload: Any) -> Optional[_TraceStat
         agent_name = None
     else:
         agent_name = agent_name.strip().lower()
+    role_name = payload.get("role_name")
+    if not isinstance(role_name, str) or not role_name.strip():
+        role_name = None
+    else:
+        role_name = role_name.strip()
+        if role_name.lower() == DEFAULT_ROLE_NAME:
+            role_name = None
+    role_source = payload.get("role_source")
+    if not isinstance(role_source, str) or not role_source.strip():
+        role_source = None
+    else:
+        role_source = role_source.strip().lower()
+        if role_source not in {"init", "os"}:
+            role_source = None
+    role_locked_by_os = bool(payload.get("role_locked_by_os", False))
 
     sequence = payload.get("sequence")
     if not isinstance(sequence, int) or sequence < 0:
@@ -585,6 +613,9 @@ def _trace_state_from_dict(device_key: str, payload: Any) -> Optional[_TraceStat
         latest_user_preview=latest_user_preview,
         latest_topic_summary=latest_topic_summary,
         agent_name=agent_name,
+        role_name=role_name,
+        role_source=role_source,
+        role_locked_by_os=role_locked_by_os,
         tool_result_counter_by_tool=cleaned_counters,
         tool_result_alignment_by_call_id=cleaned_alignment,
         pending_warning_texts=[],
@@ -896,17 +927,22 @@ def _is_alignment_sentinel_postexec_enabled() -> bool:
 
 def _is_alignment_sentinel_policy_enabled(
     policy_enabled_override: Optional[dict[str, bool]] = None,
+    *,
+    named_role: bool = False,
 ) -> bool:
     """
-    Gate post-exec tool-result screening by policy_registry.json.
+    Gate post-exec tool-result screening by policy registry / named role.
 
     An explicit empty registry (``[]``) disables screening. If registry lookup
     fails, keep screening enabled (fail-closed for safety).
+    For named roles, only the role's policy list applies: missing key => off.
     """
     if isinstance(policy_enabled_override, dict):
         val = policy_enabled_override.get("AlignmentSentinelPolicy")
         if isinstance(val, bool):
             return val
+        if named_role:
+            return False
     try:
         if not list(get_policy_registry(force_reload=False)):
             return False
@@ -944,8 +980,61 @@ def _extract_role_name_for_policy_config(request_data: Any) -> Optional[str]:
     for key in ("arbiteros_role_name_effective", "arbiteros_role_name_requested"):
         value = metadata.get(key)
         if isinstance(value, str) and value.strip():
-            return value.strip()
+            normalized = value.strip()
+            if normalized.lower() == DEFAULT_ROLE_NAME:
+                return None
+            return normalized
     return None
+
+
+def _extract_role_mode_from_request(request_data: Any) -> str:
+    if not isinstance(request_data, dict):
+        return "default"
+    metadata = request_data.get("metadata")
+    if not isinstance(metadata, dict):
+        return "default"
+    mode = metadata.get("arbiteros_role_mode")
+    if isinstance(mode, str) and mode.strip().lower() == "named":
+        return "named"
+    return "default"
+
+
+def _resolve_effective_role_for_policy(
+    *,
+    trace_id: Optional[str],
+    request_data: Any = None,
+) -> tuple[Optional[str], str]:
+    """
+    Resolve governance role for policy checks.
+
+    Prefer persisted per-trace role (survives Codex ``strip_metadata``). Metadata
+    is only a fallback hint when no stored role exists yet.
+    """
+    tid = trace_id.strip() if isinstance(trace_id, str) and trace_id.strip() else None
+    if tid:
+        record = get_trace_role(tid)
+        stored = record.get("role_name")
+        if isinstance(stored, str) and stored.strip():
+            return stored.strip(), "named"
+        if bool(record.get("role_locked_by_os")):
+            # Explicit OS default lock.
+            return None, "default"
+        # Also check in-memory state (same process, before disk mirror).
+        with _trace_state_lock:
+            for state in _trace_state_by_device.values():
+                if state.trace_id != tid:
+                    continue
+                if isinstance(state.role_name, str) and state.role_name.strip():
+                    return state.role_name.strip(), "named"
+                if state.role_locked_by_os:
+                    return None, "default"
+                break
+
+    meta_role = _extract_role_name_for_policy_config(request_data)
+    meta_mode = _extract_role_mode_from_request(request_data)
+    if meta_mode == "named" and meta_role:
+        return meta_role, "named"
+    return None, "default"
 
 
 def _extract_tool_result_body_for_screening(content: Any) -> Any:
@@ -1119,8 +1208,11 @@ def _screen_tool_results_with_alignment(
     state: _TraceState,
     user_messages: list[str],
     policy_enabled_override: Optional[dict[str, bool]] = None,
+    named_role: bool = False,
 ) -> dict[str, Any]:
-    if not _is_alignment_sentinel_policy_enabled(policy_enabled_override):
+    if not _is_alignment_sentinel_policy_enabled(
+        policy_enabled_override, named_role=named_role
+    ):
         return data
     if not _is_alignment_sentinel_postexec_enabled():
         return data
@@ -1593,12 +1685,64 @@ def _load_trace_state_snapshot_from_disk() -> tuple[
     return states_out, latest_out, stat.st_mtime_ns
 
 
+def _load_roles_by_trace_id_from_disk() -> dict[str, dict[str, Any]]:
+    try:
+        raw = json.loads(_TRACE_STATE_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    roles = raw.get("roles_by_trace_id")
+    if not isinstance(roles, dict):
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    for tid, value in roles.items():
+        if not isinstance(tid, str) or not tid.strip() or not isinstance(value, dict):
+            continue
+        role_name = value.get("role_name")
+        if not isinstance(role_name, str) or not role_name.strip():
+            role_name = None
+        else:
+            role_name = role_name.strip()
+            if role_name.lower() == DEFAULT_ROLE_NAME:
+                role_name = None
+        role_source = value.get("role_source")
+        if not isinstance(role_source, str) or not role_source.strip():
+            role_source = None
+        else:
+            role_source = role_source.strip().lower()
+            if role_source not in {"init", "os"}:
+                role_source = None
+        out[tid.strip()] = {
+            "role_name": role_name,
+            "role_source": role_source,
+            "role_locked_by_os": bool(value.get("role_locked_by_os", False)),
+        }
+    return out
+
+
+def _apply_role_record_to_state(state: _TraceState, record: dict[str, Any]) -> None:
+    role_name = record.get("role_name")
+    if not isinstance(role_name, str) or not role_name.strip():
+        state.role_name = None
+    else:
+        state.role_name = role_name.strip()
+    role_source = record.get("role_source")
+    if isinstance(role_source, str) and role_source.strip() in {"init", "os"}:
+        state.role_source = role_source.strip()
+    else:
+        state.role_source = None
+    state.role_locked_by_os = bool(record.get("role_locked_by_os", False))
+
+
 def _sync_trace_state_from_disk(force: bool = False) -> None:
     global _trace_state_file_mtime_ns
 
     states_snapshot, latest_snapshot, mtime_ns = _load_trace_state_snapshot_from_disk()
     if mtime_ns is None:
         return
+
+    roles_by_trace = _load_roles_by_trace_id_from_disk()
 
     with _trace_state_lock:
         if not force and _trace_state_file_mtime_ns == mtime_ns:
@@ -1608,6 +1752,20 @@ def _sync_trace_state_from_disk(force: bool = False) -> None:
             current = _trace_state_by_device.get(device_key)
             if current is None or restored.sequence >= current.sequence:
                 _trace_state_by_device[device_key] = restored
+            else:
+                # Memory ahead on sequence: still honor OS-locked role from disk.
+                disk_role = roles_by_trace.get(restored.trace_id) or {
+                    "role_name": restored.role_name,
+                    "role_source": restored.role_source,
+                    "role_locked_by_os": restored.role_locked_by_os,
+                }
+                if bool(disk_role.get("role_locked_by_os")):
+                    _apply_role_record_to_state(current, disk_role)
+
+        for device_key, state in list(_trace_state_by_device.items()):
+            record = roles_by_trace.get(state.trace_id)
+            if record is not None:
+                _apply_role_record_to_state(state, record)
 
         for channel, user_id in latest_snapshot.items():
             if channel and user_id:
@@ -1619,18 +1777,34 @@ def _sync_trace_state_from_disk(force: bool = False) -> None:
 def _persist_trace_state_to_disk() -> None:
     global _trace_state_file_mtime_ns
 
+    roles_by_trace = _load_roles_by_trace_id_from_disk()
+
     with _trace_state_lock:
         states_payload = {
             device_key: _trace_state_to_dict(state)
             for device_key, state in _trace_state_by_device.items()
         }
         latest_payload = dict(_latest_user_id_by_channel)
+        for state in _trace_state_by_device.values():
+            tid = state.trace_id
+            existing = roles_by_trace.get(tid)
+            if isinstance(existing, dict) and bool(existing.get("role_locked_by_os")):
+                # Do not clobber OS lock from an older in-memory init role.
+                _apply_role_record_to_state(state, existing)
+                states_payload[state.device_key] = _trace_state_to_dict(state)
+                continue
+            roles_by_trace[tid] = {
+                "role_name": state.role_name,
+                "role_source": state.role_source,
+                "role_locked_by_os": bool(state.role_locked_by_os),
+            }
 
     payload = {
         "version": 1,
         "updated_at": datetime.now().isoformat(),
         "states": states_payload,
         "latest_user_id_by_channel": latest_payload,
+        "roles_by_trace_id": roles_by_trace,
     }
     tmp_path = _TRACE_STATE_FILE.with_suffix(".tmp")
 
@@ -9257,23 +9431,6 @@ class MyCustomHandler(CustomLogger):
         data = {**data, "model": route_model}
         set_request_agent(agent_name)
 
-        role_policy_override: Optional[dict[str, bool]] = None
-        role_policy_fallback_reason: Optional[str] = None
-        role_policy_config_override: Optional[dict[str, Any]] = None
-        role_policy_config_source: Optional[str] = None
-        role_policy_config_fallback_reason: Optional[str] = None
-        if isinstance(_m, str) and _m.count(";") >= 2 and not parsed_role_name:
-            role_policy_fallback_reason = "invalid_role_spec"
-        if parsed_role_name:
-            role_policy_override, role_policy_fallback_reason = (
-                resolve_role_policy_enabled_override(parsed_role_name)
-            )
-            (
-                role_policy_config_override,
-                role_policy_config_source,
-                role_policy_config_fallback_reason,
-            ) = load_role_policy_config(parsed_role_name)
-
         metadata_for_role = data.get("metadata") if isinstance(data, dict) else None
         metadata_for_role = (
             dict(metadata_for_role) if isinstance(metadata_for_role, dict) else {}
@@ -9283,25 +9440,24 @@ class MyCustomHandler(CustomLogger):
             metadata_for_role["arbiteros_role_name_requested"] = parsed_role_name
         else:
             metadata_for_role.pop("arbiteros_role_name_requested", None)
-        if isinstance(role_policy_override, dict):
-            metadata_for_role["arbiteros_role_name_effective"] = (
-                parsed_role_name or ""
-            )
-            metadata_for_role["arbiteros_policy_enabled_override"] = role_policy_override
-        else:
-            metadata_for_role.pop("arbiteros_role_name_effective", None)
-            metadata_for_role.pop("arbiteros_policy_enabled_override", None)
-        if parsed_role_name and isinstance(role_policy_config_source, str):
-            metadata_for_role["arbiteros_policy_config_source"] = role_policy_config_source
-        else:
-            metadata_for_role.pop("arbiteros_policy_config_source", None)
-        if parsed_role_name and isinstance(role_policy_config_fallback_reason, str):
-            metadata_for_role["arbiteros_policy_config_fallback_reason"] = (
-                role_policy_config_fallback_reason
-            )
-        else:
-            metadata_for_role.pop("arbiteros_policy_config_fallback_reason", None)
+        # Effective role is resolved after trace_id is bound (see below).
+        metadata_for_role.pop("arbiteros_role_name_effective", None)
+        metadata_for_role.pop("arbiteros_policy_enabled_override", None)
+        metadata_for_role.pop("arbiteros_policy_config_source", None)
+        metadata_for_role.pop("arbiteros_policy_config_fallback_reason", None)
+        metadata_for_role.pop("arbiteros_role_mode", None)
         data = {**data, "metadata": metadata_for_role}
+
+        role_policy_override: Optional[dict[str, bool]] = None
+        role_policy_fallback_reason: Optional[str] = None
+        role_policy_config_override: Optional[dict[str, Any]] = None
+        role_policy_config_source: Optional[str] = None
+        role_policy_config_fallback_reason: Optional[str] = None
+        role_policy_entries: Optional[list[Any]] = None
+        effective_role_name: Optional[str] = None
+        named_role_active = False
+        if isinstance(_m, str) and _m.count(";") >= 2 and not parsed_role_name:
+            role_policy_fallback_reason = "invalid_role_spec"
         '''
         if isinstance(_m, str) and _m.split("/")[-1] == "gpt-5.2-chat-latest":
             if data.get("temperature") is not None and data.get("temperature") != 1:
@@ -9383,12 +9539,87 @@ class MyCustomHandler(CustomLogger):
         except Exception:
             pass
 
+        # Resolve effective role after trace binding (init refresh vs OS lock).
+        requested_role_for_resolve = parsed_role_name
+        if role_policy_fallback_reason == "invalid_role_spec":
+            requested_role_for_resolve = None
+        (
+            effective_role_name,
+            role_source,
+            role_locked,
+            role_resolve_warning,
+        ) = resolve_effective_role_for_request(
+            trace_id=state.trace_id,
+            requested_role=requested_role_for_resolve,
+        )
+        if role_resolve_warning and not role_policy_fallback_reason:
+            role_policy_fallback_reason = role_resolve_warning
+        with _trace_state_lock:
+            state.role_name = effective_role_name
+            state.role_source = role_source
+            state.role_locked_by_os = bool(role_locked)
+        _persist_trace_state_to_disk()
+
+        if effective_role_name:
+            (
+                role_policy_entries,
+                role_policy_override,
+                entries_fallback,
+            ) = resolve_role_policy_entries(effective_role_name)
+            if entries_fallback:
+                role_policy_fallback_reason = entries_fallback
+                role_policy_entries = None
+                role_policy_override = None
+                effective_role_name = None
+                named_role_active = False
+            else:
+                named_role_active = True
+                (
+                    role_policy_config_override,
+                    role_policy_config_source,
+                    role_policy_config_fallback_reason,
+                ) = load_role_policy_config(effective_role_name)
+        else:
+            named_role_active = False
+
+        metadata_for_role = data.get("metadata") if isinstance(data, dict) else None
+        metadata_for_role = (
+            dict(metadata_for_role) if isinstance(metadata_for_role, dict) else {}
+        )
+        metadata_for_role["arbiteros_agent_name"] = agent_name or ""
+        if parsed_role_name:
+            metadata_for_role["arbiteros_role_name_requested"] = parsed_role_name
+        else:
+            metadata_for_role.pop("arbiteros_role_name_requested", None)
+        metadata_for_role["arbiteros_role_name_effective"] = display_role_name(
+            effective_role_name
+        )
+        metadata_for_role["arbiteros_role_mode"] = (
+            "named" if named_role_active else "default"
+        )
+        if named_role_active and isinstance(role_policy_override, dict):
+            metadata_for_role["arbiteros_policy_enabled_override"] = role_policy_override
+        else:
+            metadata_for_role.pop("arbiteros_policy_enabled_override", None)
+        if named_role_active and isinstance(role_policy_config_source, str):
+            metadata_for_role["arbiteros_policy_config_source"] = role_policy_config_source
+        else:
+            metadata_for_role.pop("arbiteros_policy_config_source", None)
+        if named_role_active and isinstance(role_policy_config_fallback_reason, str):
+            metadata_for_role["arbiteros_policy_config_fallback_reason"] = (
+                role_policy_config_fallback_reason
+            )
+        else:
+            metadata_for_role.pop("arbiteros_policy_config_fallback_reason", None)
+        data = {**data, "metadata": metadata_for_role}
+
         if isinstance(role_policy_fallback_reason, str) and role_policy_fallback_reason:
             _save_json(
                 "role_policy_fallback",
                 {
                     "trace_id": state.trace_id,
                     "requested_role": parsed_role_name or "",
+                    "effective_role": display_role_name(effective_role_name),
                     "reason": role_policy_fallback_reason,
                 },
             )
@@ -9416,6 +9647,7 @@ class MyCustomHandler(CustomLogger):
                 state=state,
                 user_messages=_extract_all_user_messages_from_request(data),
                 policy_enabled_override=role_policy_override,
+                named_role=named_role_active,
             )
         # Emit TOOLRESULT instructions BEFORE REF watermarks so the first turn
         # that sees a tool output already has the stable TOOLRESULT id. Injecting
@@ -9971,8 +10203,37 @@ class MyCustomHandler(CustomLogger):
                     )
                 )
                 extracted_user_messages = _extract_all_user_messages_from_request(data)
+                role_name_for_policy_cfg, role_mode = _resolve_effective_role_for_policy(
+                    trace_id=trace_id,
+                    request_data=data,
+                )
                 role_policy_override = _extract_role_policy_override_from_request(data)
-                role_name_for_policy_cfg = _extract_role_name_for_policy_config(data)
+                role_policy_entries = None
+                if role_mode == "named" and role_name_for_policy_cfg:
+                    (
+                        role_policy_entries,
+                        role_entries_override,
+                        role_entries_fallback,
+                    ) = resolve_role_policy_entries(role_name_for_policy_cfg)
+                    if role_entries_fallback:
+                        _save_json(
+                            "role_policy_fallback",
+                            {
+                                "trace_id": trace_id,
+                                "role_name": role_name_for_policy_cfg or "",
+                                "reason": role_entries_fallback,
+                                "phase": "post_call",
+                            },
+                        )
+                        role_policy_entries = None
+                        role_policy_override = None
+                        role_name_for_policy_cfg = None
+                    elif isinstance(role_entries_override, dict):
+                        role_policy_override = role_entries_override
+                else:
+                    # Default path: ignore stale metadata overrides from a prior role.
+                    role_policy_override = None
+                    role_name_for_policy_cfg = None
                 (
                     role_policy_config_override,
                     _role_policy_config_source,
@@ -10002,7 +10263,10 @@ class MyCustomHandler(CustomLogger):
                         instructions=instructions_for_policy,
                         current_response=final_msg_dict,
                         latest_instructions=latest_for_policy,
-                        policy_enabled_override=role_policy_override,
+                        policy_entries=role_policy_entries,
+                        policy_enabled_override=(
+                            None if role_policy_entries is not None else role_policy_override
+                        ),
                         policy_runtime_context=policy_runtime_context,
                     )
                 if not policy_result.modified:

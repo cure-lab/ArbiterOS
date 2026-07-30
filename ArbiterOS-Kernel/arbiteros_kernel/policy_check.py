@@ -24,10 +24,16 @@ __all__ = [
     "check_response_policy",
     "apply_policy_enforcement_mode",
     "is_local_policy_confirm_enabled",
+    "list_registered_roles",
+    "is_registered_role",
+    "resolve_role_policy_entries",
     "resolve_role_policy_enabled_override",
     "split_model_and_role",
     "split_model_agent_role",
+    "DEFAULT_ROLE_NAME",
 ]
+
+DEFAULT_ROLE_NAME = "default"
 
 _ROLE_POLICY_SETS_PATH = (
     Path(__file__).resolve().parent / "role_policy_sets.json"
@@ -323,53 +329,169 @@ def _load_role_policy_sets() -> list[dict[str, Any]]:
         return list(normalized)
 
 
+def list_registered_roles() -> list[dict[str, Any]]:
+    """
+    Return registered roles from ``role_policy_sets.json``.
+
+    Each item: ``{name, description, policies}`` where policies are
+    ``[{name, description, enabled}, ...]``.
+    """
+    out: list[dict[str, Any]] = []
+    for row in _load_role_policy_sets():
+        name = str(row.get("name") or "").strip()
+        if not name or name.lower() == DEFAULT_ROLE_NAME:
+            continue
+        description = str(row.get("description") or "").strip()
+        policies_raw = row.get("policies")
+        # Legacy: enabled_policies: ["FooPolicy", ...]
+        if not isinstance(policies_raw, list):
+            enabled_raw = row.get("enabled_policies")
+            if isinstance(enabled_raw, list):
+                policies_raw = [
+                    {"name": str(item).strip(), "enabled": True, "description": ""}
+                    for item in enabled_raw
+                    if isinstance(item, str) and str(item).strip()
+                ]
+            else:
+                policies_raw = []
+        policies: list[dict[str, Any]] = []
+        for item in policies_raw:
+            if not isinstance(item, dict):
+                continue
+            pname = str(item.get("name") or "").strip()
+            if not pname:
+                continue
+            policies.append(
+                {
+                    "name": pname,
+                    "description": str(item.get("description") or "").strip(),
+                    "enabled": bool(item.get("enabled", True)),
+                }
+            )
+        out.append(
+            {
+                "name": name,
+                "description": description,
+                "policies": policies,
+            }
+        )
+    return out
+
+
+def is_registered_role(role_name: Optional[str]) -> bool:
+    normalized = role_name.strip() if isinstance(role_name, str) else ""
+    if not normalized or normalized.lower() == DEFAULT_ROLE_NAME:
+        return False
+    return any(r["name"] == normalized for r in list_registered_roles())
+
+
+def resolve_role_policy_entries(
+    role_name: Optional[str],
+) -> tuple[Optional[list[Any]], Optional[dict[str, bool]], Optional[str]]:
+    """
+    Resolve named-role policy entries from ``role_policy_sets.json``.
+
+    Returns:
+      - list of ``PolicyEntry`` for policies listed on the role (may be empty)
+      - enabled override map for those policies
+      - warning/error reason when role cannot be applied (caller should fall back
+        to default / global registry)
+    """
+    from arbiteros_kernel.policy.defaults import POLICY_CLASS_MAP, PolicyEntry
+
+    normalized_role = role_name.strip() if isinstance(role_name, str) else ""
+    if not normalized_role or normalized_role.lower() == DEFAULT_ROLE_NAME:
+        return None, None, None
+
+    matched: Optional[dict[str, Any]] = None
+    for row in list_registered_roles():
+        if row["name"] == normalized_role:
+            matched = row
+            break
+    if matched is None:
+        # Also try raw load for legacy rows that failed list normalization.
+        for row in _load_role_policy_sets():
+            if str(row.get("name") or "").strip() == normalized_role:
+                matched = {
+                    "name": normalized_role,
+                    "description": str(row.get("description") or "").strip(),
+                    "policies": [],
+                }
+                policies_raw = row.get("policies")
+                if isinstance(policies_raw, list):
+                    matched["policies"] = [
+                        {
+                            "name": str(p.get("name") or "").strip(),
+                            "description": str(p.get("description") or "").strip(),
+                            "enabled": bool(p.get("enabled", True)),
+                        }
+                        for p in policies_raw
+                        if isinstance(p, dict) and str(p.get("name") or "").strip()
+                    ]
+                elif isinstance(row.get("enabled_policies"), list):
+                    matched["policies"] = [
+                        {
+                            "name": str(item).strip(),
+                            "description": "",
+                            "enabled": True,
+                        }
+                        for item in row["enabled_policies"]
+                        if isinstance(item, str) and str(item).strip()
+                    ]
+                break
+
+    if matched is None:
+        return None, None, f"role_not_found:{normalized_role}"
+
+    policies = matched.get("policies")
+    if not isinstance(policies, list):
+        return None, None, f"invalid_policies:{normalized_role}"
+
+    entries: list[Any] = []
+    override: dict[str, bool] = {}
+    unknown: list[str] = []
+    seen: set[str] = set()
+    for item in policies:
+        if not isinstance(item, dict):
+            continue
+        pname = str(item.get("name") or "").strip()
+        if not pname or pname in seen:
+            continue
+        seen.add(pname)
+        policy_cls = POLICY_CLASS_MAP.get(pname)
+        if policy_cls is None:
+            unknown.append(pname)
+            continue
+        enabled = bool(item.get("enabled", True))
+        description = str(item.get("description") or "").strip()
+        entries.append(
+            PolicyEntry(policy=policy_cls, description=description, enabled=enabled)
+        )
+        override[pname] = enabled
+
+    if unknown:
+        return None, None, (
+            f"unknown_policies:{normalized_role}:" + ",".join(sorted(unknown))
+        )
+
+    return entries, override, None
+
+
 def resolve_role_policy_enabled_override(
     role_name: Optional[str],
 ) -> tuple[Optional[dict[str, bool]], Optional[str]]:
     """
-    Resolve per-request policy enabled overrides for a role.
+    Resolve per-request policy enabled overrides for a named role.
 
-    Returns:
-      - override map (policy_name -> enforce bool), or None when fallback to defaults
-      - warning reason string when fallback happened
+    Named roles use ``role_policy_sets.json`` as the authority for which
+    policies run (via :func:`resolve_role_policy_entries`). This helper returns
+    only the enabled map for callers that still pass overrides.
     """
-    normalized_role = role_name.strip() if isinstance(role_name, str) else ""
-    if not normalized_role:
+    _entries, override, reason = resolve_role_policy_entries(role_name)
+    if reason:
+        return None, reason
+    if override is None:
         return None, None
-
-    from arbiteros_kernel.policy.defaults import get_policy_registry
-
-    registry_entries = list(get_policy_registry(force_reload=False))
-    known_policy_names = {
-        entry.policy.__name__ for entry in registry_entries if hasattr(entry, "policy")
-    }
-    role_defs = _load_role_policy_sets()
-    matched: Optional[dict[str, Any]] = None
-    for row in role_defs:
-        if str(row.get("name") or "").strip() == normalized_role:
-            matched = row
-            break
-
-    if not isinstance(matched, dict):
-        return None, f"role_not_found:{normalized_role}"
-
-    enabled_raw = matched.get("enabled_policies")
-    if not isinstance(enabled_raw, list):
-        return None, f"invalid_enabled_policies:{normalized_role}"
-
-    enabled_set = {
-        str(item).strip()
-        for item in enabled_raw
-        if isinstance(item, str) and str(item).strip()
-    }
-    unknown_policies = sorted(enabled_set - known_policy_names)
-    if unknown_policies:
-        return None, (
-            f"unknown_policies:{normalized_role}:"
-            + ",".join(unknown_policies)
-        )
-
-    override = {name: (name in enabled_set) for name in known_policy_names}
     return override, None
 
 
@@ -380,6 +502,7 @@ def check_response_policy(
     current_response: dict[str, Any],
     latest_instructions: list[dict[str, Any]] | None = None,
     policy_classes: Optional[list[type["Policy"]]] = None,
+    policy_entries: Optional[list[Any]] = None,
     user_messages: list[str] | None = None,
     policy_enabled_override: Optional[dict[str, bool]] = None,
     policy_runtime_context: Optional[dict[str, Any]] = None,
@@ -393,8 +516,10 @@ def check_response_policy(
         current_response: Current post_call_success response (after strip/transform).
         latest_instructions: Instructions from this response (content + tool_calls 等，current_response 里有的都有).
         policy_classes: If set, run exactly these classes as if registry
-            ``enabled: true``. If None, load **all** entries from
-            ``policy_registry.json`` via ``get_policy_registry()``; each entry's
+            ``enabled: true``. Ignored when ``policy_entries`` is provided.
+        policy_entries: If set, run exactly these ``PolicyEntry`` rows (named-role
+            authority). If None and ``policy_classes`` is None, load **all** entries
+            from ``policy_registry.json`` via ``get_policy_registry()``; each entry's
             ``enabled`` controls observe-only vs enforce **outside** policies via
             :func:`apply_policy_enforcement_mode` (no kwargs passed into
             ``Policy.check``).
@@ -420,7 +545,9 @@ def check_response_policy(
         latest_instructions=latest_instructions,
     )
 
-    if policy_classes is None:
+    if policy_entries is not None:
+        registry_entries = list(policy_entries)
+    elif policy_classes is None:
         # Dynamic lookup so policy_registry.json changes can take effect
         # without restarting the process. All registry rows run; ``enabled``
         # selects enforce vs observe-only in apply_policy_enforcement_mode only.

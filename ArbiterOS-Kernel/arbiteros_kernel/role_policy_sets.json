@@ -2,9 +2,18 @@
   "roles": [
     {
       "name": "semantic_protected",
-      "enabled_policies": [
-        "RateLimitPolicy",
-        "AlignmentSentinelPolicy"
+      "description": "Stricter semantic / rate / alignment posture for a trace.",
+      "policies": [
+        {
+          "name": "RateLimitPolicy",
+          "enabled": true,
+          "description": "Enforces per-conversation and per-tool hard tool-call budgets, plus consecutive-repeat limits."
+        },
+        {
+          "name": "AlignmentSentinelPolicy",
+          "enabled": true,
+          "description": "LLM-based pre-exec alignment check for planned tool calls against recent user objective."
+        }
       ]
     }
   ]
