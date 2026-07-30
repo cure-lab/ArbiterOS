@@ -6407,6 +6407,18 @@ def _get_instruction_builder_for_trace(trace_id: str) -> Optional[Any]:
                     instrs = raw.get("instructions")
                     if isinstance(instrs, list) and instrs:
                         builder.instructions = instrs
+                        # Restore step counter so the next instruction continues
+                        # the sequence (otherwise cold reload resets to 1).
+                        max_step = 0
+                        for item in instrs:
+                            if not isinstance(item, dict):
+                                continue
+                            step = item.get("runtime_step")
+                            if isinstance(step, int) and step > max_step:
+                                max_step = step
+                        builder._runtime_step = (
+                            max_step if max_step > 0 else len(instrs)
+                        )
                         if instrs:
                             builder._last_instruction_id = instrs[-1].get("id")
                             builder._root_source_message_id = instrs[0].get(
