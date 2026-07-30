@@ -11,12 +11,21 @@ from flow_cost_doctor.cost_down import OptimizationStrategy
 from flow_cost_doctor.runtime.apply import applied_prompt_tokens
 from flow_cost_doctor.runtime.payload_index import PayloadIndex
 
-from arbiteros_kernel.precall_policy.compress_executor import compress_text
+from arbiteros_kernel.precall_policy.compress_executor import (
+    compress_text,
+    compression_has_material_value,
+)
 from flow_cost_doctor.runtime.dep_lifetime import (
     dep_lifetime_params_from_rule_engine,
     prune_expired_dependency_evidence,
     should_apply_dep_lifetime_prune,
     target_chars_for_dep_lifetime,
+)
+from flow_cost_doctor.runtime.working_set import (
+    SEMANTIC_CARRIER_RULE_IDS,
+    SemanticFold,
+    folded_artifact_text,
+    transient_failure_text,
 )
 
 _REF_MARKER_RE = re.compile(
@@ -25,6 +34,7 @@ _REF_MARKER_RE = re.compile(
 
 # Tools JSON schema is static agent config — not yet in FCD context_id model (see docs).
 _UNIMPLEMENTED_CARRIERS = ("tools",)
+_OMITTED_TOOL_OUTPUT = "[Cost Doctor omitted obsolete tool output]"
 
 
 def apply_context_actions_to_request(
@@ -171,13 +181,22 @@ def _compress_body(
             effective = str(
                 meta.get("effective_action") or meta.get("action") or "COMPRESS"
             )
+            if meta.get("semantic_fold") == SemanticFold.SUPERSEDED_ARTIFACT.value:
+                return folded_artifact_text(meta.get("artifact_keys") or ())
+            if meta.get("semantic_fold") == SemanticFold.TRANSIENT_FAILURE.value:
+                return transient_failure_text(body)
         dep_params = dep_lifetime_params_from_rule_engine(ctx.rule_engine)
-        if should_apply_dep_lifetime_prune(
-            effective_action=effective,
-            context_id=context_id,
-            live_context_ids=ctx.live_context_ids,
-            params=dep_params,
-            text_len=len(body),
+        semantic_working_set = str(meta.get("working_set") or "")
+        semantic_carrier = semantic_working_set in SEMANTIC_CARRIER_RULE_IDS
+        if (
+            not semantic_carrier
+            and should_apply_dep_lifetime_prune(
+                effective_action=effective,
+                context_id=context_id,
+                live_context_ids=ctx.live_context_ids,
+                params=dep_params,
+                text_len=len(body),
+            )
         ):
             pruned = prune_expired_dependency_evidence(
                 body,
@@ -190,6 +209,14 @@ def _compress_body(
                 if isinstance(meta, dict):
                     meta["dep_lifetime"] = "prune_off_frontier"
                 return pruned.text
+        if not compression_has_material_value(
+            body,
+            target_ratio=float(ratio),
+            rule_engine=ctx.rule_engine,
+        ):
+            if isinstance(meta, dict):
+                meta["mutation_value_gate"] = "keep_low_actual_savings"
+            return body
         return compress_text(
             body,
             target_ratio=float(ratio),
@@ -197,6 +224,11 @@ def _compress_body(
             rule_engine=ctx.rule_engine,
             progress_signal=str(progress_signal) if progress_signal else None,
             source_type=str(source_type) if source_type else None,
+            focus_terms={
+                str(term).strip().lower()
+                for term in (meta.get("semantic_focus_terms") or ())
+                if str(term).strip()
+            },
             model=ctx.upstream_model,
             cache=ctx.compress_cache,
         )
@@ -248,7 +280,8 @@ def _mutate_text_block(
         and strategy.compress_target_ratio
     ):
         compressed = _compress_body(body, context_id=context_id, strategy=strategy, ctx=ctx)
-        return f"{marker}{compressed}", True, False
+        changed = compressed != body
+        return f"{marker}{compressed}" if changed else text, changed, False
     return text, False, False
 
 
@@ -290,6 +323,8 @@ def _mutate_message(
             return message, False, False
         new_text, changed, drop = _mutate_text_block(content, context_id=context_id, ctx=ctx)
         if drop:
+            if message.get("role") == "tool":
+                return {**message, "content": _OMITTED_TOOL_OUTPUT}, True, False
             return message, True, True
         if changed:
             return {**message, "content": new_text}, True, False
@@ -317,6 +352,8 @@ def _mutate_message(
             else:
                 new_blocks.append(block)
         if not new_blocks:
+            if message.get("role") == "tool":
+                return {**message, "content": _OMITTED_TOOL_OUTPUT}, True, False
             return message, True, True
         return {**message, "content": new_blocks}, block_changed, False
 
@@ -429,7 +466,9 @@ def _mutate_function_call_output(
     output = item.get("output")
     body = output if isinstance(output, str) else json.dumps(output, ensure_ascii=False)
     if _should_drop(context_id, ctx, meter_len=len(body)):
-        return item, True, True
+        # Responses requires function_call/function_call_output protocol pairs.
+        # Keep the carrier and replace only its obsolete payload.
+        return {**item, "output": _OMITTED_TOOL_OUTPUT}, True, False
     strategy = _strategy_for_context(context_id, ctx)
     effective = _effective_action(context_id, ctx)
     if (
@@ -439,6 +478,8 @@ def _mutate_function_call_output(
         and strategy.action == "COMPRESS"
     ):
         compressed = _compress_body(body, context_id=context_id, strategy=strategy, ctx=ctx)
+        if compressed == body:
+            return item, False, False
         if isinstance(output, str):
             return {**item, "output": compressed}, True, False
         try:
@@ -453,27 +494,9 @@ def _mutate_function_call(
     *,
     ctx: _MutationContext,
 ) -> tuple[dict[str, Any], bool, bool]:
-    call_id = str(item.get("call_id") or item.get("id") or "").strip()
-    context_id = _resolve_call_context(call_id, ctx)
-    if not context_id:
-        return item, False, False
-    args = item.get("arguments")
-    body = args if isinstance(args, str) else json.dumps(args or {}, ensure_ascii=False)
-    meter_len = len(body) + len(str(item.get("name") or ""))
-    if _should_drop(context_id, ctx, meter_len=meter_len):
-        return item, True, True
-    strategy = _strategy_for_context(context_id, ctx)
-    effective = _effective_action(context_id, ctx)
-    if (
-        ctx.phase in {"C", "D"}
-        and effective in {"COMPRESS", "GATE", "ROUTE"}
-        and strategy is not None
-        and strategy.action == "COMPRESS"
-    ):
-        compressed = _compress_body(body, context_id=context_id, strategy=strategy, ctx=ctx)
-        if isinstance(args, str):
-            return {**item, "arguments": compressed}, True, False
-        return item, False, False
+    # Function-call arguments are protocol data, not summarizable context.
+    # Rewriting them can produce invalid JSON and dropping them can orphan the
+    # matching output item.
     return item, False, False
 
 
@@ -482,23 +505,6 @@ def _mutate_reasoning_item(
     *,
     ctx: _MutationContext,
 ) -> tuple[dict[str, Any], bool, bool]:
-    rid = str(item.get("id") or "").strip()
-    context_id = ctx.payload_index.context_for_reasoning_id(rid)
-    if not context_id:
-        return item, False, False
-    encrypted = str(item.get("encrypted_content") or "")
-    if not encrypted:
-        return item, False, False
-    if _should_drop(context_id, ctx, meter_len=len(encrypted)):
-        return item, True, True
-    strategy = _strategy_for_context(context_id, ctx)
-    effective = _effective_action(context_id, ctx)
-    if (
-        ctx.phase in {"C", "D"}
-        and effective in {"COMPRESS", "GATE", "ROUTE"}
-        and strategy is not None
-        and strategy.action == "COMPRESS"
-    ):
-        compressed = _compress_body(encrypted, context_id=f"reasoning:{context_id}", strategy=strategy, ctx=ctx)
-        return {**item, "encrypted_content": compressed}, True, False
+    # encrypted_content is opaque provider state and must remain byte-for-byte
+    # stable. It may only be handled by provider-supported state management.
     return item, False, False

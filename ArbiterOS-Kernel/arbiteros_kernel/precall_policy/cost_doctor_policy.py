@@ -20,12 +20,15 @@ from arbiteros_kernel.precall_policy.cost_doctor_runtime import (
 from arbiteros_kernel.precall_policy.prompt_mutator import apply_context_actions_to_request
 
 from flow_cost_doctor.runtime.actions import decide_prompt_actions, next_llm_step_index
+from flow_cost_doctor.runtime.cache_prefix import record_request_prefix_stability
 from flow_cost_doctor.runtime.context_map import (
     build_prompt_items_from_request,
     sync_context_registry_from_instructions,
 )
 from flow_cost_doctor.runtime.hygiene import (
+    constraint_frontier_evidence_from_instructions,
     hygiene_params_from_rule_engine,
+    inject_constraint_frontier_hint_into_request,
     inject_tool_feedback_hint_into_request,
 )
 from flow_cost_doctor.runtime.payload_index import build_payload_index
@@ -74,6 +77,60 @@ class CostDoctorPreCallPolicy(PreCallPolicy):
         if hygiene_stats.get("changed"):
             any_modified = True
 
+        constraint_stats: dict[str, Any] = {
+            "enabled": bool(hygiene_params.constraint_frontier_hints),
+            "changed": False,
+        }
+        if phase != "A" and (
+            not state.constraint_frontier_emitted
+            or not state.verification_frontier_emitted
+        ):
+            constraint_goal, constraint_edit_observed = (
+                constraint_frontier_evidence_from_instructions(instructions)
+            )
+            verification_observed = False
+            if not state.verification_frontier_emitted:
+                request, constraint_stats = inject_constraint_frontier_hint_into_request(
+                    request,
+                    params=hygiene_params,
+                    goal_text=constraint_goal,
+                    saw_edit=constraint_edit_observed or None,
+                    frontier_stage="verification",
+                )
+                verification_observed = bool(
+                    constraint_stats.get("changed")
+                    or constraint_stats.get("reason") == "already_present"
+                )
+                if verification_observed:
+                    state.verification_frontier_emitted = True
+                    # If editing happened before the scheduled implementation
+                    # frontier, the verification capsule subsumes it.
+                    state.constraint_frontier_emitted = True
+                    if constraint_stats.get("changed"):
+                        any_modified = True
+
+            if (
+                not verification_observed
+                and not state.constraint_frontier_emitted
+                and state.llm_step_index
+                >= hygiene_params.constraint_frontier_after_steps
+            ):
+                request, constraint_stats = inject_constraint_frontier_hint_into_request(
+                    request,
+                    params=hygiene_params,
+                    goal_text=constraint_goal,
+                    saw_edit=False,
+                    frontier_stage="implementation",
+                )
+                if constraint_stats.get("changed"):
+                    state.constraint_frontier_emitted = True
+                    any_modified = True
+                elif constraint_stats.get("reason") == "already_present":
+                    state.constraint_frontier_emitted = True
+
+            if verification_observed:
+                state.constraint_frontier_emitted = True
+
         # Live registry is rebuilt only from the current instruction history.
         # Offline context_seeds / live_mode are intentionally not accepted
         # (would leak instance-level offline diagnostics into decisions).
@@ -119,35 +176,6 @@ class CostDoctorPreCallPolicy(PreCallPolicy):
         if step_index < len(offline_steps):
             validation_diffs = validate_offline_step(step_record, offline_steps[step_index])
 
-        append_decision_log(
-            trace_id,
-            {
-                "step_index": step_index,
-                "stage": stage,
-                "phase": phase,
-                "context_actions": step_record.get("context_actions"),
-                "cumulative_ratio_snapshot": step_record.get("cumulative_ratio_snapshot"),
-                "prompt_tokens": step_record.get("prompt_tokens"),
-                "frontier_live_count": step_record.get("frontier_live_count"),
-                "frontier_overrides": step_record.get("frontier_overrides"),
-                "scaffold": {
-                    "changed": bool(scaffold_stats.get("changed")),
-                    "saved_chars": scaffold_stats.get("saved_chars", 0),
-                    "actions": scaffold_stats.get("actions"),
-                },
-                "hygiene_hint": {
-                    "changed": bool(hygiene_stats.get("changed")),
-                    "reasons": hygiene_stats.get("reasons"),
-                },
-                "validation_diffs": validation_diffs,
-            },
-        )
-
-        if phase == "D":
-            live_doc = get_or_create_live_policy(trace_id)
-            append_session_step(live_doc, step_record)
-            persist_live_policy(trace_id, live_doc)
-
         upstream_model = str(request.get("model") or "")
         live_ids = {
             str(item)
@@ -169,6 +197,51 @@ class CostDoctorPreCallPolicy(PreCallPolicy):
             rule_engine=rule_engine,
             live_context_ids=live_ids,
         )
+        provider_request = mutated_request if modified else request
+        cache_prefix = record_request_prefix_stability(state, provider_request)
+
+        # Persist after mutation so execution-layer facts (for example actual
+        # carrier value-gate no-ops and dependency-lifetime pruning) are visible
+        # in the same step record as the decision that requested compression.
+        append_decision_log(
+            trace_id,
+            {
+                "step_index": step_index,
+                "stage": stage,
+                "phase": phase,
+                "context_actions": step_record.get("context_actions"),
+                "cumulative_ratio_snapshot": step_record.get("cumulative_ratio_snapshot"),
+                "prompt_tokens": step_record.get("prompt_tokens"),
+                "frontier_live_count": step_record.get("frontier_live_count"),
+                "frontier_overrides": step_record.get("frontier_overrides"),
+                "feature_overrides": step_record.get("feature_overrides"),
+                "working_set_overrides": step_record.get(
+                    "working_set_overrides"
+                ),
+                "cache_stability": step_record.get("cache_stability"),
+                "cache_prefix": cache_prefix,
+                "scaffold": {
+                    "changed": bool(scaffold_stats.get("changed")),
+                    "saved_chars": scaffold_stats.get("saved_chars", 0),
+                    "actions": scaffold_stats.get("actions"),
+                },
+                "hygiene_hint": {
+                    "changed": bool(hygiene_stats.get("changed")),
+                    "reasons": hygiene_stats.get("reasons"),
+                },
+                "constraint_frontier": {
+                    "changed": bool(constraint_stats.get("changed")),
+                    "reasons": constraint_stats.get("reasons"),
+                    "sections": constraint_stats.get("sections"),
+                },
+                "validation_diffs": validation_diffs,
+            },
+        )
+
+        if phase == "D":
+            live_doc = get_or_create_live_policy(trace_id)
+            append_session_step(live_doc, step_record)
+            persist_live_policy(trace_id, live_doc)
 
         if phase == "A":
             return PreCallPolicyCheckResult(modified=False, request=request)

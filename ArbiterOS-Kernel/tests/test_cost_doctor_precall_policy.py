@@ -228,6 +228,64 @@ def test_phase_c_compress_truncates_content(monkeypatch: pytest.MonkeyPatch):
     assert "FAILED" in new_content or "AssertionError" in new_content or "compacted" in new_content
 
 
+def test_feature_aware_mutation_skips_small_actual_carrier(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("ARBITEROS_COST_DOWN_COMPRESS_BACKEND", "rule")
+    context_id = "obs_small"
+    strategy = OptimizationStrategy(
+        target=StrategyTarget(target_type="context_content", target_id=context_id),
+        action="COMPRESS",
+        reason="attributed carrier meter was large",
+        estimated_token_savings=500,
+        confidence=0.7,
+        risk_level="medium",
+        rule_id="COMPRESS_MIDBAND",
+        compress_target_ratio=0.1,
+        producer_step_index=0,
+    )
+    body = "short command output " * 12
+    request = {
+        "messages": [
+            {
+                "role": "user",
+                "content": f"[ARBITEROS_REF id=inst-small kind=TOOLRESULT]\n{body}",
+            }
+        ]
+    }
+    context_actions = {
+        context_id: {
+            "effective_action": "COMPRESS",
+            "action": "compress",
+            "progress_signal": "tool_observation",
+            "source_type": "tool",
+        }
+    }
+    mutated, modified = apply_context_actions_to_request(
+        request,
+        instruction_to_context={"inst-small": context_id},
+        context_actions=context_actions,
+        strategies_by_context={context_id: strategy},
+        step_index=10,
+        stage="planning",
+        phase="D",
+        rule_engine={
+            "compress_backend": "rule",
+            "frontier_gate": {
+                "feature_aware": True,
+                "min_compress_tokens": 200,
+                "min_saved_tokens": 128,
+            },
+        },
+    )
+    assert modified is False
+    assert mutated == request
+    assert (
+        context_actions[context_id]["mutation_value_gate"]
+        == "keep_low_actual_savings"
+    )
+
+
 def test_phase_c_rule_backend_does_not_require_llm(monkeypatch: pytest.MonkeyPatch, capsys):
     from arbiteros_kernel.precall_policy.compress_executor import compress_text
 
@@ -408,6 +466,99 @@ def test_phase_d_persists_live_policy(monkeypatch: pytest.MonkeyPatch, tmp_path:
     doc = json.loads(live_policy.read_text(encoding="utf-8"))
     assert doc["session"]["source"] == "live_precall"
     assert len(doc["session"]["steps"]) == 1
+
+
+def test_constraint_frontiers_follow_implementation_then_edit(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+):
+    policy_path = tmp_path / "rule_engine.json"
+    policy_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "kind": "cost_down_rule_engine",
+                "rule_engine": {
+                    "decision_function": "decide_context_strategy_v2",
+                    "threshold_keep_ratio": 0.7,
+                    "threshold_drop_ratio": 0.25,
+                    "protection_step_count": 4,
+                    "threshold_min_token_burden": 50,
+                    "protected_context_ids": ["goal_1"],
+                    "scaffold": {"enabled": False},
+                    "cache_stability": {"enabled": False},
+                    "hygiene": {
+                        "enabled": True,
+                        "tool_feedback_hints": False,
+                        "constraint_frontier_hints": True,
+                        "constraint_frontier_after_steps": 6,
+                    },
+                },
+                "metadata": {"runtime_consumer": "arbiteros_precall"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ARBITEROS_COST_DOWN_RULE_ENGINE", str(policy_path))
+    monkeypatch.setenv("ARBITEROS_COST_DOWN_PHASE", "C")
+    monkeypatch.setenv("ARBITEROS_COST_DOWN_LIVE_POLICY_DIR", str(tmp_path / "live"))
+
+    trace_id = "trace-two-constraint-frontiers"
+    state = get_or_create_state(trace_id)
+    state.llm_step_index = 6
+    goal = (
+        "### Configuration\nignore-paths = ^src/gen/.*$\n"
+        "### Command used\npylint --recursive=y src/\n"
+        "### Expected behavior\nGenerated paths are ignored.\n"
+        "### OS / Environment\nWindows 10\n"
+    )
+    instructions = [
+        {
+            "id": "goal",
+            "runtime_step": 1,
+            "arbiteros_ref_kind": "USERINPUT",
+            "content": goal,
+        }
+    ]
+    request = {"model": "gpt-5.5", "messages": [{"role": "user", "content": goal}]}
+
+    implementation = check_precall_policy(
+        trace_id=trace_id,
+        current_request=request,
+        instructions=instructions,
+        policy_classes=[CostDoctorPreCallPolicy],
+    )
+    assert "[arbiteros_constraint_frontier]" in json.dumps(implementation.request)
+    assert state.constraint_frontier_emitted is True
+    assert state.verification_frontier_emitted is False
+
+    edited_instructions = [
+        *instructions,
+        {
+            "id": "edit-call",
+            "runtime_step": 2,
+            "arbiteros_ref_kind": "TOOLCALL",
+            "content": {
+                "tool_name": "file_editor",
+                "arguments": {"command": "str_replace", "path": "src/parser.py"},
+            },
+        },
+        {
+            "id": "edit-result",
+            "runtime_step": 3,
+            "arbiteros_ref_kind": "TOOLRESULT",
+            "depends_on": [{"instruction_id": "edit-call"}],
+            "content": {"result": {"new_content": "return normalized"}},
+        },
+    ]
+    verification = check_precall_policy(
+        trace_id=trace_id,
+        current_request=request,
+        instructions=edited_instructions,
+        policy_classes=[CostDoctorPreCallPolicy],
+    )
+    assert "[arbiteros_verification_frontier]" in json.dumps(verification.request)
+    assert state.verification_frontier_emitted is True
 
 
 def test_post_call_attribution_updates_cumulative_state():
@@ -622,7 +773,9 @@ def test_record_step_attribution_direct():
     assert state.cum_tokens["goal_1"] == 25.0
 
 
-def test_phase_b_drop_function_call_output(monkeypatch: pytest.MonkeyPatch):
+def test_phase_b_redacts_function_call_output_without_orphaning_pair(
+    monkeypatch: pytest.MonkeyPatch,
+):
     monkeypatch.setenv("ARBITEROS_COST_DOWN_PHASE", "B")
     call_id = "call_drop_me"
     instruction_to_context = {"inst-tr": "obs_0009_big"}
@@ -660,7 +813,93 @@ def test_phase_b_drop_function_call_output(monkeypatch: pytest.MonkeyPatch):
         payload_index=index,
     )
     assert modified is True
-    assert mutated["input"] == []
+    assert len(mutated["input"]) == 1
+    assert mutated["input"][0]["type"] == "function_call_output"
+    assert mutated["input"][0]["call_id"] == call_id
+    assert mutated["input"][0]["output"] == "[Cost Doctor omitted obsolete tool output]"
+
+
+def test_phase_d_preserves_function_call_arguments_and_encrypted_reasoning(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("ARBITEROS_COST_DOWN_PHASE", "D")
+    call_id = "call_protocol_safe"
+    context_id = "obs_0009_big"
+    arguments = json.dumps({"command": "python -c \"" + ("x" * 1200) + "\""})
+    encrypted = "ENC:" + ("A" * 1400)
+    index = PayloadIndex(call_id_to_context_ids={call_id: [context_id]})
+    index.reasoning_id_to_context_id["rs_safe"] = context_id
+    strategy = OptimizationStrategy(
+        target=StrategyTarget(target_type="context_content", target_id=context_id),
+        action="COMPRESS",
+        reason="test",
+        estimated_token_savings=100,
+        confidence=0.7,
+        risk_level="medium",
+        rule_id="COMPRESS_MIDBAND",
+        compress_target_ratio=0.1,
+        producer_step_index=0,
+    )
+    request = {
+        "input": [
+            {
+                "type": "reasoning",
+                "id": "rs_safe",
+                "encrypted_content": encrypted,
+            },
+            {
+                "type": "function_call",
+                "call_id": call_id,
+                "name": "terminal",
+                "arguments": arguments,
+            },
+        ]
+    }
+    mutated, modified = apply_context_actions_to_request(
+        request,
+        instruction_to_context={},
+        context_actions={
+            context_id: {
+                "effective_action": "COMPRESS",
+                "action": "compress",
+                "progress_signal": "error_signal",
+                "source_type": "tool",
+            }
+        },
+        strategies_by_context={context_id: strategy},
+        step_index=10,
+        stage="repair",
+        phase="D",
+        payload_index=index,
+        compress_cache={},
+        rule_engine={"compress_backend": "rule"},
+    )
+    assert modified is False
+    assert mutated["input"][0]["encrypted_content"] == encrypted
+    assert mutated["input"][1]["arguments"] == arguments
+    assert json.loads(mutated["input"][1]["arguments"])["command"].startswith("python")
+
+
+def test_rule_compress_cache_key_includes_content():
+    from arbiteros_kernel.precall_policy.compress_executor import compress_text
+
+    cache: dict[str, str] = {}
+    first = compress_text(
+        "alpha " * 500,
+        target_ratio=0.1,
+        context_id="obs_same",
+        backend="rule",
+        cache=cache,
+    )
+    second = compress_text(
+        "beta " * 500,
+        target_ratio=0.1,
+        context_id="obs_same",
+        backend="rule",
+        cache=cache,
+    )
+    assert first != second
+    assert len(cache) == 2
 
 
 def test_compress_executor_ratio_fallback_without_llm():

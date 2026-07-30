@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 from typing import Any, Callable
 
 from flow_cost_doctor.openhands_adapter import _count_tokens
+from flow_cost_doctor.runtime.frontier import (
+    frontier_gate_params_from_rule_engine,
+)
 from flow_cost_doctor.runtime.rule_compress import (
     RuleCompressParams,
     compress_backend_from_rule_engine,
@@ -60,11 +64,44 @@ def _token_ratio(original: str, compressed: str) -> float:
     return comp_t / orig_t
 
 
+def compression_has_material_value(
+    text: str,
+    *,
+    target_ratio: float,
+    rule_engine: dict[str, Any] | None,
+) -> bool:
+    """Use actual carrier content, not an attributed prompt-item meter."""
+    params = frontier_gate_params_from_rule_engine(rule_engine)
+    if not params.feature_aware or not params.actual_value_gate:
+        return True
+    tokens = max(1, _count_tokens(text))
+    saved_tokens = max(0, int(round(tokens * (1.0 - float(target_ratio)))))
+    return (
+        tokens >= params.min_compress_tokens
+        and saved_tokens >= params.min_saved_tokens
+    )
+
+
 def _truncate_to_ratio(text: str, target_ratio: float) -> str:
     if target_ratio >= 1.0:
         return text
     target_len = max(1, int(len(text) * target_ratio))
     return text[:target_len]
+
+
+def _cache_key(
+    backend: str,
+    context_id: str,
+    target_ratio: float,
+    text: str,
+    *,
+    focus_terms: set[str] | None = None,
+) -> str:
+    focus = "\x1f".join(sorted(focus_terms or ()))
+    digest = hashlib.sha256(
+        f"{focus}\x1e{text}".encode("utf-8")
+    ).hexdigest()[:16]
+    return f"{backend}:{context_id}:{target_ratio:.4f}:{digest}"
 
 
 def _extract_completion_text(response: Any) -> str:
@@ -100,7 +137,7 @@ def compress_text_with_llm(
     if target_ratio >= 1.0:
         return text
 
-    cache_key = f"llm:{context_id}:{target_ratio:.4f}"
+    cache_key = _cache_key("llm", context_id, target_ratio, text)
     if cache is not None and cache_key in cache:
         return cache[cache_key]
 
@@ -213,6 +250,7 @@ def compress_text(
     rule_params: RuleCompressParams | None = None,
     progress_signal: str | None = None,
     source_type: str | None = None,
+    focus_terms: set[str] | None = None,
     model: str | None = None,
     max_iterations: int | None = None,
     completion_fn: CompletionFn | None = None,
@@ -226,9 +264,21 @@ def compress_text(
         return text
     if target_ratio >= 1.0:
         return text
+    if not compression_has_material_value(
+        text,
+        target_ratio=float(target_ratio),
+        rule_engine=rule_engine,
+    ):
+        return text
 
     resolved_backend = (backend or resolve_compress_backend(rule_engine)).strip().lower()
-    cache_key = f"{resolved_backend}:{context_id}:{float(target_ratio):.4f}"
+    cache_key = _cache_key(
+        resolved_backend,
+        context_id,
+        float(target_ratio),
+        text,
+        focus_terms=focus_terms,
+    )
     if cache is not None and cache_key in cache:
         return cache[cache_key]
 
@@ -251,14 +301,26 @@ def compress_text(
             target_ratio=target_ratio,
             progress_signal=progress_signal,
             source_type=source_type,
+            focus_terms=focus_terms,
             params=params,
             reason=f"midband_ratio_compress:{context_id}",
         )
         compressed = result.text
         fallback_truncate = False
-        # Guarantee approximate target if rules could not shrink enough.
-        if len(text) > 0 and len(compressed) > int(len(text) * target_ratio * 1.15):
-            compressed = _truncate_to_ratio(compressed, target_ratio)
+        semantic_unit_capsule = "semantic_unit_capsule" in result.actions
+        # Guarantee the approximate target when generic rules could not shrink
+        # enough.  A semantic-unit capsule is already bounded by the rule
+        # backend and must not be sliced through a function/test block here.
+        if (
+            not semantic_unit_capsule
+            and len(text) > 0
+            and len(compressed) > int(len(text) * target_ratio * 1.15)
+        ):
+            target_chars = max(
+                params.min_target_chars,
+                int(len(text) * float(target_ratio)),
+            )
+            compressed = compressed[:target_chars]
             fallback_truncate = True
         tokens_before = max(1, _count_tokens(text))
         tokens_after = max(1, _count_tokens(compressed))
