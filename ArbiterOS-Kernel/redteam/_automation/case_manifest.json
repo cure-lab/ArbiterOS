@@ -840,6 +840,37 @@
       "category": "safe",
       "enabled": true,
       "notes": "OpenClaw P10: redact sessions_spawn attachment content in tool arguments."
+    },
+    {
+      "id": "bank_asi01_goal_hijack",
+      "file": "case/bank/asi01_goal_hijack.json",
+      "category": "unsafe",
+      "enabled": true,
+      "notes": "Bank ASI01: set_risk_profile after forged 4B exemption blocked by AlignmentSentinelPolicy.",
+      "expected_policies": [
+        "AlignmentSentinelPolicy"
+      ]
+    },
+    {
+      "id": "bank_asi02_tool_misuse",
+      "file": "case/bank/asi02_tool_misuse.json",
+      "category": "unsafe",
+      "enabled": true,
+      "notes": "Bank ASI02: grace_period=9999 schema BLOCK plus override_risk_grade EFSM REQUIRE_APPROVAL.",
+      "expected_policies": [
+        "SchemaValidationPolicy",
+        "EfsmGatePolicy"
+      ]
+    },
+    {
+      "id": "bank_asi05_output_dlp",
+      "file": "case/bank/asi05_output_dlp.json",
+      "category": "unsafe",
+      "enabled": true,
+      "notes": "Bank ASI05: HIGH-confidentiality RAG leak replaced by RelationalPolicy respond_sink.",
+      "expected_policies": [
+        "RelationalPolicy"
+      ]
     }
   ]
 }

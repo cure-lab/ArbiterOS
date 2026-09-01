@@ -629,6 +629,12 @@ def _get_relational_policy_cfg() -> Dict[str, Any]:
     return nested if isinstance(nested, dict) else {}
 
 
+def _should_check_tool_calls() -> bool:
+    """Bank-style overlays can keep RESPOND DLP while skipping file-write flow checks."""
+    cfg = _get_relational_policy_cfg()
+    return bool(cfg.get("check_tool_calls", True))
+
+
 def _resolve_rule_file_path(path: str) -> str:
     p = os.path.expandvars(os.path.expanduser(path))
     if os.path.isabs(p):
@@ -1109,6 +1115,8 @@ class RelationalPolicy(Policy):
         # -------------------------------------------------------------------
         # Tool-call flow checks
         # -------------------------------------------------------------------
+        if not _should_check_tool_calls():
+            tool_calls = []
         for tc in tool_calls:
             tool_name, tool_call_id, raw_args, was_json_str = RUNTIME.parse_tool_call(tc)
             args_dict = raw_args if isinstance(raw_args, dict) else {}
@@ -1397,6 +1405,17 @@ class RelationalPolicy(Policy):
                 )
 
             # Treat direct response as UNKNOWN-trust human-visible sink.
+            # Inherit HIGH confidentiality only from a prior RETRIEVE (RAG leak),
+            # not from ordinary HIGH READ tools such as get_loan_detail.
+            prior_itype = _safe_upper(rel_ctx.get("source_instruction_type"))
+            if prior_itype == "RETRIEVE":
+                source_conf = _level_max(
+                    source_conf,
+                    rel_ctx.get("source_confidentiality"),
+                )
+                prior_trust = rel_ctx.get("source_trustworthiness")
+                if prior_trust:
+                    source_trust = _safe_level(prior_trust)
             actual = "UNKNOWN"
             required = _soft_source_conf(source_conf)
 

@@ -2,7 +2,10 @@
 # litellm_config.yaml is gitignored — never commit real credentials.
 #
 # Client model field format: route_model;agent_name;role
-# Per-agent kernel settings: agents/*.yaml
+#   - route_model must match model_name below
+#   - agent_name: openclaw | nanobot | hermes | codex | claude_code | bank
+#   - role is optional (policy role)
+# Per-agent kernel settings live in agents/*.yaml
 
 model_list:
   - model_name: gpt-5.5
@@ -96,6 +99,8 @@ said_done_hook_enabled: false
 # new dialog's first user message with a unique marker like [kitchen-fix] so unrelated
 # chats do not collide. Matching still uses full user-text prefix equality.
 # Env override: ARBITEROS_HISTORY_PREFIX_TRACE_FALLBACK=0|1
+# Bank demo does not rely on this: each stub process sends a unique
+# user / arbiteros_device_key (bank:<run-id>).
 history_prefix_trace_fallback_enabled: false
 
 litellm_settings:

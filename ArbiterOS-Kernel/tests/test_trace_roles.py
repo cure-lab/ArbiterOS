@@ -137,6 +137,7 @@ def test_trace_role_os_lock_and_init_refresh(tmp_path: Path, monkeypatch: pytest
 
 def test_is_registered_role() -> None:
     assert is_registered_role("semantic_protected")
+    assert is_registered_role("bank_demo")
     assert not is_registered_role(DEFAULT_ROLE_NAME)
     assert not is_registered_role(None)
     assert not is_registered_role("missing")

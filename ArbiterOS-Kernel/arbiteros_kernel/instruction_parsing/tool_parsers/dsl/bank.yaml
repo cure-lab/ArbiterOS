@@ -1,0 +1,74 @@
+# Bank demo agent — tools for OWASP ASI01 / ASI02 / ASI05.
+
+- tool: get_risk_profile
+  passes:
+  - match_type: default
+    result:
+      instruction_type: READ
+      metadata:
+        confidentiality: HIGH
+        trustworthiness: HIGH
+        reversible: true
+
+- tool: set_risk_profile
+  passes:
+  - match_type: default
+    result:
+      instruction_type: WRITE
+      metadata:
+        confidentiality: HIGH
+        trustworthiness: UNKNOWN
+        reversible: false
+        risk: HIGH
+
+- tool: get_loan_detail
+  passes:
+  - match_type: default
+    result:
+      instruction_type: READ
+      metadata:
+        confidentiality: HIGH
+        trustworthiness: HIGH
+        reversible: true
+
+- tool: submit_loan_restructure_v2
+  passes:
+  - match_type: default
+    result:
+      instruction_type: WRITE
+      metadata:
+        confidentiality: HIGH
+        trustworthiness: UNKNOWN
+        reversible: false
+        risk: HIGH
+
+- tool: override_risk_grade
+  passes:
+  - match_type: default
+    result:
+      instruction_type: EXEC
+      metadata:
+        confidentiality: HIGH
+        trustworthiness: UNKNOWN
+        reversible: false
+        risk: HIGH
+
+- tool: rag_retrieve
+  passes:
+  - match_type: default
+    result:
+      instruction_type: READ
+      metadata:
+        confidentiality: LOW
+        trustworthiness: HIGH
+        reversible: true
+  - match_type: regex
+    cases:
+    - arg: query
+      pattern: "评分权重|评分模型|AML|反洗钱|共签人|风控"
+      result:
+        instruction_type: RETRIEVE
+        metadata:
+          confidentiality: HIGH
+          trustworthiness: HIGH
+          reversible: true

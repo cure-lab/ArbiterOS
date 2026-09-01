@@ -3218,6 +3218,59 @@ def _parse_device_key(device_key: str) -> tuple[str, str]:
     return channel, user_id
 
 
+def _collect_bank_session_hint_candidates(incoming: dict) -> list[str]:
+    """Client-supplied per-run ids for the bank agent, strongest first.
+
+    Prefer ``user`` and ``requester_metadata`` because LiteLLM later overwrites
+    ``metadata.arbiteros_device_key`` with the resolved ``channel:user_id``.
+    """
+    candidates: list[str] = []
+    seen: set[str] = set()
+
+    def _push(raw: Any) -> None:
+        if not isinstance(raw, str):
+            return
+        token = raw.strip()
+        if not token or token in seen:
+            return
+        seen.add(token)
+        candidates.append(token)
+
+    _push(incoming.get("user"))
+    metadata = incoming.get("metadata")
+    if isinstance(metadata, dict):
+        requester = metadata.get("requester_metadata")
+        if isinstance(requester, dict):
+            _push(requester.get("arbiteros_device_key"))
+        _push(metadata.get("arbiteros_device_key"))
+    return candidates
+
+
+def _extract_bank_session_identity(incoming: dict) -> Optional[tuple[str, str]]:
+    """Return ``(channel, session_id)`` for a bank-agent request.
+
+    Each ``uv run python redteam/bank/bank_stub.py`` process sends a unique
+    ``user`` / ``arbiteros_device_key`` (``bank:<run-id>``). That id is an
+    explicit session so history-prefix fallback cannot glue two demo runs.
+    """
+    for raw in _collect_bank_session_hint_candidates(incoming):
+        token = _normalize_device_fragment(raw)
+        if not token:
+            continue
+        channel, user_id = _parse_device_key(token)
+        if user_id != "unknown-user":
+            # Skip keys already rewritten onto a history-fallback identity.
+            if user_id.startswith("histfb-"):
+                continue
+            if channel in {"unknown-channel", user_id}:
+                channel = "bank"
+            return channel, user_id
+        if token.startswith("histfb-"):
+            continue
+        return "bank", token
+    return None
+
+
 def _get_latest_user_id_for_channel(channel: str) -> Optional[str]:
     if not channel or channel == "unknown-channel":
         return None
@@ -3395,6 +3448,7 @@ def _build_device_context(incoming: dict) -> _DeviceContext:
     claude_code_session_id = (
         _extract_claude_code_session_id(incoming) if is_claude_code_agent else None
     )
+    bank_session_bound = False
 
     latest_user_text = _extract_latest_message_text(messages, role="user")
     if not latest_user_text and _is_responses_api_request(incoming):
@@ -3451,6 +3505,12 @@ def _build_device_context(incoming: dict) -> _DeviceContext:
         has_explicit_user_id = True
         if channel == "unknown-channel":
             channel = "claude_code"
+    elif (tool_agent or "").strip().lower() == "bank":
+        bank_identity = _extract_bank_session_identity(incoming)
+        if bank_identity is not None:
+            channel, raw_user_id = bank_identity
+            has_explicit_user_id = True
+            bank_session_bound = True
     elif is_chat_gateway_tool_agent(tool_agent):
         if channel == "unknown-channel":
             runtime_channel = extract_runtime_channel_from_messages(messages)
@@ -3474,11 +3534,14 @@ def _build_device_context(incoming: dict) -> _DeviceContext:
     )
 
     trace_binding: Optional[str] = None
+    if bank_session_bound:
+        trace_binding = "bank_device_key"
     # Last-resort history prefix match before weak channel-reuse / system-hash anonymous.
     # Only when explicitly enabled; Codex / Claude Code / OpenClaw (etc.) strong identity
     # paths above still win whenever present.
     if (
-        _history_prefix_trace_fallback_enabled()
+        trace_binding is None
+        and _history_prefix_trace_fallback_enabled()
         and not has_explicit_user_id
         and raw_user_id == "unknown-user"
         and not reset_requested

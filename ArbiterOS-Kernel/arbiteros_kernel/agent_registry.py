@@ -18,7 +18,7 @@ from arbiteros_kernel.policy_check import split_model_agent_role
 logger = logging.getLogger(__name__)
 
 VALID_AGENT_NAMES = frozenset(
-    {"openclaw", "nanobot", "hermes", "codex", "claude_code"}
+    {"openclaw", "nanobot", "hermes", "codex", "claude_code", "bank"}
 )
 _DEFAULT_AGENT_NAME = "openclaw"
 

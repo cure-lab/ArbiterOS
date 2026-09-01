@@ -6,7 +6,13 @@
   },
 
   "alignment_sentinel": {
-    "postexec_enabled": false
+    "postexec_enabled": false,
+    "deterministic_block_markers": [
+      "忽略标准流程",
+      "紧急避险条款",
+      "豁免 R5",
+      "4B条款"
+    ]
   },
 
   "alignment_sentinel_trigger": {
@@ -164,7 +170,7 @@
   },
 
   "rate_limit": {
-    "max_consecutive_same_tool": 20,
+    "max_consecutive_same_tool": 3,
     "window_seconds": 10,
     "max_calls_per_window": 30
   },
@@ -201,14 +207,25 @@
         "command": { "type": "string" },
         "pty": { "type": "boolean" }
       }
+    },
+    "submit_loan_restructure_v2": {
+      "type": "object",
+      "required": ["loan_id", "grace_period"],
+      "properties": {
+        "loan_id": { "type": "string" },
+        "tenor": { "type": "integer" },
+        "grace_period": { "type": "integer", "minimum": 0, "maximum": 30 }
+      }
     }
   },
 
   "taint": {
-    "enabled": false,
+    "enabled": true,
 
     "taint_policy": {
-      "input_tools": ["read", "web_fetch", "web_search", "session_status", "sessions_list", "sessions_history", "memory_search", "memory_get", "agents_list", "image"],
+      "treat_respond_as_sink": true,
+      "instruction_sinks": ["RESPOND"],
+      "input_tools": ["read", "web_fetch", "web_search", "session_status", "sessions_list", "sessions_history", "memory_search", "memory_get", "agents_list", "image", "rag_retrieve"],
       "output_tools": ["edit", "write", "exec", "message", "sessions_send", "sessions_spawn", "tts", "gateway"],
       "tools_by_action": {
         "browser": {
@@ -236,7 +253,8 @@
   },
   "relational_policy": {
     "user_rules_enabled": false,
-    "user_rule_file": "arbiteros_kernel/policy/user_relational_flow_rules.json"
+    "user_rule_file": "arbiteros_kernel/policy/user_relational_flow_rules.json",
+    "check_tool_calls": false
   },
   "exec_composite_policy": {
   "enabled": false,
@@ -250,7 +268,7 @@
   },
   "resource_guard": {
     "max_total_tokens": 12000000,
-    "max_trace_seconds": 6000,
+    "max_trace_seconds": 6,
     "max_instruction_bytes": 1200000
   },
   "nanobot_policy": {
@@ -270,13 +288,22 @@
     ]
   },
   
+  "tool_to_instruction_type": {
+    "get_risk_profile": "READ",
+    "set_risk_profile": "WRITE",
+    "get_loan_detail": "READ",
+    "submit_loan_restructure_v2": "WRITE",
+    "override_risk_grade": "EXEC",
+    "rag_retrieve": "READ"
+  },
+
   "efsm": {
-  "enabled": false,
+  "enabled": true,
   "initial": "IDLE",
   "plan_ttl_seconds": 600,
   "transitions": [
     {
-      "id": "idle_read_to_after_read",
+      "id": "idle_read_allow",
       "from": "IDLE",
       "event": "READ",
       "to": "AFTER_READ",
@@ -292,35 +319,35 @@
       "priority": 95
     },
     {
-      "id": "after_read_write_block",
+      "id": "after_read_write_allow",
       "from": "AFTER_READ",
       "event": "WRITE",
-      "to": "IDLE",
-      "effect": "BLOCK",
+      "to": "AFTER_READ",
+      "effect": "ALLOW",
       "priority": 90
     },
     {
-      "id": "after_read_exec_clear",
-      "from": "AFTER_READ",
-      "event": "EXEC",
+      "id": "idle_write_allow",
+      "from": "IDLE",
+      "event": "WRITE",
       "to": "IDLE",
       "effect": "ALLOW",
       "priority": 80
     },
     {
-      "id": "idle_write_ok",
-      "from": "IDLE",
-      "event": "WRITE",
-      "to": "IDLE",
-      "effect": "ALLOW",
+      "id": "after_read_exec_need_approval",
+      "from": "AFTER_READ",
+      "event": "EXEC",
+      "to": "WAIT_APPROVAL",
+      "effect": "REQUIRE_APPROVAL",
       "priority": 70
     },
     {
-      "id": "idle_exec_ok",
+      "id": "idle_exec_need_approval",
       "from": "IDLE",
       "event": "EXEC",
-      "to": "IDLE",
-      "effect": "ALLOW",
+      "to": "WAIT_APPROVAL",
+      "effect": "REQUIRE_APPROVAL",
       "priority": 60
     }
   ]

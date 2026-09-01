@@ -607,10 +607,23 @@ def extract_all_user_messages_from_request(request_data: Any) -> list[str]:
         return []
 
     try:
-        from arbiteros_kernel.instruction_depends_on import is_kernel_control_plane_text
+        from arbiteros_kernel.instruction_depends_on import (
+            is_kernel_control_plane_text,
+            strip_arbiteros_ref_markers,
+        )
     except Exception:  # pragma: no cover
         def is_kernel_control_plane_text(text: Any) -> bool:  # type: ignore
             return False
+
+        def strip_arbiteros_ref_markers(text: str) -> str:  # type: ignore
+            return text
+
+    def _policy_user_text(raw: Any) -> str:
+        text = extract_text_from_message_content(raw).strip()
+        text = strip_arbiteros_ref_markers(text).strip()
+        if text and not is_kernel_control_plane_text(text):
+            return text
+        return ""
 
     out: list[str] = []
     messages = request_data.get("messages")
@@ -620,31 +633,31 @@ def extract_all_user_messages_from_request(request_data: Any) -> list[str]:
                 continue
             if msg.get("role") != "user":
                 continue
-            text = extract_text_from_message_content(msg.get("content")).strip()
-            if text and not is_kernel_control_plane_text(text):
+            text = _policy_user_text(msg.get("content"))
+            if text:
                 out.append(text)
         return out
 
     if is_responses_api_request(request_data):
         input_payload = request_data.get("input")
         if isinstance(input_payload, str):
-            text = input_payload.strip()
-            if text and not is_kernel_control_plane_text(text):
+            text = _policy_user_text(input_payload)
+            if text:
                 out.append(text)
             return out
         if isinstance(input_payload, dict):
             role = input_payload.get("role")
             if isinstance(role, str) and role != "user":
                 return out
-            text = extract_text_from_message_content(input_payload.get("content")).strip()
-            if text and not is_kernel_control_plane_text(text):
+            text = _policy_user_text(input_payload.get("content"))
+            if text:
                 out.append(text)
             return out
         if isinstance(input_payload, list):
             for item in input_payload:
                 if isinstance(item, str):
-                    text = item.strip()
-                    if text and not is_kernel_control_plane_text(text):
+                    text = _policy_user_text(item)
+                    if text:
                         out.append(text)
                     continue
                 if not isinstance(item, dict):
@@ -652,8 +665,8 @@ def extract_all_user_messages_from_request(request_data: Any) -> list[str]:
                 role = item.get("role")
                 if isinstance(role, str) and role != "user":
                     continue
-                text = extract_text_from_message_content(item.get("content")).strip()
-                if text and not is_kernel_control_plane_text(text):
+                text = _policy_user_text(item.get("content"))
+                if text:
                     out.append(text)
     return out
 

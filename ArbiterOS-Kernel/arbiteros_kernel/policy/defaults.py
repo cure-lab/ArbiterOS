@@ -20,6 +20,7 @@ from .unary_gate_policy import UnaryGatePolicy
 from .relational_policy import RelationalPolicy
 from .openclaw_policy import OpenClawPolicy
 from .nanobot_policy import NanobotPolicy
+from .schema_policy import SchemaValidationPolicy
 from .alignment_sentinel_policy import AlignmentSentinelPolicy
 from .resource_guard_policy import ResourceGuardPolicy
 if TYPE_CHECKING:
@@ -48,6 +49,7 @@ POLICY_CLASS_MAP: dict[str, type["Policy"]] = {
     "AllowDenyPolicy": AllowDenyPolicy,
     "EfsmGatePolicy": EfsmGatePolicy,
     "TaintPolicy": TaintPolicy,
+    "SchemaValidationPolicy": SchemaValidationPolicy,
     "RateLimitPolicy": RateLimitPolicy,
     "OutputBudgetPolicy": OutputBudgetPolicy,
     "SecurityLabelPolicy": SecurityLabelPolicy,

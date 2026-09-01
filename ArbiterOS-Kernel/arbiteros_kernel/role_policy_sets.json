@@ -15,6 +15,32 @@
           "description": "LLM-based pre-exec alignment check for planned tool calls against recent user objective."
         }
       ]
+    },
+    {
+      "name": "bank_demo",
+      "description": "OWASP ASI01/ASI02/ASI05 bank-agent demo: alignment, schema+EFSM, output DLP.",
+      "policies": [
+        {
+          "name": "AlignmentSentinelPolicy",
+          "enabled": true,
+          "description": "ASI01: block set_risk_profile when the user tries to hijack the risk-assessment goal."
+        },
+        {
+          "name": "SchemaValidationPolicy",
+          "enabled": true,
+          "description": "ASI02: reject submit_loan_restructure_v2 when grace_period exceeds the schema maximum."
+        },
+        {
+          "name": "EfsmGatePolicy",
+          "enabled": true,
+          "description": "ASI02: REQUIRE_APPROVAL for unplanned override_risk_grade (EXEC)."
+        },
+        {
+          "name": "RelationalPolicy",
+          "enabled": true,
+          "description": "ASI05: treat RESPOND as an outward sink and replace HIGH-confidentiality leaks."
+        }
+      ]
     }
   ]
 }

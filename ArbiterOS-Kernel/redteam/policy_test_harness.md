@@ -35,6 +35,8 @@ uv run python -m arbiteros_kernel.policy_test_harness redteam/<spec.json>
 
 instruction 不在 JSON 里手写，全部由 harness 从消息解析得到。
 
+Optional root fields for agent demos: ``agent`` (parser set, e.g. ``bank``) and ``role`` (named policy overlay, e.g. ``bank_demo``).
+
 ---
 
 ## 2. `prior` 里每一步：`kind: "assistant"` 与 `kind: "tool"`

@@ -11,10 +11,12 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from arbiteros_kernel.agent_registry import get_request_agent, set_request_agent
 from arbiteros_kernel.instruction_parsing.builder import InstructionBuilder
 from arbiteros_kernel.litellm_callback import (
     _extract_tool_call_details_from_response,
@@ -23,7 +25,14 @@ from arbiteros_kernel.litellm_callback import (
     _instruction_builders_lock,
     _response_transform_content_only,
 )
-from arbiteros_kernel.policy_check import PolicyCheckResult, check_response_policy
+from arbiteros_kernel import policy_check as policy_check_mod
+from arbiteros_kernel.policy_check import (
+    PolicyCheckResult,
+    check_response_policy,
+    resolve_role_policy_entries,
+)
+from arbiteros_kernel.policy_runtime import policy_runtime_override
+from arbiteros_kernel.role_policy_cfg_loader import load_role_policy_config
 from arbiteros_kernel.user_approval import apply_user_approval_preprocessing
 
 
@@ -385,6 +394,22 @@ class PolicyReplayOutcome:
     current_response_for_policy: Dict[str, Any]
 
 
+def _spec_agent_name(spec: Dict[str, Any]) -> Optional[str]:
+    raw = spec.get("agent")
+    if not isinstance(raw, str):
+        return None
+    normalized = raw.strip().lower()
+    return normalized or None
+
+
+def _spec_role_name(spec: Dict[str, Any]) -> Optional[str]:
+    raw = spec.get("role")
+    if not isinstance(raw, str):
+        return None
+    normalized = raw.strip()
+    return normalized or None
+
+
 def run_policy_replay_from_spec(spec: Dict[str, Any]) -> PolicyReplayOutcome:
     trace_id = (spec.get("trace_id") or "policy-test-trace").strip()
     prior = spec.get("prior") or []
@@ -392,14 +417,58 @@ def run_policy_replay_from_spec(spec: Dict[str, Any]) -> PolicyReplayOutcome:
         raise ValueError('"prior" 必须是数组')
     current_msg, current_tag = _parse_current(spec)
 
+    agent_name = _spec_agent_name(spec)
+    role_name = _spec_role_name(spec)
+    previous_agent = get_request_agent()
+    if agent_name:
+        set_request_agent(agent_name)
+
+    role_entries = None
+    role_override = None
+    role_cfg = None
+    user_messages: Optional[List[str]] = None
+    raw_user_messages = spec.get("user_messages")
+    if isinstance(raw_user_messages, list):
+        user_messages = [str(x) for x in raw_user_messages if str(x).strip()]
+    if role_name:
+        role_entries, role_override, role_reason = resolve_role_policy_entries(role_name)
+        if role_reason:
+            raise ValueError(f'spec "role" {role_name!r} cannot be applied: {role_reason}')
+        role_cfg, _source, _cfg_reason = load_role_policy_config(role_name)
+        if not isinstance(role_cfg, dict):
+            role_file = (
+                Path(__file__).resolve().parent
+                / "role_policy_cfg"
+                / f"{role_name}_policy.json"
+            )
+            if role_file.is_file():
+                parsed = json.loads(role_file.read_text(encoding="utf-8"))
+                if isinstance(parsed, dict):
+                    role_cfg = parsed
+
     builder = InstructionBuilder(trace_id=trace_id)
     _bind_builder_to_trace(trace_id, builder)
+    runtime_ctx = (
+        policy_runtime_override(role_cfg) if isinstance(role_cfg, dict) else nullcontext()
+    )
+    original_confirm = policy_check_mod._is_local_policy_confirm_enabled
+    policy_check_mod._is_local_policy_confirm_enabled = lambda: False
     try:
-        outcome = _run_policy_replay_inner(
-            trace_id, prior, current_msg, current_tag, builder
-        )
+        with runtime_ctx:
+            outcome = _run_policy_replay_inner(
+                trace_id,
+                prior,
+                current_msg,
+                current_tag,
+                builder,
+                policy_entries=role_entries,
+                policy_enabled_override=role_override,
+                user_messages=user_messages,
+            )
     finally:
+        policy_check_mod._is_local_policy_confirm_enabled = original_confirm
         _unbind_builder(trace_id)
+        set_request_agent(previous_agent)
     return outcome
 
 
@@ -409,6 +478,10 @@ def _run_policy_replay_inner(
     current: Dict[str, Any],
     current_tag: Dict[str, Any],
     builder: InstructionBuilder,
+    *,
+    policy_entries: Optional[List[Any]] = None,
+    policy_enabled_override: Optional[Dict[str, bool]] = None,
+    user_messages: Optional[List[str]] = None,
 ) -> PolicyReplayOutcome:
     for step in prior:
         normalized = _parse_prior_step(step)
@@ -447,6 +520,9 @@ def _run_policy_replay_inner(
         instructions=instructions_for_policy,
         current_response=final_current,
         latest_instructions=latest_for_policy,
+        policy_entries=policy_entries,
+        policy_enabled_override=policy_enabled_override,
+        user_messages=user_messages or [],
     )
 
     return PolicyReplayOutcome(

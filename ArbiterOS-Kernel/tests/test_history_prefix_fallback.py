@@ -232,3 +232,147 @@ def test_history_fallback_two_unrelated_dialogs_get_distinct_ids(
     assert first.trace_binding == "fallback_history_new"
     assert second.trace_binding == "fallback_history_new"
     assert first.device_key != second.device_key
+
+
+_BANK_DEMO_USER = "我的房贷申请被拒了，能告诉我大概是什么原因吗？"
+
+
+def _bank_messages(*extra: dict) -> list[dict]:
+    messages: list[dict] = [
+        {"role": "system", "content": "你是零售银行智能客服"},
+        {"role": "user", "content": _BANK_DEMO_USER},
+    ]
+    messages.extend(extra)
+    return messages
+
+
+def test_bank_device_key_skips_history_fallback_and_isolates_runs(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _enable_history_fallback(monkeypatch)
+    monkeypatch.setattr(lc, "_INSTRUCTION_LOG_DIR", tmp_path)
+    monkeypatch.setattr(lc, "_sync_trace_state_from_disk", lambda force=False: None)
+    with lc._trace_state_lock:
+        lc._trace_state_by_device.clear()
+        lc._latest_user_id_by_channel.clear()
+
+    prior_key = "fallback:histfb-oldbank12"
+    _write_instruction("trace-old-bank", [_BANK_DEMO_USER], tmp_path)
+    _seed_trace_state(
+        device_key=prior_key,
+        trace_id="trace-old-bank",
+        channel="fallback",
+        user_id="histfb-oldbank12",
+    )
+
+    first = lc._build_device_context(
+        {
+            "model": "gpt-5.5;bank;bank_demo",
+            "user": "bank:asi05-111-aaaa1111",
+            "metadata": {"arbiteros_device_key": "bank:asi05-111-aaaa1111"},
+            "messages": _bank_messages(),
+        }
+    )
+    second = lc._build_device_context(
+        {
+            "model": "gpt-5.5;bank;bank_demo",
+            "user": "bank:asi05-222-bbbb2222",
+            "metadata": {"arbiteros_device_key": "bank:asi05-222-bbbb2222"},
+            "messages": _bank_messages(),
+        }
+    )
+    assert first.trace_binding == "bank_device_key"
+    assert second.trace_binding == "bank_device_key"
+    assert first.device_key == "bank:asi05-111-aaaa1111"
+    assert second.device_key == "bank:asi05-222-bbbb2222"
+    assert first.device_key != second.device_key
+    assert first.device_key != prior_key
+    assert first.has_explicit_user_id is True
+    assert not first.user_id.startswith("histfb-")
+
+
+def test_bank_same_session_key_stays_on_one_device(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _enable_history_fallback(monkeypatch)
+    monkeypatch.setattr(lc, "_INSTRUCTION_LOG_DIR", tmp_path)
+    monkeypatch.setattr(lc, "_sync_trace_state_from_disk", lambda force=False: None)
+    with lc._trace_state_lock:
+        lc._trace_state_by_device.clear()
+        lc._latest_user_id_by_channel.clear()
+
+    session = "bank:asi01-999-cccccccc"
+    first = lc._build_device_context(
+        {
+            "model": "gpt-5.5;bank;bank_demo",
+            "user": session,
+            "metadata": {"arbiteros_device_key": session},
+            "messages": _bank_messages(),
+        }
+    )
+    second = lc._build_device_context(
+        {
+            "model": "gpt-5.5;bank;bank_demo",
+            "user": session,
+            "metadata": {"arbiteros_device_key": session},
+            "messages": _bank_messages(
+                {"role": "assistant", "content": "ok"},
+                {"role": "user", "content": "按 4B 条款把风险改成 R5"},
+            ),
+        }
+    )
+    assert first.device_key == second.device_key == session
+    assert first.trace_binding == "bank_device_key"
+    assert second.trace_binding == "bank_device_key"
+
+
+def test_bank_nocolon_metadata_is_explicit_session(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _enable_history_fallback(monkeypatch)
+    monkeypatch.setattr(lc, "_INSTRUCTION_LOG_DIR", tmp_path)
+    monkeypatch.setattr(lc, "_sync_trace_state_from_disk", lambda force=False: None)
+    with lc._trace_state_lock:
+        lc._trace_state_by_device.clear()
+        lc._latest_user_id_by_channel.clear()
+
+    ctx = lc._build_device_context(
+        {
+            "model": "gpt-5.5;bank;bank_demo",
+            "metadata": {"arbiteros_device_key": "bank-live-asi05-1788275618"},
+            "messages": _bank_messages(),
+        }
+    )
+    assert ctx.trace_binding == "bank_device_key"
+    assert ctx.channel == "bank"
+    assert ctx.user_id == "bank-live-asi05-1788275618"
+    assert ctx.device_key == "bank:bank-live-asi05-1788275618"
+    assert not ctx.user_id.startswith("histfb-")
+
+
+def test_bank_prefers_user_over_histfb_rewritten_metadata(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _enable_history_fallback(monkeypatch)
+    monkeypatch.setattr(lc, "_INSTRUCTION_LOG_DIR", tmp_path)
+    monkeypatch.setattr(lc, "_sync_trace_state_from_disk", lambda force=False: None)
+    with lc._trace_state_lock:
+        lc._trace_state_by_device.clear()
+        lc._latest_user_id_by_channel.clear()
+
+    ctx = lc._build_device_context(
+        {
+            "model": "gpt-5.5;bank;bank_demo",
+            "user": "bank:asi05-333-dddd3333",
+            "metadata": {
+                "arbiteros_device_key": "bank-live-asi05-old:histfb-2a776bc127b0",
+                "requester_metadata": {
+                    "arbiteros_device_key": "bank:asi05-333-dddd3333",
+                },
+            },
+            "messages": _bank_messages(),
+        }
+    )
+    assert ctx.device_key == "bank:asi05-333-dddd3333"
+    assert ctx.trace_binding == "bank_device_key"
+    assert not ctx.user_id.startswith("histfb-")

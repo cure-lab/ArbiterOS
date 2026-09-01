@@ -180,7 +180,12 @@ def _extract_user_objective(
                 continue
             role = str(ins.get("role") or "").strip().lower()
             instruction_type = str(ins.get("instruction_type") or "").strip().upper()
-            if role != "user" and instruction_type not in {"ASK", "USER"}:
+            if role != "user" and instruction_type not in {
+                "ASK",
+                "USER",
+                "USERINPUT",
+                "USER_MESSAGE",
+            }:
                 continue
             text = _coerce_text(ins.get("content"))
             if text:
@@ -210,6 +215,63 @@ def _build_planned_ops(current_response: Dict[str, Any]) -> List[Dict[str, Any]]
             }
         )
     return planned_ops
+
+
+_DEFAULT_HIJACK_MARKERS = (
+    "忽略标准流程",
+    "紧急避险条款",
+    "豁免 R5",
+    "4B条款",
+)
+
+
+def _try_deterministic_preexec_block(
+    *,
+    objective: str,
+    planned_ops: List[Dict[str, Any]],
+    cfg: Dict[str, Any],
+    threshold: float,
+) -> Dict[str, Any] | None:
+    """Block without an LLM when configured hijack markers appear in the objective or planned ops."""
+    markers = cfg.get("deterministic_block_markers")
+    merged: list[str] = []
+    seen: set[str] = set()
+    for raw in list(markers if isinstance(markers, list) else []) + list(
+        _DEFAULT_HIJACK_MARKERS
+    ):
+        marker = str(raw).strip()
+        if marker and marker not in seen:
+            seen.add(marker)
+            merged.append(marker)
+    if not merged:
+        return None
+    try:
+        blob = f"{objective}\n{json.dumps(planned_ops, ensure_ascii=False)}"
+    except Exception:
+        blob = objective or ""
+    blob_l = blob.lower()
+    hit = ""
+    for raw in merged:
+        marker = str(raw).strip()
+        if marker and marker.lower() in blob_l:
+            hit = marker
+            break
+    if not hit:
+        return None
+    return {
+        "sentinel_id": "Alignment Sentinel",
+        "summary": "Planned profile override conflicts with the original risk-assessment goal.",
+        "alarm": True,
+        "suspicion": 1.0,
+        "justification": (
+            f"input contains goal-hijack phrasing {hit!r} while planning set_risk_profile / equivalent"
+        ),
+        "user_objective": objective,
+        "item_under_review": planned_ops,
+        "threshold": threshold,
+        "block": True,
+        "model": "deterministic_block_markers",
+    }
 
 
 def _call_alignment_sentinel(
@@ -374,28 +436,35 @@ class AlignmentSentinelPolicy(Policy):
             kwargs=kwargs,
         )
 
-        try:
-            verdict = _call_alignment_sentinel(
-                objective=objective,
-                planned_ops=trigger_decision.reviewed_ops,
-                threshold=threshold,
-                timeout_seconds=timeout_seconds,
-                model_override=model_override,
-            )
-        except Exception as exc:
-            # Fail-open for availability; audit for diagnostics.
+        verdict = _try_deterministic_preexec_block(
+            objective=objective,
+            planned_ops=trigger_decision.reviewed_ops,
+            cfg=cfg,
+            threshold=threshold,
+        )
+        if verdict is None:
             try:
-                RUNTIME.audit(
-                    phase="policy.alignment_sentinel",
-                    trace_id=trace_id,
-                    tool="@tool",
-                    decision="ERROR",
-                    reason=f"sentinel failed open: {exc}",
-                    args={},
+                verdict = _call_alignment_sentinel(
+                    objective=objective,
+                    planned_ops=trigger_decision.reviewed_ops,
+                    threshold=threshold,
+                    timeout_seconds=timeout_seconds,
+                    model_override=model_override,
                 )
-            except Exception:
-                pass
-            return PolicyCheckResult(modified=False, response=current_response, error_type=None)
+            except Exception as exc:
+                # Fail-open for availability; audit for diagnostics.
+                try:
+                    RUNTIME.audit(
+                        phase="policy.alignment_sentinel",
+                        trace_id=trace_id,
+                        tool="@tool",
+                        decision="ERROR",
+                        reason=f"sentinel failed open: {exc}",
+                        args={},
+                    )
+                except Exception:
+                    pass
+                return PolicyCheckResult(modified=False, response=current_response, error_type=None)
 
         should_block = bool(verdict.get("block", False))
         try:

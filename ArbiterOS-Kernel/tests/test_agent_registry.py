@@ -47,7 +47,14 @@ def test_validate_request_route_accepts_agent_only():
 
 def test_agent_profiles_load_builtin_agents():
     profiles = load_agent_profiles(force_reload=True)
-    assert set(profiles) >= {"openclaw", "codex", "claude_code", "nanobot", "hermes"}
+    assert set(profiles) >= {
+        "openclaw",
+        "codex",
+        "claude_code",
+        "nanobot",
+        "hermes",
+        "bank",
+    }
 
 
 def test_claude_code_profile_enables_sidecar():
@@ -60,3 +67,17 @@ def test_openclaw_profile_disables_sidecar():
     profile = resolve_agent_profile("openclaw")
     assert profile.depends_on_sidecar_enabled is False
     assert profile.upstream_compat_enabled is False
+
+
+def test_bank_profile_disables_sidecar():
+    profile = resolve_agent_profile("bank")
+    assert profile.depends_on_sidecar_enabled is False
+    assert profile.upstream_compat_enabled is False
+
+
+def test_validate_request_route_accepts_bank_role():
+    err, route, agent, role = validate_request_route("gpt-5.5;bank;bank_demo")
+    assert err is None
+    assert route == "gpt-5.5"
+    assert agent == "bank"
+    assert role == "bank_demo"
