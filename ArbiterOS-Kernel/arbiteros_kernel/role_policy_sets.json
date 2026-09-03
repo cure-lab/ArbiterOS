@@ -18,7 +18,7 @@
     },
     {
       "name": "bank_demo",
-      "description": "OWASP ASI01/ASI02/ASI05 bank-agent demo: alignment, schema+EFSM, output DLP.",
+      "description": "OWASP ASI01/ASI02/ASI03/ASI05 bank-agent demo: alignment, schema+EFSM, rate limit, output DLP.",
       "policies": [
         {
           "name": "AlignmentSentinelPolicy",
@@ -34,6 +34,11 @@
           "name": "EfsmGatePolicy",
           "enabled": true,
           "description": "ASI02: REQUIRE_APPROVAL for unplanned override_risk_grade (EXEC)."
+        },
+        {
+          "name": "RateLimitPolicy",
+          "enabled": true,
+          "description": "ASI03: cap consecutive initiate_payment calls so split payments cannot dodge the single-payment limit."
         },
         {
           "name": "RelationalPolicy",

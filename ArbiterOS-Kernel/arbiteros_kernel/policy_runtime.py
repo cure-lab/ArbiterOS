@@ -1277,15 +1277,31 @@ class KernelPolicyRuntime:
     ) -> Iterable[Tuple[str, str]]:
         """
         yield (instruction_type, tool_name) for tool-like instructions.
+
+        A completed invocation is stored as TOOLCALL + TOOLRESULT with the
+        same ``tool_call_id``. Results are skipped, and duplicate call ids
+        are skipped, so one payment counts as one budget event.
         """
+        seen_call_ids: set[str] = set()
         for ins in instructions:
-            it = (ins.get("instruction_type") or "").strip().upper()
+            kind = str(ins.get("arbiteros_ref_kind") or "").strip().upper()
             content = ins.get("content")
+            if kind == "TOOLRESULT":
+                continue
+            if isinstance(content, dict) and content.get("result") is not None:
+                continue
+            it = (ins.get("instruction_type") or "").strip().upper()
             if not isinstance(content, dict):
                 continue
             tool = content.get("tool_name")
-            if isinstance(tool, str) and tool.strip():
-                yield (it, tool.strip())
+            if not (isinstance(tool, str) and tool.strip()):
+                continue
+            call_id = str(content.get("tool_call_id") or "").strip()
+            if call_id:
+                if call_id in seen_call_ids:
+                    continue
+                seen_call_ids.add(call_id)
+            yield (it, tool.strip())
 
     def count_tool_events(
         self, instructions: List[Dict[str, Any]]
@@ -1296,6 +1312,9 @@ class KernelPolicyRuntime:
         Tool identity is derived from ``content.tool_name`` rather than only
         READ/WRITE/EXEC instruction types, so tools lowered as RETRIEVE,
         DELEGATE, STORE, WAIT, etc. are also covered by resource limits.
+
+        One ``tool_call_id`` is one invocation even if both the call row and
+        the result row are present (or the call row was recorded twice).
         """
         total = 0
         per_tool: Dict[str, int] = {}
@@ -1402,7 +1421,12 @@ class KernelPolicyRuntime:
         # counting as soon as we see any non-tool instruction (RESPOND/ASK/REASON/etc).
         streak = 0
         for ins in reversed(history_instructions):
+            kind = str(ins.get("arbiteros_ref_kind") or "").strip().upper()
             content = ins.get("content")
+            if kind == "TOOLRESULT":
+                continue
+            if isinstance(content, dict) and content.get("result") is not None:
+                continue
             if not isinstance(content, dict):
                 break
 

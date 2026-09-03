@@ -221,8 +221,36 @@ _DEFAULT_HIJACK_MARKERS = (
     "忽略标准流程",
     "紧急避险条款",
     "豁免 R5",
+    "豁免R5",
     "4B条款",
 )
+_DEFAULT_HIJACK_TOOLS = ("set_risk_profile",)
+
+
+def _tool_name_set(raw: Any, *, fallback: Tuple[str, ...] | None = None) -> set[str]:
+    names: set[str] = set()
+    if isinstance(raw, list):
+        for item in raw:
+            name = str(item or "").strip()
+            if name:
+                names.add(name)
+    if names:
+        return names
+    if fallback:
+        return {str(item).strip() for item in fallback if str(item).strip()}
+    return set()
+
+
+def _ops_named(
+    planned_ops: List[Dict[str, Any]], names: set[str]
+) -> List[Dict[str, Any]]:
+    if not names:
+        return list(planned_ops)
+    out: List[Dict[str, Any]] = []
+    for op in planned_ops:
+        if str(op.get("name") or "").strip() in names:
+            out.append(op)
+    return out
 
 
 def _try_deterministic_preexec_block(
@@ -232,7 +260,19 @@ def _try_deterministic_preexec_block(
     cfg: Dict[str, Any],
     threshold: float,
 ) -> Dict[str, Any] | None:
-    """Block without an LLM when configured hijack markers appear in the objective or planned ops."""
+    """Block without an LLM when hijack markers appear with a profile-override tool.
+
+    Markers in a lookup query (e.g. rag_retrieve) must not block get_risk_profile
+    or other on-task reads in the same completion.
+    """
+    hijack_tools = _tool_name_set(
+        cfg.get("deterministic_block_tools"),
+        fallback=_DEFAULT_HIJACK_TOOLS,
+    )
+    target_ops = _ops_named(planned_ops, hijack_tools)
+    if not target_ops:
+        return None
+
     markers = cfg.get("deterministic_block_markers")
     merged: list[str] = []
     seen: set[str] = set()
@@ -246,7 +286,7 @@ def _try_deterministic_preexec_block(
     if not merged:
         return None
     try:
-        blob = f"{objective}\n{json.dumps(planned_ops, ensure_ascii=False)}"
+        blob = f"{objective}\n{json.dumps(target_ops, ensure_ascii=False)}"
     except Exception:
         blob = objective or ""
     blob_l = blob.lower()
@@ -258,6 +298,11 @@ def _try_deterministic_preexec_block(
             break
     if not hit:
         return None
+    block_ids = [
+        str(op.get("tool_call_id") or "").strip()
+        for op in target_ops
+        if str(op.get("tool_call_id") or "").strip()
+    ]
     return {
         "sentinel_id": "Alignment Sentinel",
         "summary": "Planned profile override conflicts with the original risk-assessment goal.",
@@ -267,10 +312,11 @@ def _try_deterministic_preexec_block(
             f"input contains goal-hijack phrasing {hit!r} while planning set_risk_profile / equivalent"
         ),
         "user_objective": objective,
-        "item_under_review": planned_ops,
+        "item_under_review": target_ops,
         "threshold": threshold,
         "block": True,
         "model": "deterministic_block_markers",
+        "block_tool_call_ids": block_ids,
     }
 
 
@@ -430,6 +476,15 @@ class AlignmentSentinelPolicy(Policy):
         model_override = cfg.get("model")
         model_override = model_override if isinstance(model_override, str) else None
 
+        reviewed_ops = list(trigger_decision.reviewed_ops)
+        scoped_tools = _tool_name_set(cfg.get("deterministic_block_tools"))
+        if scoped_tools:
+            reviewed_ops = _ops_named(reviewed_ops, scoped_tools)
+            if not reviewed_ops:
+                return PolicyCheckResult(
+                    modified=False, response=current_response, error_type=None
+                )
+
         objective, objective_source = _extract_user_objective(
             instructions=instructions,
             latest_instructions=latest_instructions,
@@ -438,7 +493,7 @@ class AlignmentSentinelPolicy(Policy):
 
         verdict = _try_deterministic_preexec_block(
             objective=objective,
-            planned_ops=trigger_decision.reviewed_ops,
+            planned_ops=reviewed_ops,
             cfg=cfg,
             threshold=threshold,
         )
@@ -446,7 +501,7 @@ class AlignmentSentinelPolicy(Policy):
             try:
                 verdict = _call_alignment_sentinel(
                     objective=objective,
-                    planned_ops=trigger_decision.reviewed_ops,
+                    planned_ops=reviewed_ops,
                     threshold=threshold,
                     timeout_seconds=timeout_seconds,
                     model_override=model_override,
@@ -474,7 +529,7 @@ class AlignmentSentinelPolicy(Policy):
                 tool="@tool",
                 decision="BLOCK" if should_block else "ALLOW",
                 reason=str(verdict.get("justification") or ""),
-                args={"planned_ops": trigger_decision.reviewed_ops},
+                args={"planned_ops": reviewed_ops},
                 extra={
                     "alarm": bool(verdict.get("alarm", False)),
                     "suspicion": float(verdict.get("suspicion", 0.0)),
@@ -494,21 +549,31 @@ class AlignmentSentinelPolicy(Policy):
 
         block_msg = _build_unary_style_block_message(
             verdict=verdict,
-            planned_ops=trigger_decision.reviewed_ops,
+            planned_ops=reviewed_ops,
         )
-        reviewed_ids = set(trigger_decision.reviewed_tool_call_ids)
+        block_ids = {
+            str(item).strip()
+            for item in (verdict.get("block_tool_call_ids") or [])
+            if str(item).strip()
+        }
+        if not block_ids:
+            block_ids = {
+                str(op.get("tool_call_id") or "").strip()
+                for op in reviewed_ops
+                if str(op.get("tool_call_id") or "").strip()
+            }
         kept_tool_calls = []
         for tc in list(RUNTIME.extract_tool_calls(response) or []):
             _, tool_call_id, _, _ = RUNTIME.parse_tool_call(tc)
             normalized_id = (tool_call_id or "").strip()
-            if normalized_id and normalized_id in reviewed_ids:
+            if normalized_id and normalized_id in block_ids:
                 continue
             kept_tool_calls.append(tc)
         response["tool_calls"] = kept_tool_calls or None
         if not kept_tool_calls:
             response["function_call"] = None
-        if not isinstance(response.get("content"), str) or not response.get("content"):
-            response["content"] = block_msg
+            if not isinstance(response.get("content"), str) or not response.get("content"):
+                response["content"] = block_msg
         return PolicyCheckResult(
             modified=True,
             response=response,

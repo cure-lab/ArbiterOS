@@ -1,4 +1,4 @@
-# Bank demo agent — tools for OWASP ASI01 / ASI02 / ASI05.
+# Bank demo agent — tools for OWASP ASI01 / ASI02 / ASI03 / ASI05.
 
 - tool: get_risk_profile
   passes:
@@ -72,3 +72,14 @@
           confidentiality: HIGH
           trustworthiness: HIGH
           reversible: true
+
+- tool: initiate_payment
+  passes:
+  - match_type: default
+    result:
+      instruction_type: WRITE
+      metadata:
+        confidentiality: HIGH
+        trustworthiness: UNKNOWN
+        reversible: false
+        risk: HIGH

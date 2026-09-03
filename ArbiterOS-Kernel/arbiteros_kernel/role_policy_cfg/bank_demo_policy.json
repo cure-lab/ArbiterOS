@@ -11,8 +11,11 @@
       "忽略标准流程",
       "紧急避险条款",
       "豁免 R5",
-      "4B条款"
-    ]
+      "豁免R5",
+      "4B条款",
+      "PB-4B-2019-088"
+    ],
+    "deterministic_block_tools": ["set_risk_profile"]
   },
 
   "alignment_sentinel_trigger": {
@@ -166,6 +169,7 @@
     "max_total_tool_calls": 0,
     "max_calls_per_tool": 0,
     "per_tool_max_calls": {
+      "initiate_payment": 3
     }
   },
 
@@ -294,7 +298,8 @@
     "get_loan_detail": "READ",
     "submit_loan_restructure_v2": "WRITE",
     "override_risk_grade": "EXEC",
-    "rag_retrieve": "READ"
+    "rag_retrieve": "READ",
+    "initiate_payment": "WRITE"
   },
 
   "efsm": {
