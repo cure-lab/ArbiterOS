@@ -1,0 +1,152 @@
+# pi tool parsing rules.
+
+- tool: bash
+  passes:
+  - match_type: shell
+    arg: command
+
+- tool: read
+  passes:
+  - match_type: default
+    result:
+      instruction_type: READ
+      metadata:
+        confidentiality: UNKNOWN
+        trustworthiness: UNKNOWN
+        reversible: true
+  - match_type: path
+    arg: path
+  - match_type: regex
+    cases:
+    - arg: path
+      pattern: "(^|/)(SOUL|MEMORY|AGENTS|USER|IDENTITY)\\.md$|/\\.pi/agent/memory(?:/|$)"
+      result:
+        instruction_type: RETRIEVE
+        metadata:
+          confidentiality: HIGH
+          trustworthiness: HIGH
+          reversible: true
+
+- tool: write
+  passes:
+  - match_type: default
+    result:
+      instruction_type: WRITE
+      metadata:
+        confidentiality: UNKNOWN
+        trustworthiness: UNKNOWN
+        reversible: true
+  - match_type: path
+    arg: path
+  - match_type: regex
+    cases:
+    - arg: path
+      pattern: "(^|/)(SOUL|MEMORY|AGENTS|USER|IDENTITY)\\.md$|/\\.pi/agent/memory(?:/|$)"
+      result:
+        instruction_type: STORE
+        metadata:
+          confidentiality: HIGH
+          trustworthiness: HIGH
+          reversible: true
+
+- tool: edit
+  passes:
+  - match_type: default
+    result:
+      instruction_type: WRITE
+      metadata:
+        confidentiality: UNKNOWN
+        trustworthiness: UNKNOWN
+        reversible: true
+  - match_type: path
+    arg: path
+  - match_type: regex
+    cases:
+    - arg: path
+      pattern: "(^|/)(SOUL|MEMORY|AGENTS|USER|IDENTITY)\\.md$|/\\.pi/agent/memory(?:/|$)"
+      result:
+        instruction_type: STORE
+        metadata:
+          confidentiality: HIGH
+          trustworthiness: HIGH
+          reversible: true
+
+- tool: memory_read
+  passes:
+  - match_type: default
+    result:
+      instruction_type: RETRIEVE
+      metadata:
+        confidentiality: HIGH
+        trustworthiness: HIGH
+        reversible: true
+
+- tool: memory_search
+  passes:
+  - match_type: default
+    result:
+      instruction_type: RETRIEVE
+      metadata:
+        confidentiality: HIGH
+        trustworthiness: HIGH
+        reversible: true
+
+- tool: memory_status
+  passes:
+  - match_type: default
+    result:
+      instruction_type: READ
+      metadata:
+        confidentiality: LOW
+        trustworthiness: HIGH
+        reversible: true
+
+- tool: memory_write
+  passes:
+  - match_type: default
+    result:
+      instruction_type: STORE
+      metadata:
+        confidentiality: HIGH
+        trustworthiness: HIGH
+        reversible: true
+
+- tool: memory_forget
+  passes:
+  - match_type: default
+    result:
+      instruction_type: PRUNE
+      metadata:
+        confidentiality: HIGH
+        trustworthiness: HIGH
+        reversible: true
+
+- tool: memory_restore
+  passes:
+  - match_type: default
+    result:
+      instruction_type: STORE
+      metadata:
+        confidentiality: HIGH
+        trustworthiness: HIGH
+        reversible: true
+
+- tool: scratchpad
+  passes:
+  - match_type: default
+    result:
+      instruction_type: STORE
+      metadata:
+        confidentiality: HIGH
+        trustworthiness: HIGH
+        reversible: true
+  - match_type: regex
+    cases:
+    - arg: action
+      pattern: "^list$"
+      result:
+        instruction_type: RETRIEVE
+        metadata:
+          confidentiality: HIGH
+          trustworthiness: HIGH
+          reversible: true

@@ -2,6 +2,7 @@
 # litellm_config.yaml is gitignored — never commit real credentials.
 #
 # Client model field format: route_model;agent_name;role
+#   - agent_name: openclaw | nanobot | hermes | codex | claude_code | pi
 # Per-agent kernel settings: agents/*.yaml
 
 model_list:

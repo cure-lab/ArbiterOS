@@ -1,0 +1,9 @@
+agent_name: pi
+depends_on_sidecar:
+  enabled: false
+upstream_compat:
+  enabled: true
+  rules:
+    - match_model: "gpt-5.5"
+      strip_metadata: true
+      force_non_stream: true

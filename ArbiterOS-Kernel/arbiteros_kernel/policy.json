@@ -111,13 +111,15 @@
       "browser_snapshot": "browser",
       "browser_console": "browser",
       "browser_get_images": "browser",
-      "browser_vision": "browser"
+      "browser_vision": "browser",
+      "bash": "exec"
     }
   },
   
   "allow": {
     "tools": [
   "terminal",
+  "bash",
   "read",
   "write",
   "edit",
@@ -131,7 +133,13 @@
   "sessions_send",
   "sessions_spawn",
   "memory_get",
+  "memory_read",
   "memory_search",
+  "memory_status",
+  "memory_write",
+  "memory_forget",
+  "memory_restore",
+  "scratchpad",
   "image",
   "browser"
 ],
