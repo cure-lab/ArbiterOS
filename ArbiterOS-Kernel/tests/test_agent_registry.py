@@ -1,6 +1,8 @@
 from arbiteros_kernel.agent_registry import (
+    drop_tools_by_type,
     load_agent_profiles,
     resolve_agent_profile,
+    resolve_upstream_compat_flags,
     validate_request_route,
 )
 from arbiteros_kernel.policy_check import split_model_agent_role
@@ -81,3 +83,36 @@ def test_validate_request_route_accepts_bank_role():
     assert route == "gpt-5.5"
     assert agent == "bank"
     assert role == "bank_demo"
+
+
+def test_codex_gpt5_drops_image_generation_tool():
+    load_agent_profiles(force_reload=True)
+    flags = resolve_upstream_compat_flags("gpt-5", agent_name="codex")
+    assert flags["drop_tool_types"] == ["image_generation"]
+    payload = {
+        "model": "gpt-5",
+        "tools": [
+            {"type": "function", "name": "exec_command"},
+            {"type": "web_search"},
+            {"type": "image_generation"},
+        ],
+    }
+    out = drop_tools_by_type(payload, flags["drop_tool_types"])
+    assert [t.get("type") for t in out["tools"]] == ["function", "web_search"]
+
+
+def test_codex_gpt55_drops_image_generation_tool():
+    load_agent_profiles(force_reload=True)
+    flags = resolve_upstream_compat_flags("gpt-5.5", agent_name="codex")
+    assert flags["drop_tool_types"] == ["image_generation"]
+    assert flags["force_non_stream"] is True
+    payload = {
+        "model": "gpt-5.5",
+        "tools": [
+            {"type": "function", "name": "exec_command"},
+            {"type": "web_search"},
+            {"type": "image_generation"},
+        ],
+    }
+    out = drop_tools_by_type(payload, flags["drop_tool_types"])
+    assert [t.get("type") for t in out["tools"]] == ["function", "web_search"]

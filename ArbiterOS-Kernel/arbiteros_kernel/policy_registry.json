@@ -1,1 +1,7 @@
-[]
+[
+    {
+        "name": "ContentScanPolicy",
+        "enabled": true,
+        "description": "Pattern-redacts sensitive spans in precall context and current output; output hits require Y/N confirmation."
+    }
+]

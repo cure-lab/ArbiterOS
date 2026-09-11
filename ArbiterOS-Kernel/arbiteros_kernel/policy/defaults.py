@@ -23,6 +23,7 @@ from .nanobot_policy import NanobotPolicy
 from .schema_policy import SchemaValidationPolicy
 from .alignment_sentinel_policy import AlignmentSentinelPolicy
 from .resource_guard_policy import ResourceGuardPolicy
+from .content_scan_policy import ContentScanPolicy
 if TYPE_CHECKING:
     from .policy import Policy
 
@@ -61,6 +62,7 @@ POLICY_CLASS_MAP: dict[str, type["Policy"]] = {
     "NanobotPolicy": NanobotPolicy,
     "AlignmentSentinelPolicy": AlignmentSentinelPolicy,
     "ResourceGuardPolicy": ResourceGuardPolicy,
+    "ContentScanPolicy": ContentScanPolicy,
 }
 
 
@@ -168,6 +170,14 @@ def _default_registry_data() -> list[dict[str, object]]:
             "enabled": False,
             "description": (
                 "Blocks when trace token/time/instruction-memory usage exceeds configured limits."
+            ),
+        },
+        {
+            "name": "ContentScanPolicy",
+            "enabled": True,
+            "description": (
+                "Pattern-redacts sensitive spans in precall context and current output; "
+                "output hits require Y/N confirmation."
             ),
         },
     ]

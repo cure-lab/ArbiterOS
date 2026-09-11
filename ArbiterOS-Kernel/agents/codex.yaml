@@ -7,3 +7,9 @@ upstream_compat:
     - match_model: "gpt-5.5"
       strip_metadata: true
       force_non_stream: true
+      drop_tool_types:
+        - image_generation
+    - match_model: "gpt-5"
+      strip_metadata: true
+      drop_tool_types:
+        - image_generation

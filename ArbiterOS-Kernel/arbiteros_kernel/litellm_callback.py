@@ -48,6 +48,7 @@ from rich.pretty import Pretty
 from arbiteros_kernel.agent_registry import (
     agent_name_from_request_data,
     copy_global_response_format,
+    drop_tools_by_type as _drop_tools_by_type,
     resolve_upstream_compat_flags as _resolve_upstream_compat_flags_for_agent,
     set_request_agent,
     validate_request_route,
@@ -8149,6 +8150,15 @@ def _response_transform_content_only(data: dict, message_dict: dict) -> Optional
             )
             if isinstance(display_content, str):
                 display_content = strip_arbiteros_ref_markers(display_content)
+            if (
+                isinstance(display_content, str)
+                and not display_content.strip()
+                and not message_dict.get("tool_calls")
+                and not message_dict.get("function_call")
+            ):
+                # Valid instruction_output with an empty `content` field (common on
+                # greetings). Do not leave it blank for the stream-failure fallback.
+                display_content = "Hi."
             metadata = data.get("metadata") if isinstance(data, dict) else {}
             trace_id = (
                 metadata.get("arbiteros_trace_id")
@@ -9960,6 +9970,10 @@ class MyCustomHandler(CustomLogger):
             if trace_id_for_cache:
                 data["_arbiteros_trace_id"] = trace_id_for_cache
             data.pop("metadata", None)
+        if compat_flags.get("drop_tool_types"):
+            # poloai/Azure gpt-5 rejects Codex's built-in image_generation tool
+            # unless x-ms-oai-image-generation-deployment is set.
+            data = _drop_tools_by_type(data, compat_flags.get("drop_tool_types"))
         if compat_flags.get("force_non_stream"):
             # Keep Responses API streaming for Codex/OpenAI-compatible clients.
             # Only force non-stream for chat-completions-style payloads where
@@ -9972,16 +9986,32 @@ class MyCustomHandler(CustomLogger):
             metadata=(metadata_for_backup if isinstance(metadata_for_backup, dict) else None),
         )
         if isinstance(data, dict):
-            precall_policy_result = check_precall_policy(
-                trace_id=trace_id_for_cache or "",
-                current_request=data,
-                tool_agent=_get_request_agent_name(data),
+            precall_runtime_ctx = (
+                policy_runtime_override(role_policy_config_override)
+                if isinstance(role_policy_config_override, dict)
+                else nullcontext()
             )
+            with precall_runtime_ctx:
+                precall_policy_result = check_precall_policy(
+                    trace_id=trace_id_for_cache or "",
+                    current_request=data,
+                    tool_agent=_get_request_agent_name(data),
+                )
             data = precall_policy_result.request
         _save_precall_to_log(
             data,
             state.trace_id if state is not None else None,
         )
+        try:
+            from arbiteros_kernel.tool_list_log import save_tool_list_log
+
+            save_tool_list_log(
+                data,
+                trace_id=trace_id_for_cache or "",
+                agent_name=agent_name,
+            )
+        except Exception:
+            pass
         return data
 
     async def async_post_call_failure_hook(
@@ -10392,7 +10422,8 @@ class MyCustomHandler(CustomLogger):
                         )
                 if policy_result.modified:
                     error_type_str = (policy_result.error_type or "").strip()
-                    if bool(
+                    silent_transform = not error_type_str
+                    if silent_transform or bool(
                         getattr(policy_result, "local_confirmation_resolved", False)
                     ):
                         final_msg_dict = (
@@ -10403,9 +10434,14 @@ class MyCustomHandler(CustomLogger):
                         policy_violation_reason_for_langfuse = error_type_str or None
                         policy_names_for_langfuse = list(policy_result.policy_names)
                         policy_sources_for_langfuse = dict(policy_result.policy_sources)
-                        policy_confirmation_state_for_langfuse = "accepted"
-                        policy_confirmation_accepted_for_langfuse = True
-                        policy_confirmation_rejected_for_langfuse = False
+                        if silent_transform:
+                            policy_confirmation_state_for_langfuse = None
+                            policy_confirmation_accepted_for_langfuse = False
+                            policy_confirmation_rejected_for_langfuse = False
+                        else:
+                            policy_confirmation_state_for_langfuse = "accepted"
+                            policy_confirmation_accepted_for_langfuse = True
+                            policy_confirmation_rejected_for_langfuse = False
                         if policy_violation_reason_for_langfuse:
                             _record_policy_protected_tool_calls(
                                 trace_id=trace_id,
@@ -10414,7 +10450,8 @@ class MyCustomHandler(CustomLogger):
                                 policy_reason=policy_violation_reason_for_langfuse,
                             )
                         if (
-                            isinstance(final_msg_dict, dict)
+                            not silent_transform
+                            and isinstance(final_msg_dict, dict)
                             and _extract_text_from_message_content(
                                 final_msg_dict.get("content")
                             ).strip()

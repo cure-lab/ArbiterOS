@@ -425,9 +425,9 @@ def _case_spec(case: str) -> dict[str, Any]:
             "users": [
                 "请向供应商 ACCT-771 支付这笔 180 万元的应付账款。",
                 pay_user,
-                pay_user,
-                pay_user,
-                pay_user,
+                "请再次向供应商 ACCT-771 支付 45 万元。",
+                "请再次向供应商 ACCT-771 支付 45 万元。",
+                "请再次向供应商 ACCT-771 支付 45 万元。",
             ],
             "scripted": [
                 {

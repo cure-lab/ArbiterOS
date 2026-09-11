@@ -81,6 +81,13 @@ response_format:
 arbiteros_local_policy_confirm: true
 arbiteros_local_policy_confirm_test_mode: false
 precall_log_enabled: true
+# Overwrite log/tool_list/{trace_id}.json each precall with a compact tool catalog
+# (after drop_tool_types such as image_generation). Independent of precall_log_enabled.
+tool_list_log_enabled: true
+# When true, score each tool 0-10 via skill_scanner_llm. Runs on the first write
+# for a trace, then only if the tool-list fingerprint changes.
+# Needs skill_scanner_llm.model / api_base / api_key all set; otherwise risk stays null.
+tool_list_llm_enabled: false
 
 # Prompt-cache stable prefix (kernel default ON): freeze tools/schema/instructions and append
 # ephemeral [arbiteros_turn_context] at the end. Rollback: ARBITEROS_PROMPT_CACHE_STABLE_PREFIX=0
@@ -112,6 +119,8 @@ litellm_settings:
 arbiteros_skill_trust:
   skills_root: /path/to/your/skills
 
+# Used by skill-scanner --use-llm and by tool_list_llm_enabled. All three must be
+# non-empty for those LLM paths; otherwise they fail open (static scan / risk: null).
 skill_scanner_llm:
   model:
   api_base:

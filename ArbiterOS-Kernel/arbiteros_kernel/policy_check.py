@@ -567,6 +567,7 @@ def check_response_policy(
     inactivate_errors: list[str] = []
     policy_names: list[str] = []
     policy_sources: dict[str, str] = {}
+    any_modified = False
 
     for entry in registry_entries:
         policy_cls = entry.policy
@@ -591,6 +592,7 @@ def check_response_policy(
         result = apply_policy_enforcement_mode(enforce, response_before, result)
 
         if result.modified:
+            any_modified = True
             response = result.response
             if result.error_type:
                 errors.append(result.error_type)
@@ -604,7 +606,7 @@ def check_response_policy(
             inactivate_errors.append(result.inactivate_error_type)
 
     aggregated_result = PolicyCheckResult(
-        modified=len(errors) > 0,
+        modified=any_modified,
         response=response,
         error_type="\n".join(errors) if errors else None,
         policy_names=policy_names,
@@ -612,6 +614,10 @@ def check_response_policy(
         inactivate_error_type="\n".join(inactivate_errors) if inactivate_errors else None,
     )
     if not aggregated_result.modified:
+        return aggregated_result
+
+    # Silent transforms (redact-only, no block reason) apply without TUI.
+    if not (aggregated_result.error_type or "").strip():
         return aggregated_result
 
     if not _is_local_policy_confirm_enabled():

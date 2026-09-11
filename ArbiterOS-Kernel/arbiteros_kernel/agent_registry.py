@@ -250,11 +250,12 @@ def resolve_upstream_compat_flags(
     model: Any,
     *,
     agent_name: Optional[str] = None,
-) -> dict[str, bool]:
-    defaults = {
+) -> dict[str, Any]:
+    defaults: dict[str, Any] = {
         "strip_metadata": False,
         "force_non_stream": False,
         "prefer_chat_completions": False,
+        "drop_tool_types": [],
     }
     normalized_model = _normalize_model_name_for_compat(model)
     if not normalized_model:
@@ -265,13 +266,53 @@ def resolve_upstream_compat_flags(
         return defaults
 
     resolved = dict(defaults)
+    bool_keys = ("strip_metadata", "force_non_stream", "prefer_chat_completions")
     for rule in profile.upstream_compat_rules:
         if not _model_matches_compat_rule(rule.get("match_model"), normalized_model):
             continue
-        for key in resolved:
+        for key in bool_keys:
             if isinstance(rule.get(key), bool):
                 resolved[key] = resolved[key] or bool(rule.get(key))
+        extra = rule.get("drop_tool_types")
+        if isinstance(extra, list):
+            seen = {str(x).strip().lower() for x in resolved["drop_tool_types"]}
+            for item in extra:
+                if not isinstance(item, str):
+                    continue
+                name = item.strip()
+                if name and name.lower() not in seen:
+                    resolved["drop_tool_types"].append(name)
+                    seen.add(name.lower())
     return resolved
+
+
+def drop_tools_by_type(data: Any, tool_types: Any) -> Any:
+    """Remove Responses/Chat tools whose ``type`` is in ``tool_types``."""
+    if not isinstance(data, dict) or not tool_types:
+        return data
+    drop = {
+        item.strip().lower()
+        for item in tool_types
+        if isinstance(item, str) and item.strip()
+    }
+    if not drop:
+        return data
+    tools = data.get("tools")
+    if not isinstance(tools, list):
+        return data
+    kept = []
+    changed = False
+    for tool in tools:
+        t = tool.get("type") if isinstance(tool, dict) else None
+        if isinstance(t, str) and t.strip().lower() in drop:
+            changed = True
+            continue
+        kept.append(tool)
+    if not changed:
+        return data
+    out = dict(data)
+    out["tools"] = kept
+    return out
 
 
 def read_depends_on_sidecar_enabled_for_agent(agent_name: Optional[str] = None) -> bool:

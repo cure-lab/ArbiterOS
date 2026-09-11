@@ -4,12 +4,17 @@ from __future__ import annotations
 
 from typing import Optional
 
+from arbiteros_kernel.precall_policy.content_scan_precall_policy import (
+    ContentScanPrecallPolicy,
+)
 from arbiteros_kernel.precall_policy.policy import PreCallPolicy
 
-PRECALL_POLICY_CLASS_MAP: dict[str, type[PreCallPolicy]] = {}
+PRECALL_POLICY_CLASS_MAP: dict[str, type[PreCallPolicy]] = {
+    "ContentScanPrecallPolicy": ContentScanPrecallPolicy,
+}
 
 
 def get_precall_policy_classes(*, tool_agent: Optional[str] = None) -> list[type[PreCallPolicy]]:
     """Return enabled pre-call policy classes for the active tool agent."""
     _ = tool_agent
-    return []
+    return [ContentScanPrecallPolicy]
