@@ -107,3 +107,78 @@ def extract_session_anchor_from_messages(messages: list[Any]) -> Optional[str]:
 
 def build_user_id_from_session_anchor(session_anchor: str) -> str:
     return f"msg-{session_anchor.strip()}"
+
+
+_YOUR_SESSION_RE = re.compile(
+    r"Your session:\s*(agent:[A-Za-z0-9:._-]+)",
+    re.IGNORECASE,
+)
+_CREATED_TO_HANDLE_RE = re.compile(
+    r"You were created to handle:\s*(.+)",
+    re.IGNORECASE,
+)
+_SUBAGENT_SESSION_RE = re.compile(
+    r"agent:[A-Za-z0-9._-]+:subagent:[A-Za-z0-9._-]+",
+    re.IGNORECASE,
+)
+
+
+def _iter_system_texts(messages: list[Any]) -> list[str]:
+    out: list[str] = []
+    if not isinstance(messages, list):
+        return out
+    for msg in messages:
+        if not isinstance(msg, dict) or msg.get("role") != "system":
+            continue
+        text = extract_text_from_message_content(msg.get("content"))
+        if text.strip():
+            out.append(text)
+    return out
+
+
+def extract_openclaw_own_session_key(messages: list[Any]) -> Optional[str]:
+    """``Your session: agent:main:subagent:<uuid>`` from OpenClaw system prompt."""
+    for text in _iter_system_texts(messages):
+        match = _YOUR_SESSION_RE.search(text)
+        if match:
+            key = match.group(1).strip().rstrip(".")
+            return key or None
+        hit = _SUBAGENT_SESSION_RE.search(text)
+        if hit:
+            return hit.group(0).strip()
+    return None
+
+
+def is_openclaw_subagent_messages(messages: list[Any]) -> bool:
+    key = extract_openclaw_own_session_key(messages)
+    if isinstance(key, str) and ":subagent:" in key.lower():
+        return True
+    for text in _iter_system_texts(messages):
+        if "## Subagent Context" in text or "You are a **subagent**" in text:
+            return True
+    return False
+
+
+def extract_openclaw_spawn_task(messages: list[Any]) -> Optional[str]:
+    """Task text the parent handed to ``sessions_spawn``."""
+    for text in _iter_system_texts(messages):
+        match = _CREATED_TO_HANDLE_RE.search(text)
+        if match:
+            task = match.group(1).strip()
+            if task:
+                return task
+    if not is_openclaw_subagent_messages(messages):
+        return None
+    if not isinstance(messages, list):
+        return None
+    for msg in messages:
+        if not isinstance(msg, dict) or msg.get("role") != "user":
+            continue
+        text = extract_text_from_message_content(msg.get("content")).strip()
+        if not text:
+            continue
+        # Child user turns are the spawn task, usually without [message_id].
+        cleaned = _MESSAGE_ID_RE.sub("", text).strip()
+        cleaned = re.sub(r"^\[[^\]]+\]\s*", "", cleaned).strip()
+        return cleaned or None
+    return None

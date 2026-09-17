@@ -88,6 +88,9 @@ tool_list_log_enabled: true
 # for a trace, then only if the tool-list fingerprint changes.
 # Needs skill_scanner_llm.model / api_base / api_key all set; otherwise risk stays null.
 tool_list_llm_enabled: false
+# Accumulate READ/WRITE/EXEC mix, counts, frequency, n-gram patterns, and
+# tokens/elapsed into log/habit/{role}.json. Same trace re-save replaces, not doubles.
+role_habit_log_enabled: true
 
 # Prompt-cache stable prefix (kernel default ON): freeze tools/schema/instructions and append
 # ephemeral [arbiteros_turn_context] at the end. Rollback: ARBITEROS_PROMPT_CACHE_STABLE_PREFIX=0

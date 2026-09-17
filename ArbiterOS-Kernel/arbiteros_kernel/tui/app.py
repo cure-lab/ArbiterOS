@@ -85,6 +85,7 @@ class ArbiterTuiApp:
             Panel(
                 "Commands: [bold]list[/bold]  |  [bold]bg[/bold] (budget)  |  "
                 "[bold]role[/bold]  |  "
+                "[bold]g[/bold]/[bold]graph[/bold]  |  "
                 "[bold]attach <trace_id>[/bold]  |  "
                 "[bold]sw[/bold] (sandbox wizard)  |  [bold]quit[/bold] (q)\n"
                 "If policy or said/done needs your decision, [bold]attach[/bold] that trace and answer "
@@ -93,6 +94,8 @@ class ArbiterTuiApp:
                 "Same trace: policy first, then said/done. "
                 "`list` shows a [bold]block[/bold] column when confirmation is pending. "
                 "`role` assigns a governance role to a trace at runtime. "
+                "A spawned child with no role yet inherits the parent's. "
+                "`g`/`graph` prints Claude Code / OpenClaw parent → spawned subagent trees. "
                 "`sw` configures Codex or Claude Code sandbox profiles "
                 "(pick agent, then list/show/new/use).",
                 title="How to use",
@@ -154,6 +157,21 @@ class ArbiterTuiApp:
             )
         self.console.print(table)
 
+    def cmd_graph(self) -> None:
+        from arbiteros_kernel.agent_graph import format_graph_trees
+
+        rows = load_trace_rows()
+        extra: dict[str, dict] = {}
+        known: list[str] = []
+        for row in rows:
+            known.append(row.trace_id)
+            extra[row.trace_id] = {
+                "agent": row.agent,
+                "status": row.status,
+            }
+        text = format_graph_trees(extra_by_trace=extra, known_trace_ids=known)
+        self.console.print(text.rstrip(), markup=False)
+
     def cmd_budget(self) -> None:
         matrix = build_budget_matrix()
         if not matrix.models:
@@ -205,6 +223,7 @@ class ArbiterTuiApp:
                 "[bold]policy_registry.json[/bold] + [bold]policy.json[/bold].\n"
                 "Agent may pass [bold]model;agent;role[/bold] only to initialize. "
                 "Once you set a role here, OS lock wins until you change it again.\n"
+                "A spawned child with no role yet inherits the parent's role.\n"
                 "Type [bold]quit[/bold] at any prompt to cancel.",
                 title="Configure / assign role",
                 border_style="white",
@@ -469,6 +488,9 @@ class ArbiterTuiApp:
         if lower == "list":
             self.cmd_list()
             return True
+        if lower in {"g", "graph"}:
+            self.cmd_graph()
+            return True
         if lower in {"bg", "budget"}:
             self.cmd_budget()
             return True
@@ -490,7 +512,7 @@ class ArbiterTuiApp:
                 return self.attach_loop()
             return True
         self.console.print(
-            "[dim]Unknown command. Try list, bg, role, attach <trace_id>, sw, quit.[/dim]"
+            "[dim]Unknown command. Try list, bg, role, g/graph, attach <trace_id>, sw, quit.[/dim]"
         )
         return True
 

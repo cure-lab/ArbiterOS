@@ -55,7 +55,7 @@ def _normalize_role_record(raw: Any) -> dict[str, Any]:
         role_source = None
     else:
         role_source = role_source.strip().lower()
-        if role_source not in {"init", "os"}:
+        if role_source not in {"init", "os", "inherit"}:
             role_source = None
     return {
         "role_name": role_name,
@@ -133,15 +133,15 @@ def set_trace_role(
     Persist role assignment for a trace.
 
     ``role_name`` None / ``default`` clears to global registry path.
-    ``source`` should be ``init`` or ``os``.
+    ``source`` should be ``init``, ``os``, or ``inherit``.
     """
     tid = (trace_id or "").strip()
     if not tid:
         raise ValueError("trace_id is required")
 
     normalized_source = (source or "").strip().lower()
-    if normalized_source not in {"init", "os"}:
-        raise ValueError("source must be 'init' or 'os'")
+    if normalized_source not in {"init", "os", "inherit"}:
+        raise ValueError("source must be 'init', 'os', or 'inherit'")
 
     display = display_role_name(role_name)
     stored_name: Optional[str]
@@ -205,7 +205,9 @@ def resolve_effective_role_for_request(
       - Else if requested role is registered: refresh init role.
       - Else if requested role present but unregistered: warning + default
         (clear stored role unless OS-locked — not locked here).
-      - Else keep stored role (may be None = default).
+      - Else keep stored role.
+      - Else inherit the graph parent's named role, if any.
+      - Else default (None).
     """
     tid = (trace_id or "").strip()
     current = get_trace_role(tid)
@@ -234,14 +236,27 @@ def resolve_effective_role_for_request(
                 locked_by_os=False,
             )
             return requested, "init", False, None
-        # Unregistered → default, warn, do not reject.
+        # Unregistered → treat as no role, then inherit-or-default below.
         set_trace_role(
             tid,
             role_name=None,
             source="init",
             locked_by_os=False,
         )
+        from arbiteros_kernel.role_inherit import inherit_parent_role_if_unset
+
+        inherited = inherit_parent_role_if_unset(tid)
+        if inherited:
+            return inherited, "inherit", False, f"role_not_registered:{requested}"
         return None, "init", False, f"role_not_registered:{requested}"
 
     source = str(current.get("role_source") or "init")
-    return stored_name, source, False, None
+    if stored_name:
+        return stored_name, source, False, None
+
+    from arbiteros_kernel.role_inherit import inherit_parent_role_if_unset
+
+    inherited = inherit_parent_role_if_unset(tid)
+    if inherited:
+        return inherited, "inherit", False, None
+    return None, source, False, None

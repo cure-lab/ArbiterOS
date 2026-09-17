@@ -23,6 +23,9 @@ __all__ = [
     "PolicyCheckResult",
     "check_response_policy",
     "apply_policy_enforcement_mode",
+    "annotate_policy_result_with_parent",
+    "annotate_block_text_with_parent",
+    "resolve_block_parent_trace_id",
     "is_local_policy_confirm_enabled",
     "list_registered_roles",
     "is_registered_role",
@@ -81,6 +84,148 @@ class PolicyCheckResult:
 
     local_confirmation_decision: Optional[str] = None
     """Local decision: keep_block | allow_original."""
+
+
+_PARENT_TRACE_MARKER = "parent_trace_id:"
+
+
+def _parent_trace_line(parent_trace_id: str) -> str:
+    return f"{_PARENT_TRACE_MARKER} {parent_trace_id.strip()}"
+
+
+def resolve_block_parent_trace_id(trace_id: Optional[str]) -> Optional[str]:
+    """Immediate parent trace from the persisted agent graph, if any."""
+    if not isinstance(trace_id, str) or not trace_id.strip():
+        return None
+    child = trace_id.strip()
+    try:
+        from arbiteros_kernel.agent_graph import parent_of
+
+        parent = parent_of(child)
+    except Exception:
+        return None
+    if not isinstance(parent, str) or not parent.strip():
+        return None
+    parent = parent.strip()
+    if parent == child:
+        return None
+    return parent
+
+
+def annotate_block_text_with_parent(
+    text: Optional[str],
+    *,
+    parent_trace_id: Optional[str],
+    child_trace_id: Optional[str] = None,
+) -> Optional[str]:
+    """Append ``parent_trace_id: …`` to a policy-block narrative once."""
+    if not isinstance(text, str):
+        return text
+    if not isinstance(parent_trace_id, str) or not parent_trace_id.strip():
+        return text
+    parent = parent_trace_id.strip()
+    if isinstance(child_trace_id, str) and child_trace_id.strip() == parent:
+        return text
+    line = _parent_trace_line(parent)
+    if line in text:
+        return text
+    if not text.strip():
+        return line
+    return text.rstrip() + "\n\n" + line
+
+
+def _annotate_message_content_with_parent(
+    content: Any,
+    *,
+    parent_trace_id: str,
+    child_trace_id: Optional[str],
+) -> Any:
+    line = _parent_trace_line(parent_trace_id)
+    if isinstance(content, str):
+        if not content.strip():
+            return content
+        return annotate_block_text_with_parent(
+            content,
+            parent_trace_id=parent_trace_id,
+            child_trace_id=child_trace_id,
+        )
+    if not isinstance(content, list):
+        return content
+    combined_parts: list[str] = []
+    for item in content:
+        if isinstance(item, str):
+            combined_parts.append(item)
+        elif isinstance(item, dict) and isinstance(item.get("text"), str):
+            combined_parts.append(item["text"])
+    combined = "\n".join(combined_parts)
+    if line in combined:
+        return content
+    new_list = list(content)
+    for idx in range(len(new_list) - 1, -1, -1):
+        block = new_list[idx]
+        if isinstance(block, dict) and isinstance(block.get("text"), str):
+            updated = dict(block)
+            updated["text"] = annotate_block_text_with_parent(
+                updated["text"],
+                parent_trace_id=parent_trace_id,
+                child_trace_id=child_trace_id,
+            ) or line
+            new_list[idx] = updated
+            return new_list
+        if isinstance(block, str):
+            new_list[idx] = (
+                annotate_block_text_with_parent(
+                    block,
+                    parent_trace_id=parent_trace_id,
+                    child_trace_id=child_trace_id,
+                )
+                or line
+            )
+            return new_list
+    new_list.append({"type": "text", "text": line})
+    return new_list
+
+
+def annotate_policy_result_with_parent(
+    result: PolicyCheckResult,
+    *,
+    trace_id: str,
+) -> PolicyCheckResult:
+    """Stamp the parent trace onto a BLOCK narrative for any agent."""
+    error_text = (result.error_type or "").strip()
+    if not result.modified or not error_text:
+        return result
+    parent = resolve_block_parent_trace_id(trace_id)
+    if not parent:
+        return result
+    new_error = annotate_block_text_with_parent(
+        result.error_type,
+        parent_trace_id=parent,
+        child_trace_id=trace_id,
+    )
+    new_response = result.response
+    if isinstance(new_response, dict):
+        content = new_response.get("content")
+        annotated_content = _annotate_message_content_with_parent(
+            content,
+            parent_trace_id=parent,
+            child_trace_id=trace_id,
+        )
+        if annotated_content is not content:
+            new_response = dict(new_response)
+            new_response["content"] = annotated_content
+    if new_error == result.error_type and new_response is result.response:
+        return result
+    return PolicyCheckResult(
+        modified=result.modified,
+        response=new_response,
+        error_type=new_error,
+        policy_names=result.policy_names,
+        policy_sources=result.policy_sources,
+        inactivate_error_type=result.inactivate_error_type,
+        local_confirmation_resolved=result.local_confirmation_resolved,
+        local_confirmation_decision=result.local_confirmation_decision,
+    )
 
 
 def _is_local_policy_confirm_enabled() -> bool:
@@ -615,6 +760,10 @@ def check_response_policy(
     )
     if not aggregated_result.modified:
         return aggregated_result
+
+    aggregated_result = annotate_policy_result_with_parent(
+        aggregated_result, trace_id=trace_id
+    )
 
     # Silent transforms (redact-only, no block reason) apply without TUI.
     if not (aggregated_result.error_type or "").strip():

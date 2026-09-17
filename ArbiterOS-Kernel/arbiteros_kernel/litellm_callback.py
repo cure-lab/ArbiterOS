@@ -244,9 +244,13 @@ class _TraceState:
     latest_topic_summary: Optional[str] = None
     # Agent from request route ``model;agent;role`` (display / budget). Not channel.
     agent_name: Optional[str] = None
+    # Claude Code: parent trace of a subagent (same session-id, different agent-id).
+    parent_trace_id: Optional[str] = None
+    claude_code_agent_id: Optional[str] = None
+    claude_code_session_id: Optional[str] = None
     # Effective governance role for this trace (None = default / global registry).
     role_name: Optional[str] = None
-    role_source: Optional[str] = None  # "init" | "os"
+    role_source: Optional[str] = None  # "init" | "os" | "inherit"
     role_locked_by_os: bool = False
     # Per-trace monotonically increasing tool result indices per tool name.
     tool_result_counter_by_tool: dict[str, int] = field(default_factory=dict)
@@ -375,6 +379,9 @@ def _trace_state_to_dict(state: _TraceState) -> dict[str, Any]:
         "channel": state.channel,
         "user_id": state.user_id,
         "agent_name": state.agent_name,
+        "parent_trace_id": state.parent_trace_id,
+        "claude_code_agent_id": state.claude_code_agent_id,
+        "claude_code_session_id": state.claude_code_session_id,
         "role_name": state.role_name,
         "role_source": state.role_source,
         "role_locked_by_os": bool(state.role_locked_by_os),
@@ -443,6 +450,21 @@ def _trace_state_from_dict(device_key: str, payload: Any) -> Optional[_TraceStat
         agent_name = None
     else:
         agent_name = agent_name.strip().lower()
+    parent_trace_id = payload.get("parent_trace_id")
+    if not isinstance(parent_trace_id, str) or not parent_trace_id.strip():
+        parent_trace_id = None
+    else:
+        parent_trace_id = parent_trace_id.strip()
+    claude_code_agent_id = payload.get("claude_code_agent_id")
+    if not isinstance(claude_code_agent_id, str) or not claude_code_agent_id.strip():
+        claude_code_agent_id = None
+    else:
+        claude_code_agent_id = claude_code_agent_id.strip()
+    claude_code_session_id = payload.get("claude_code_session_id")
+    if not isinstance(claude_code_session_id, str) or not claude_code_session_id.strip():
+        claude_code_session_id = None
+    else:
+        claude_code_session_id = claude_code_session_id.strip()
     role_name = payload.get("role_name")
     if not isinstance(role_name, str) or not role_name.strip():
         role_name = None
@@ -614,6 +636,9 @@ def _trace_state_from_dict(device_key: str, payload: Any) -> Optional[_TraceStat
         latest_user_preview=latest_user_preview,
         latest_topic_summary=latest_topic_summary,
         agent_name=agent_name,
+        parent_trace_id=parent_trace_id,
+        claude_code_agent_id=claude_code_agent_id,
+        claude_code_session_id=claude_code_session_id,
         role_name=role_name,
         role_source=role_source,
         role_locked_by_os=role_locked_by_os,
@@ -1030,6 +1055,11 @@ def _resolve_effective_role_for_policy(
                 if state.role_locked_by_os:
                     return None, "default"
                 break
+        from arbiteros_kernel.role_inherit import inherit_parent_role_if_unset
+
+        inherited = inherit_parent_role_if_unset(tid)
+        if isinstance(inherited, str) and inherited.strip():
+            return inherited.strip(), "named"
 
     meta_role = _extract_role_name_for_policy_config(request_data)
     meta_mode = _extract_role_mode_from_request(request_data)
@@ -2376,6 +2406,31 @@ def _build_policy_runtime_context(
     }
 
 
+def _lookup_trace_habit_cost(trace_id: Optional[str]) -> tuple[int, float, float]:
+    """Return (tokens, elapsed_seconds, usd) for role-habit accumulation."""
+    if not isinstance(trace_id, str) or not trace_id.strip():
+        return 0, 0.0, 0.0
+    tid = trace_id.strip()
+    with _trace_state_lock:
+        for state in _trace_state_by_device.values():
+            if state.trace_id != tid:
+                continue
+            tokens = max(0, int(getattr(state, "trace_total_tokens", 0) or 0))
+            usd = max(0.0, float(getattr(state, "trace_total_cost_usd", 0.0) or 0.0))
+            elapsed = 0.0
+            started_at = getattr(state, "trace_started_at", None)
+            if isinstance(started_at, str) and started_at:
+                try:
+                    elapsed = max(
+                        0.0,
+                        (datetime.now() - datetime.fromisoformat(started_at)).total_seconds(),
+                    )
+                except Exception:
+                    elapsed = 0.0
+            return tokens, elapsed, usd
+    return 0, 0.0, 0.0
+
+
 def _save_json(hook: str, data: dict) -> None:
     """保存数据到 jsonl 文件"""
     entry = {
@@ -3081,10 +3136,54 @@ def _extract_prompt_cache_key(incoming: dict) -> Optional[str]:
     return normalized or None
 
 
+def _extract_claude_code_request_header(
+    incoming: dict, header_name: str
+) -> Optional[str]:
+    """Read a Claude Code request header from LiteLLM wrapper payloads."""
+    if not isinstance(incoming, dict) or not isinstance(header_name, str):
+        return None
+
+    def _normalize(value: Any) -> Optional[str]:
+        if not isinstance(value, str):
+            return None
+        normalized = _normalize_device_fragment(value)
+        return normalized or None
+
+    wanted = header_name.strip().lower()
+    if not wanted:
+        return None
+
+    def _from_headers(headers: Any) -> Optional[str]:
+        if not isinstance(headers, dict):
+            return None
+        for key, value in headers.items():
+            if isinstance(key, str) and key.strip().lower() == wanted:
+                return _normalize(value)
+        return None
+
+    litellm_metadata = incoming.get("litellm_metadata")
+    if isinstance(litellm_metadata, dict):
+        hit = _from_headers(litellm_metadata.get("headers"))
+        if hit:
+            return hit
+
+    proxy_server_request = incoming.get("proxy_server_request")
+    if isinstance(proxy_server_request, dict):
+        hit = _from_headers(proxy_server_request.get("headers"))
+        if hit:
+            return hit
+
+    return None
+
+
 def _extract_claude_code_session_id(incoming: dict) -> Optional[str]:
     """Best-effort extraction of Claude Code session id from LiteLLM payload."""
     if not isinstance(incoming, dict):
         return None
+
+    sid = _extract_claude_code_request_header(incoming, "x-claude-code-session-id")
+    if sid:
+        return sid
 
     def _normalize(value: Any) -> Optional[str]:
         if not isinstance(value, str):
@@ -3094,11 +3193,6 @@ def _extract_claude_code_session_id(incoming: dict) -> Optional[str]:
 
     litellm_metadata = incoming.get("litellm_metadata")
     if isinstance(litellm_metadata, dict):
-        headers = litellm_metadata.get("headers")
-        if isinstance(headers, dict):
-            sid = _normalize(headers.get("x-claude-code-session-id"))
-            if sid:
-                return sid
         requester_metadata = litellm_metadata.get("requester_metadata")
         if isinstance(requester_metadata, dict):
             raw_user_id = requester_metadata.get("user_id")
@@ -3114,11 +3208,6 @@ def _extract_claude_code_session_id(incoming: dict) -> Optional[str]:
 
     proxy_server_request = incoming.get("proxy_server_request")
     if isinstance(proxy_server_request, dict):
-        headers = proxy_server_request.get("headers")
-        if isinstance(headers, dict):
-            sid = _normalize(headers.get("x-claude-code-session-id"))
-            if sid:
-                return sid
         body = proxy_server_request.get("body")
         if isinstance(body, dict):
             metadata = body.get("metadata")
@@ -3130,12 +3219,49 @@ def _extract_claude_code_session_id(incoming: dict) -> Optional[str]:
     return None
 
 
+def _extract_claude_code_agent_id(incoming: dict) -> Optional[str]:
+    """Claude Code subagent id (``x-claude-code-agent-id``). Parent requests omit it."""
+    if not isinstance(incoming, dict):
+        return None
+    aid = _extract_claude_code_request_header(incoming, "x-claude-code-agent-id")
+    if aid:
+        return aid
+
+    def _normalize(value: Any) -> Optional[str]:
+        if not isinstance(value, str):
+            return None
+        normalized = _normalize_device_fragment(value)
+        return normalized or None
+
+    litellm_metadata = incoming.get("litellm_metadata")
+    if isinstance(litellm_metadata, dict):
+        requester_metadata = litellm_metadata.get("requester_metadata")
+        if isinstance(requester_metadata, dict):
+            raw_user_id = requester_metadata.get("user_id")
+            if isinstance(raw_user_id, str) and raw_user_id.strip():
+                try:
+                    parsed_user_id = json.loads(raw_user_id)
+                except Exception:
+                    parsed_user_id = None
+                if isinstance(parsed_user_id, dict):
+                    aid = _normalize(
+                        parsed_user_id.get("agent_id")
+                        or parsed_user_id.get("agentId")
+                    )
+                    if aid:
+                        return aid
+    return None
+
+
 def _extract_claude_code_scope_key(incoming: Any) -> Optional[str]:
     """Build a stable dedupe scope key for Claude Code requests."""
     if not isinstance(incoming, dict):
         return None
     sid = _extract_claude_code_session_id(incoming)
+    aid = _extract_claude_code_agent_id(incoming)
     if isinstance(sid, str) and sid.strip():
+        if isinstance(aid, str) and aid.strip():
+            return f"sid:{sid.strip()}:agent:{aid.strip()}"
         return f"sid:{sid.strip()}"
 
     metadata = incoming.get("metadata")
@@ -3160,11 +3286,32 @@ def _extract_claude_code_scope_key(incoming: Any) -> Optional[str]:
     return None
 
 
+def _is_claude_code_non_stream_shadow(incoming: Any) -> bool:
+    """Claude Code often sends a non-streaming twin of the same turn.
+
+    That twin must not occupy the streaming dedupe slot, or the real stream
+    turn is later classified as aux and skips instruction commit (including
+    keep-block ``policy_protected`` rows).
+    """
+    if not isinstance(incoming, dict):
+        return False
+    proxy_server_request = incoming.get("proxy_server_request")
+    if isinstance(proxy_server_request, dict):
+        body = proxy_server_request.get("body")
+        if isinstance(body, dict) and "stream" in body:
+            return body.get("stream") is not True
+    if "stream" in incoming:
+        return incoming.get("stream") is not True
+    return False
+
+
 def _is_claude_code_duplicate_request(incoming: Any) -> bool:
     """Best-effort dedupe for Claude Code shadow retries of the same turn."""
     if _get_request_agent_name(incoming) != "claude_code":
         return False
     if not isinstance(incoming, dict):
+        return False
+    if _is_claude_code_non_stream_shadow(incoming):
         return False
     scope_key = _extract_claude_code_scope_key(incoming)
     if not isinstance(scope_key, str) or not scope_key.strip():
@@ -3502,7 +3649,14 @@ def _build_device_context(incoming: dict) -> _DeviceContext:
         if channel == "unknown-channel":
             channel = "codex"
     elif claude_code_session_id:
-        raw_user_id = f"claude-code-session-{claude_code_session_id}"
+        from arbiteros_kernel.agent_graph import claude_code_user_id
+
+        claude_code_agent_id = (
+            _extract_claude_code_agent_id(incoming) if is_claude_code_agent else None
+        )
+        raw_user_id = claude_code_user_id(
+            claude_code_session_id, agent_id=claude_code_agent_id
+        )
         has_explicit_user_id = True
         if channel == "unknown-channel":
             channel = "claude_code"
@@ -3704,6 +3858,238 @@ def _ensure_trace_state(context: _DeviceContext) -> tuple[_TraceState, bool]:
     if persist_needed:
         _persist_trace_state_to_disk()
     return current, created_new_trace
+
+
+def _find_claude_session_parent_trace_id(session_id: str) -> Optional[str]:
+    """Parent Claude Code trace for ``session_id`` (request without agent-id)."""
+    from arbiteros_kernel.agent_graph import claude_code_parent_user_id
+
+    parent_user = claude_code_parent_user_id(session_id)
+    if not parent_user:
+        return None
+    parent_key = f"claude_code:{parent_user}"
+    _sync_trace_state_from_disk()
+    with _trace_state_lock:
+        current = _trace_state_by_device.get(parent_key)
+        if current is not None and isinstance(current.trace_id, str):
+            return current.trace_id
+        for item in _trace_state_by_device.values():
+            if item.user_id == parent_user and isinstance(item.trace_id, str):
+                return item.trace_id
+    return None
+
+
+def _sync_claude_code_agent_graph(
+    incoming: dict, state: Optional[_TraceState]
+) -> None:
+    """Split is already done via device_key; here we record parent/child edges."""
+    if state is None or not isinstance(incoming, dict):
+        return
+    if _get_request_agent_name(incoming) != "claude_code":
+        return
+
+    from arbiteros_kernel.agent_graph import (
+        iter_agent_spawns_from_messages,
+        link_child,
+        record_spawn,
+        resolve_parent_trace_id,
+    )
+
+    session_id = _extract_claude_code_session_id(incoming)
+    agent_id = _extract_claude_code_agent_id(incoming)
+    persist_needed = False
+
+    messages = incoming.get("messages")
+    for spawn in iter_agent_spawns_from_messages(messages):
+        try:
+            record_spawn(
+                parent_trace_id=state.trace_id,
+                session_id=session_id,
+                agent_id=spawn.get("agent_id"),
+                subagent_type=spawn.get("subagent_type"),
+                tool_call_id=spawn.get("tool_call_id"),
+            )
+        except Exception:
+            pass
+
+    if isinstance(session_id, str) and session_id.strip():
+        if state.claude_code_session_id != session_id.strip():
+            state.claude_code_session_id = session_id.strip()
+            persist_needed = True
+    if isinstance(agent_id, str) and agent_id.strip():
+        if state.claude_code_agent_id != agent_id.strip():
+            state.claude_code_agent_id = agent_id.strip()
+            persist_needed = True
+        parent = resolve_parent_trace_id(agent_id=agent_id)
+        if parent is None:
+            parent = _find_claude_session_parent_trace_id(session_id)
+        if parent and parent != state.trace_id:
+            linked = None
+            try:
+                linked = link_child(
+                    child_trace_id=state.trace_id,
+                    session_id=session_id,
+                    agent_id=agent_id,
+                    parent_trace_id=parent,
+                )
+            except Exception:
+                linked = parent
+            if linked and state.parent_trace_id != linked:
+                state.parent_trace_id = linked
+                persist_needed = True
+
+    if persist_needed:
+        _persist_trace_state_to_disk()
+
+
+def _record_graph_spawns(
+    *,
+    parent_trace_id: Optional[str],
+    session_id: Optional[str],
+    spawns: list[dict[str, str]],
+) -> None:
+    from arbiteros_kernel.agent_graph import record_spawn
+
+    if not isinstance(parent_trace_id, str) or not parent_trace_id.strip():
+        return
+    for spawn in spawns:
+        if not isinstance(spawn, dict):
+            continue
+        keys: list[str] = []
+        for raw in (spawn.get("agent_id"), spawn.get("task_key")):
+            if isinstance(raw, str) and raw.strip() and raw.strip() not in keys:
+                keys.append(raw.strip())
+        label = spawn.get("subagent_type") or "subagent"
+        for key in keys:
+            try:
+                record_spawn(
+                    parent_trace_id=parent_trace_id,
+                    session_id=session_id,
+                    agent_id=key,
+                    subagent_type=label,
+                    tool_call_id=spawn.get("tool_call_id"),
+                )
+            except Exception:
+                pass
+
+
+def _sync_openclaw_agent_graph(
+    incoming: dict, state: Optional[_TraceState]
+) -> None:
+    """OpenClaw traces are already split; record sessions_spawn parent/child edges."""
+    if state is None or not isinstance(incoming, dict):
+        return
+    agent = _get_request_agent_name(incoming)
+    if not is_chat_gateway_tool_agent(agent):
+        return
+
+    from arbiteros_kernel.agent_graph import (
+        iter_sessions_spawn_from_messages,
+        link_child,
+        load_graph,
+        record_spawn,
+        resolve_parent_trace_id,
+        spawn_task_key,
+    )
+    from arbiteros_kernel.chat_agent_session import (
+        extract_openclaw_own_session_key,
+        extract_openclaw_spawn_task,
+        is_openclaw_subagent_messages,
+    )
+
+    messages = incoming.get("messages")
+    persist_needed = False
+    _record_graph_spawns(
+        parent_trace_id=state.trace_id,
+        session_id=extract_openclaw_own_session_key(messages)
+        if isinstance(messages, list)
+        else None,
+        spawns=iter_sessions_spawn_from_messages(messages),
+    )
+
+    if not is_openclaw_subagent_messages(messages if isinstance(messages, list) else []):
+        return
+
+    child_key = extract_openclaw_own_session_key(
+        messages if isinstance(messages, list) else []
+    )
+    task_key = spawn_task_key(
+        extract_openclaw_spawn_task(messages if isinstance(messages, list) else [])
+    )
+    parent = None
+    if child_key:
+        parent = resolve_parent_trace_id(agent_id=child_key)
+    if parent is None and task_key:
+        parent = resolve_parent_trace_id(agent_id=task_key)
+    if not parent or parent == state.trace_id:
+        return
+    link_id = child_key or task_key
+    label = "subagent"
+    try:
+        by_agent = load_graph().get("by_agent_id") or {}
+        for key in (child_key, task_key):
+            hit = by_agent.get(key) if key else None
+            if isinstance(hit, dict):
+                stored = hit.get("subagent_type")
+                if isinstance(stored, str) and stored.strip():
+                    label = stored.strip()
+                    break
+    except Exception:
+        pass
+    if child_key:
+        try:
+            record_spawn(
+                parent_trace_id=parent,
+                session_id=child_key,
+                agent_id=child_key,
+                subagent_type=label,
+            )
+        except Exception:
+            pass
+    if not link_id:
+        return
+    linked = None
+    try:
+        linked = link_child(
+            child_trace_id=state.trace_id,
+            session_id=child_key,
+            agent_id=link_id,
+            parent_trace_id=parent,
+        )
+    except Exception:
+        linked = parent
+    if linked and state.parent_trace_id != linked:
+        state.parent_trace_id = linked
+        persist_needed = True
+    if persist_needed:
+        _persist_trace_state_to_disk()
+
+
+def _record_openclaw_spawns_from_assistant_response(
+    incoming: dict,
+    assistant_msg: Any,
+    parent_trace_id: Optional[str],
+) -> None:
+    """Record sessions_spawn from the parent response, before the child first call."""
+    if not isinstance(incoming, dict):
+        return
+    if not is_chat_gateway_tool_agent(_get_request_agent_name(incoming)):
+        return
+    if not isinstance(assistant_msg, dict):
+        return
+    payload = dict(assistant_msg)
+    payload.setdefault("role", "assistant")
+    from arbiteros_kernel.agent_graph import iter_sessions_spawn_from_messages
+    from arbiteros_kernel.chat_agent_session import extract_openclaw_own_session_key
+
+    messages = incoming.get("messages")
+    _record_graph_spawns(
+        parent_trace_id=parent_trace_id,
+        session_id=extract_openclaw_own_session_key(messages)
+        if isinstance(messages, list)
+        else None,
+        spawns=iter_sessions_spawn_from_messages([payload]),
+    )
 
 
 def _resolve_trace_state_from_metadata(
@@ -4675,6 +5061,8 @@ def _add_instructions_from_modified_response(
     count_before = len(getattr(builder, "instructions", []) or [])
     trace_id = getattr(builder, "trace_id", None)
     content = modified_response.get("content")
+    if not isinstance(content, str):
+        content = _extract_text_from_message_content(content)
     if isinstance(content, str) and content.strip():
         _add_non_strict_content_instructions(
             builder=builder,
@@ -4744,6 +5132,21 @@ def _register_said_done_pending_from_response(
     register_pending_toolcalls(trace_id=trace_id.strip(), toolcalls=details)
 
 
+def _policy_protected_already_recorded(builder: Any, reason: Optional[str]) -> bool:
+    """True if this keep-block narrative is already on a recent instruction."""
+    if not isinstance(reason, str) or not reason.strip():
+        return False
+    needle = reason.strip()
+    instrs = list(getattr(builder, "instructions", []) or [])
+    for instr in instrs[-8:]:
+        if not isinstance(instr, dict):
+            continue
+        prev = instr.get("policy_protected")
+        if isinstance(prev, str) and prev.strip() == needle:
+            return True
+    return False
+
+
 def _commit_response_instructions_after_policy(
     builder: Any,
     trace_id: str,
@@ -4756,6 +5159,8 @@ def _commit_response_instructions_after_policy(
 ) -> None:
     """Replace staged instructions with ``response_dict`` and persist to trace file."""
     if InstructionBuilder is None or builder is None:
+        return
+    if _policy_protected_already_recorded(builder, policy_protected):
         return
     _reset_builder_instructions_to_index(builder, instruction_start_index)
     count_before = len(getattr(builder, "instructions", []) or [])
@@ -6519,6 +6924,21 @@ def _save_instructions_to_trace_file(
             f.write(builder.to_json())
     except Exception:
         pass  # Best-effort; don't fail the main flow
+    try:
+        from arbiteros_kernel.role_habit_log import accumulate_role_habit
+
+        role_rec = get_trace_role(trace_id)
+        tokens, elapsed, usd = _lookup_trace_habit_cost(trace_id)
+        accumulate_role_habit(
+            display_role_name(role_rec.get("role_name") if isinstance(role_rec, dict) else None),
+            trace_id=trace_id,
+            instructions=list(getattr(builder, "instructions", []) or []),
+            tokens=tokens,
+            elapsed_seconds=elapsed,
+            usd=usd,
+        )
+    except Exception:
+        pass
 
 
 def _peek_instruction_builder_for_trace(trace_id: str) -> Optional[Any]:
@@ -7481,12 +7901,7 @@ def _is_claude_code_aux_request(request_data: Any) -> bool:
         "[suggestion mode:" in text
         and "suggest what the user might naturally type next" in text
     )
-    proxy_server_request = request_data.get("proxy_server_request")
-    shadow_non_stream = False
-    if isinstance(proxy_server_request, dict):
-        body = proxy_server_request.get("body")
-        if isinstance(body, dict) and "stream" in body:
-            shadow_non_stream = body.get("stream") is not True
+    shadow_non_stream = _is_claude_code_non_stream_shadow(request_data)
 
     duplicate_request = _is_claude_code_duplicate_request(request_data)
     is_aux = bool(is_recap or is_suggestion or shadow_non_stream or duplicate_request)
@@ -9614,13 +10029,38 @@ class MyCustomHandler(CustomLogger):
                 if isinstance(data, dict)
                 else None
             )
+            claude_aid = (
+                _extract_claude_code_agent_id(data)
+                if isinstance(data, dict)
+                else None
+            )
+            extra_keys = None
+            session_for_index = claude_sid or pck
+            if claude_aid:
+                # Subagents reuse the parent session id; do not overwrite the
+                # parent's session_id → trace mapping.
+                session_for_index = None
+                extra_keys = []
+                if claude_sid:
+                    extra_keys.append(("session_id+agent", f"{claude_sid}:{claude_aid}"))
+                extra_keys.append(("agent_id", claude_aid))
             register_binding(
                 trace_id=state.trace_id if state is not None else None,
                 device_key=state.device_key if state is not None else None,
                 prompt_cache_key=pck,
-                session_id=claude_sid or pck,
+                session_id=session_for_index,
                 channel=state.channel if state is not None else None,
+                extra_keys=extra_keys,
             )
+        except Exception:
+            pass
+
+        try:
+            _sync_claude_code_agent_graph(data if isinstance(data, dict) else {}, state)
+        except Exception:
+            pass
+        try:
+            _sync_openclaw_agent_graph(data if isinstance(data, dict) else {}, state)
         except Exception:
             pass
 
@@ -10077,6 +10517,14 @@ class MyCustomHandler(CustomLogger):
 
         raw_msg_dict = msg if isinstance(msg, dict) else None
         final_msg_dict = raw_msg_dict
+        try:
+            _record_openclaw_spawns_from_assistant_response(
+                data if isinstance(data, dict) else {},
+                raw_msg_dict,
+                _trace_id,
+            )
+        except Exception:
+            pass
 
         # 记录 instruction 数量，供 policy 保护时标记本次添加的 instructions
         _policy_instruction_count_before = 0
@@ -10228,12 +10676,17 @@ class MyCustomHandler(CustomLogger):
                 and isinstance(trace_id, str)
                 and trace_id.strip()
                 and not apply_info.get("instruction_already_applied")
-                and not skip_instruction_governance
+                and (
+                    not skip_instruction_governance
+                    or bool(policy_violation_reason_for_langfuse)
+                )
             ):
                 builder = _get_instruction_builder_for_trace(trace_id)
                 if builder is not None:
                     protected = apply_info.get("protected_response")
-                    if isinstance(protected, dict):
+                    if isinstance(protected, dict) and not _policy_protected_already_recorded(
+                        builder, policy_violation_reason_for_langfuse
+                    ):
                         count_before = len(getattr(builder, "instructions", []) or [])
                         _add_instructions_from_modified_response(
                             builder, protected, request_data=data if isinstance(data, dict) else None
@@ -10459,9 +10912,9 @@ class MyCustomHandler(CustomLogger):
                             _record_stripped_category(
                                 data, "COGNITIVE_CORE__RESPOND", topic="policy protected"
                             )
-                        if (
-                            builder is not None
-                            and not skip_instruction_governance
+                        if builder is not None and (
+                            not skip_instruction_governance
+                            or bool(policy_violation_reason_for_langfuse)
                         ):
                             _commit_response_instructions_after_policy(
                                 builder,
