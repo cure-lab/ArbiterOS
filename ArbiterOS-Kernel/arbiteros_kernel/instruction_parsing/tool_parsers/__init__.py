@@ -24,6 +24,7 @@ NANOBOT_TOOL_PARSER_REGISTRY = load_registry(_DSL_DIR / "nanobot.yaml")
 HERMES_TOOL_PARSER_REGISTRY = load_registry(_DSL_DIR / "hermes.yaml")
 CODEX_TOOL_PARSER_REGISTRY = load_registry(_DSL_DIR / "codex.yaml")
 CLAUDE_CODE_TOOL_PARSER_REGISTRY = load_registry(_DSL_DIR / "claude_code.yaml")
+PI_TOOL_PARSER_REGISTRY = load_registry(_DSL_DIR / "pi.yaml")
 BANK_TOOL_PARSER_REGISTRY = load_registry(_DSL_DIR / "bank.yaml")
 
 _FALLBACK = ToolParseResult(
@@ -43,6 +44,7 @@ _REGISTRIES = {
     "hermes": HERMES_TOOL_PARSER_REGISTRY,
     "codex": CODEX_TOOL_PARSER_REGISTRY,
     "claude_code": CLAUDE_CODE_TOOL_PARSER_REGISTRY,
+    "pi": PI_TOOL_PARSER_REGISTRY,
     "bank": BANK_TOOL_PARSER_REGISTRY,
 }
 
@@ -83,6 +85,7 @@ __all__ = [
     "HERMES_TOOL_PARSER_REGISTRY",
     "CODEX_TOOL_PARSER_REGISTRY",
     "CLAUDE_CODE_TOOL_PARSER_REGISTRY",
+    "PI_TOOL_PARSER_REGISTRY",
     "BANK_TOOL_PARSER_REGISTRY",
     "parse_tool_instruction",
 ]

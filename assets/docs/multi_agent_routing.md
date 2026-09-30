@@ -13,7 +13,7 @@ Clients send the OpenAI `model` field as:
 | Segment | Required | Meaning |
 |---------|----------|---------|
 | `route_model` | yes | Must match `model_list[].model_name` in `litellm_config.yaml` |
-| `agent_name` | yes | `openclaw` \| `nanobot` \| `hermes` \| `codex` \| `claude_code` |
+| `agent_name` | yes | `openclaw` \| `nanobot` \| `hermes` \| `codex` \| `claude_code` \| `pi` |
 | `role` | no | Policy role for this request only (third segment) |
 
 Bare model names (without `;agent_name`) are rejected.
@@ -24,6 +24,7 @@ Examples:
 gpt-5.5;codex
 gpt-5.2-chat-latest;openclaw
 claude-sonnet-4-5-20250929;claude_code
+gpt-5.6-terra;pi
 gpt-5.5;codex;planner
 ```
 
@@ -70,6 +71,7 @@ Per-agent behavior under `ArbiterOS-Kernel/agents/`:
 | `hermes.yaml` | `hermes` |
 | `codex.yaml` | `codex` |
 | `claude_code.yaml` | `claude_code` |
+| `pi.yaml` | `pi` |
 
 ```yaml
 agent_name: claude_code
@@ -95,6 +97,7 @@ Do not set a global `arbiteros_config.tool_agent` in `litellm_config.yaml`; use 
 | Codex | `gpt-5.5;codex` |
 | OpenClaw | `gpt-5.2-chat-latest;openclaw` |
 | Claude Code | `claude-sonnet-4-5-20250929;claude_code` |
+| pi | `gpt-5.6-terra;pi` |
 | With policy role | `gpt-5.5;codex;my_role` |
 
 Base URL: `http://127.0.0.1:4000/v1`
@@ -102,6 +105,6 @@ Base URL: `http://127.0.0.1:4000/v1`
 ## Parallel traces
 
 - **Different agent types**: different `;agent_name` on the same Kernel.
-- **Multiple instances of one agent**: each runtime’s session signals (Codex `prompt_cache_key`, Claude session id, OpenClaw `message_id`, etc.). Traces: `ArbiterOS-Kernel/log/instruction/{trace_id}.json`.
+- **Multiple instances of one agent**: each runtime’s session signals (Codex `prompt_cache_key`, Claude session id, pi Responses API `session_id`, OpenClaw `message_id`, etc.). Traces: `ArbiterOS-Kernel/log/instruction/{trace_id}.json`.
 
 See also [`kernel.md`](./kernel.md) (session / `device_key`).

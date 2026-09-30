@@ -44,7 +44,7 @@ It focuses on three things first:
 
 ArbiterOS Kernel currently works best with agent runtimes that can override the model endpoint and model name per request or per profile.
 
-- Supported agent types: `openclaw`, `nanobot`, `hermes`, `codex`, `claude_code` (one Kernel, many in parallel).
+- Supported agent types: `openclaw`, `nanobot`, `hermes`, `codex`, `claude_code`, `pi` (one Kernel, many in parallel).
 - Compatible serving pattern: OpenAI-compatible / LiteLLM-based routing.
 - Default local endpoint after startup: `http://127.0.0.1:4000/v1`
 

@@ -3253,6 +3253,37 @@ def _extract_claude_code_agent_id(incoming: dict) -> Optional[str]:
     return None
 
 
+def _extract_pi_session_id(incoming: dict) -> Optional[str]:
+    """从 pi 的 Responses API session-affinity 请求头提取会话标识。"""
+    if not isinstance(incoming, dict):
+        return None
+
+    def _from_headers(raw_headers: Any) -> Optional[str]:
+        if not isinstance(raw_headers, dict):
+            return None
+        for header_name in ("session_id", "x-client-request-id"):
+            value = raw_headers.get(header_name)
+            if isinstance(value, str):
+                normalized = _normalize_device_fragment(value)
+                if normalized:
+                    return normalized
+        return None
+
+    litellm_metadata = incoming.get("litellm_metadata")
+    if isinstance(litellm_metadata, dict):
+        session_id = _from_headers(litellm_metadata.get("headers"))
+        if session_id:
+            return session_id
+
+    proxy_server_request = incoming.get("proxy_server_request")
+    if isinstance(proxy_server_request, dict):
+        session_id = _from_headers(proxy_server_request.get("headers"))
+        if session_id:
+            return session_id
+
+    return None
+
+
 def _extract_claude_code_scope_key(incoming: Any) -> Optional[str]:
     """Build a stable dedupe scope key for Claude Code requests."""
     if not isinstance(incoming, dict):
@@ -3592,10 +3623,12 @@ def _build_device_context(incoming: dict) -> _DeviceContext:
     tool_agent = _get_request_agent_name(incoming)
     is_codex_agent = tool_agent == "codex"
     is_claude_code_agent = tool_agent == "claude_code"
+    is_pi_agent = tool_agent == "pi"
     prompt_cache_key = _extract_prompt_cache_key(incoming) if is_codex_agent else None
     claude_code_session_id = (
         _extract_claude_code_session_id(incoming) if is_claude_code_agent else None
     )
+    pi_session_id = _extract_pi_session_id(incoming) if is_pi_agent else None
     bank_session_bound = False
 
     latest_user_text = _extract_latest_message_text(messages, role="user")
@@ -3660,6 +3693,11 @@ def _build_device_context(incoming: dict) -> _DeviceContext:
         has_explicit_user_id = True
         if channel == "unknown-channel":
             channel = "claude_code"
+    elif pi_session_id:
+        raw_user_id = f"pi-session-{pi_session_id}"
+        has_explicit_user_id = True
+        if channel == "unknown-channel":
+            channel = "pi"
     elif (tool_agent or "").strip().lower() == "bank":
         bank_identity = _extract_bank_session_identity(incoming)
         if bank_identity is not None:

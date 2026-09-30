@@ -44,7 +44,7 @@ ArbiterOS 不是另一个 Agent Framework。它是一个面向 Agent 系统的�
 
 ArbiterOS Kernel 最适合接入能够按请求覆盖模型端点和 **model 名称** 的 Agent 运行时。
 
-- 支持的 agent 类型：`openclaw`、`nanobot`、`hermes`、`codex`、`claude_code`（一个 Kernel 可同时服务多种）。
+- 支持的 agent 类型：`openclaw`、`nanobot`、`hermes`、`codex`、`claude_code`、`pi`（一个 Kernel 可同时服务多种）。
 - 兼容的服务形态：OpenAI-compatible / LiteLLM-compatible routing。
 - Kernel 启动后的默认本地端点：`http://127.0.0.1:4000/v1`
 

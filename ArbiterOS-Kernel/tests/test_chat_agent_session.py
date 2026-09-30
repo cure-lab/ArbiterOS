@@ -113,6 +113,28 @@ def test_build_device_context_uses_message_id_for_openclaw(monkeypatch):
     assert context.has_explicit_user_id is True
 
 
+def test_build_device_context_uses_pi_responses_session_id(monkeypatch):
+    from arbiteros_kernel import litellm_callback as lc
+
+    monkeypatch.setattr(lc, "_get_request_agent_name", lambda incoming=None: "pi")
+    monkeypatch.setattr(lc, "_sync_trace_state_from_disk", lambda: None)
+
+    context = lc._build_device_context(
+        {
+            "proxy_server_request": {
+                "headers": {
+                    "session_id": "01a08039-5e34-755a-8ab3-705f45fc1150",
+                    "x-client-request-id": "01a08039-5e34-755a-8ab3-705f45fc1150",
+                }
+            }
+        }
+    )
+
+    assert context.channel == "pi"
+    assert context.user_id == "pi-session-01a08039-5e34-755a-8ab3-705f45fc1150"
+    assert context.has_explicit_user_id is True
+
+
 def test_build_device_context_distinguishes_two_openclaw_sessions(monkeypatch):
     from arbiteros_kernel import litellm_callback as lc
 

@@ -53,6 +53,7 @@ def test_agent_profiles_load_builtin_agents():
         "openclaw",
         "codex",
         "claude_code",
+        "pi",
         "nanobot",
         "hermes",
         "bank",
@@ -62,6 +63,12 @@ def test_agent_profiles_load_builtin_agents():
 def test_claude_code_profile_enables_sidecar():
     profile = resolve_agent_profile("claude_code")
     assert profile.depends_on_sidecar_enabled is True
+    assert profile.upstream_compat_enabled is True
+
+
+def test_pi_profile_disables_sidecar():
+    profile = resolve_agent_profile("pi")
+    assert profile.depends_on_sidecar_enabled is False
     assert profile.upstream_compat_enabled is True
 
 
@@ -75,6 +82,14 @@ def test_bank_profile_disables_sidecar():
     profile = resolve_agent_profile("bank")
     assert profile.depends_on_sidecar_enabled is False
     assert profile.upstream_compat_enabled is False
+
+
+def test_validate_request_route_accepts_pi_agent():
+    err, route, agent, role = validate_request_route("gpt-5.6-terra;pi")
+    assert err is None
+    assert route == "gpt-5.6-terra"
+    assert agent == "pi"
+    assert role is None
 
 
 def test_validate_request_route_accepts_bank_role():

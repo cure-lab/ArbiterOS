@@ -3,7 +3,7 @@
 #
 # Client model field format: route_model;agent_name;role
 #   - route_model must match model_name below
-#   - agent_name: openclaw | nanobot | hermes | codex | claude_code | bank
+#   - agent_name: openclaw | nanobot | hermes | codex | claude_code | pi | bank
 #   - role is optional (policy role)
 # Per-agent kernel settings live in agents/*.yaml
 
